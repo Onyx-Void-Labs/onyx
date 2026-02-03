@@ -1,4 +1,3 @@
-import { BlockType } from '../types';
 import { MATH_SYMBOLS } from '../data/mathSymbols';
 
 /**

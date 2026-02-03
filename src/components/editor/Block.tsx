@@ -89,7 +89,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
         );
     }
 
-    const { fontSize, lineHeight, fontWeight, marginBottom, marginTop } = getStyles();
+    const { fontSize, lineHeight, fontWeight } = getStyles();
     const textClasses = block.type.startsWith('h') ? 'text-zinc-100 tracking-tighter' : 'text-zinc-400';
 
     return (

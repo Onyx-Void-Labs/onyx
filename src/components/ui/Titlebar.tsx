@@ -1,6 +1,6 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, X, PanelLeftClose, PanelLeft } from 'lucide-react';
-import { useState, useEffect } from 'react';
+
 
 interface TitlebarProps {
     sidebarCollapsed: boolean;
@@ -8,21 +8,10 @@ interface TitlebarProps {
 }
 
 export default function Titlebar({ sidebarCollapsed, onToggleSidebar }: TitlebarProps) {
-    const [isMaximized, setIsMaximized] = useState(false);
     const appWindow = getCurrentWindow();
 
-    useEffect(() => {
-        const checkMaximized = async () => {
-            setIsMaximized(await appWindow.isMaximized());
-        };
-        checkMaximized();
-    }, [appWindow]);
-
     const handleMinimize = () => appWindow.minimize();
-    const handleMaximize = async () => {
-        await appWindow.toggleMaximize();
-        setIsMaximized(await appWindow.isMaximized());
-    };
+    const handleMaximize = () => appWindow.toggleMaximize();
     const handleClose = () => appWindow.close();
 
     const startDrag = (e: React.MouseEvent) => {
