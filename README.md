@@ -35,7 +35,7 @@ A modular, local-only note-taking application designed to fit every user's needs
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/omar.itaniau/onyx.git
+   git clone https://github.com/om-itani/onyx.git
    cd onyx
    ```
 
