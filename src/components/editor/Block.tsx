@@ -1,27 +1,13 @@
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
 import { LazyBlockMath, LazyInlineMath } from './MathWrappers';
 import { Block, BlockType } from '../../types';
-
-// Matching user's simple RenderedParagraph logic but keeping markdown support for "Phase 4"
-const RenderedContent = ({ text }: { text: string }) => {
-    if (!text) return <span className="opacity-0">Empty</span>;
-
-    const parts = text.split('$$');
-    return (
-        <>
-            {parts.map((part, i) => {
-                if (i % 2 === 1) return <span key={i} className="text-purple-400 px-1 inline-block"><LazyInlineMath math={part} /></span>;
-                return <span key={i}>{part}</span>;
-            })}
-        </>
-    );
-};
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface BlockProps {
     block: Block;
     isFocused: boolean;
     index: number;
-    updateBlock: (id: string, content: string, type?: BlockType, pushHistory?: boolean) => void;
+    updateBlock: (id: string, content: string, type?: BlockType, pushHistory?: boolean, cursorPos?: number) => void;
     onFocus: (id: string) => void;
     onKeyDown: (e: React.KeyboardEvent, id: string, index: number) => void;
     onPaste: (e: React.ClipboardEvent, id: string) => void;
@@ -32,24 +18,115 @@ interface BlockProps {
 export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, onFocus, onKeyDown, onPaste, zoom, onResize }: BlockProps) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const wasClicked = useRef(false); // Track if focus came from a click
+    const wasClicked = useRef(false);
+    const [mathPreviewPos, setMathPreviewPos] = React.useState<{ x: number, y: number, math: string } | null>(null);
 
     useLayoutEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
             textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
         }
-        // Report height for virtualization
         if (containerRef.current && onResize) {
-            // Add a small buffer or ensure exact measurement
             onResize(block.id, containerRef.current.getBoundingClientRect().height);
         }
-    }, [block.content, zoom, isFocused, block.type]);
+
+        // Check for active math segment under cursor if focused
+        if (isFocused && textareaRef.current && block.content.includes('$')) {
+            const el = textareaRef.current;
+            const caret = el.selectionStart;
+            const text = el.value;
+
+            // Find if cursor is inside a math pair $...$
+            // Simple heuristic for now: check segments
+            // Or better: regex scan and check if caret is inside match range
+            const mathRegex = /\$([^\$]+)\$/g;
+            let match;
+            let activeMath: string | null = null;
+            let activeStart = 0;
+
+            while ((match = mathRegex.exec(text)) !== null) {
+                const start = match.index;
+                const end = start + match[0].length;
+
+                // If caret is inside or at edges of a math block
+                if (caret >= start && caret <= end) {
+                    activeMath = match[1];
+                    activeStart = start;
+                    break;
+                }
+            }
+
+            if (activeMath) {
+                // Calculate position!
+                // We create a temp span to measure width up to start of math
+                const span = document.createElement('span');
+                span.style.font = window.getComputedStyle(el).font;
+                span.style.visibility = 'hidden';
+                span.style.whiteSpace = 'pre-wrap';
+                // Text before the math starts + maybe indentation?
+                span.textContent = text.substring(0, activeStart);
+                document.body.appendChild(span);
+                const width = span.offsetWidth;
+                document.body.removeChild(span);
+
+                // Rough estimate for Y (one line height down?)
+                // Since rows=1 usually, it's just below.
+                const lineHeight = parseFloat(window.getComputedStyle(el).lineHeight || '24');
+
+                // Adjust for wrapping? If wrapped, width is modulo container width?
+                // Complex for wrapped lines. simpler: assume 1 line for now or simple wrapping.
+                // For true caret pos we need gettingCoordinates library or mirror div.
+                // Let's stick to X offset for now.
+
+                setMathPreviewPos({ x: width, y: lineHeight, math: activeMath });
+            } else {
+                setMathPreviewPos(null);
+            }
+        } else {
+            setMathPreviewPos(null);
+        }
+
+    }, [block.content, zoom, isFocused, block.type]); // Needs to re-run on selection change? selection change doesn't trigger effect...
+
+    // We need to listen to selection change more actively?
+    // onKeyUp / onClick triggers re-render? No.
+    // We can add onSelect handler to textarea
+
+    const checkMathPreview = () => {
+        // Re-run the logic above. Refactor into helper? 
+        // For optimization, let's just trigger a lightweight update or duplicate logic lightly.
+        if (textareaRef.current && block.content.includes('$')) {
+            const el = textareaRef.current;
+            const caret = el.selectionStart;
+            const text = el.value;
+            const mathRegex = /\$([^\$]+)\$/g;
+            let match;
+            let found = null;
+            while ((match = mathRegex.exec(text)) !== null) {
+                if (caret >= match.index && caret <= match.index + match[0].length) {
+                    found = { math: match[1], index: match.index };
+                    break;
+                }
+            }
+
+            if (found) {
+                const span = document.createElement('span');
+                span.style.font = window.getComputedStyle(el).font;
+                span.style.whiteSpace = 'pre-wrap';
+                span.textContent = text.substring(0, found.index);
+                document.body.appendChild(span);
+                const width = span.offsetWidth;
+                document.body.removeChild(span);
+                // Clamp width to container?
+                setMathPreviewPos({ x: Math.min(width, el.offsetWidth - 200), y: 24, math: found.math });
+            } else setMathPreviewPos(null);
+        } else setMathPreviewPos(null);
+    };
+
 
     useEffect(() => {
         if (isFocused && textareaRef.current) {
             textareaRef.current.focus();
-            // REMOVED: Aggressive cursor reset. Handled by Editor.tsx now.
             wasClicked.current = false;
         }
     }, [isFocused]);
@@ -69,7 +146,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
             <div
                 ref={containerRef}
                 className="group relative w-full mb-6 px-8"
-                onMouseDown={() => { wasClicked.current = true; }} // Logic for Math click
+                onMouseDown={() => { wasClicked.current = true; }}
                 onClick={(e) => { e.stopPropagation(); onFocus(block.id); }}
             >
                 <div className={`transition-all p-6 rounded-xl border ${isFocused ? 'bg-zinc-900 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.1)]' : 'bg-transparent border-transparent hover:bg-zinc-900/20'}`}>
@@ -80,7 +157,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
                             autoFocus
                             className="w-full bg-transparent font-mono text-sm text-purple-400 outline-none resize-none mb-4"
                             value={block.content}
-                            onChange={(e) => updateBlock(block.id, e.target.value)}
+                            onChange={(e) => updateBlock(block.id, e.target.value, undefined, undefined, e.target.selectionStart)}
                             onKeyDown={(e) => onKeyDown(e, block.id, index)}
                             placeholder="LaTeX Syntax... (e.g. 1/2 + space)"
                             rows={1}
@@ -105,26 +182,48 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
             <div className="absolute left-2 top-2.5 bottom-2.5 w-1 rounded-full transition-all duration-300 bg-zinc-800 opacity-20 group-hover:opacity-100" />
 
             {isFocused ? (
-                <textarea
-                    ref={textareaRef}
-                    data-block-id={block.id}
-                    style={{ fontSize, lineHeight, fontWeight }}
-                    value={block.content}
-                    onChange={(e) => updateBlock(block.id, e.target.value)}
-                    onKeyDown={(e) => onKeyDown(e, block.id, index)}
-                    onPaste={(e) => onPaste(e, block.id)}
-                    className={`bg-transparent outline-none w-full resize-none ${textClasses} overflow-hidden whitespace-pre-wrap break-words`}
-                    placeholder={block.type === 'p' ? "Type '/' for commands..." : `Heading ${block.type.replace('h', '')}`}
-                    rows={1}
-                />
+                <div className="relative w-full">
+                    <textarea
+                        ref={textareaRef}
+                        data-block-id={block.id}
+                        style={{ fontSize, lineHeight, fontWeight }}
+                        value={block.content}
+                        onChange={(e) => { updateBlock(block.id, e.target.value, undefined, undefined, e.target.selectionStart); checkMathPreview(); }}
+                        onKeyDown={(e) => { onKeyDown(e, block.id, index); setTimeout(checkMathPreview, 10); }}
+                        onClick={checkMathPreview}
+                        onPaste={(e) => onPaste(e, block.id)}
+                        onSelect={checkMathPreview} // Trigger on any cursor move
+                        className={`bg-transparent outline-none w-full resize-none ${textClasses} overflow-hidden whitespace-pre-wrap break-words`}
+                        placeholder={block.type === 'p' ? "Type '/' for commands..." : `Heading ${block.type.replace('h', '')}`}
+                        rows={1}
+                    />
+
+                    {/* Positioned Live Preview */}
+                    {mathPreviewPos && (
+                        <div
+                            className="absolute z-50 pointer-events-none"
+                            style={{
+                                left: `${mathPreviewPos.x}px`,
+                                top: '100%',
+                                marginTop: '4px'
+                            }}
+                        >
+                            <div className="bg-zinc-900/90 border border-zinc-700/50 p-2 rounded-lg shadow-2xl backdrop-blur-md">
+                                <div className="text-lg text-zinc-100">
+                                    <LazyInlineMath math={mathPreviewPos.math} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
             ) : (
                 <div
-                    onMouseDown={() => { wasClicked.current = true; }} // Set flag BEFORE focus triggers
+                    onMouseDown={() => { wasClicked.current = true; }}
                     onClick={(e) => { e.stopPropagation(); onFocus(block.id); }}
                     style={{ fontSize, lineHeight, fontWeight }}
                     className={`w-full ${textClasses} whitespace-pre-wrap break-words cursor-text min-h-[1.5em]`}
                 >
-                    <RenderedContent text={block.content} />
+                    <MarkdownRenderer content={block.content} />
                 </div>
             )}
         </div>

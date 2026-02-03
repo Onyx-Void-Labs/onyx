@@ -44,17 +44,18 @@ export const processSmartInput = (content: string): string => {
         if (sym.trigger && finalContent.endsWith(sym.trigger)) {
             const triggerLen = sym.trigger.length;
 
-            // Boundary Check: Ensure we aren't part of a larger word (e.g. 'calpha' -> no)
-            // But user specifically requested '3alpha' -> '3\alpha', so we allow alphanumeric prefixes?
-            // User said: "if i do 3xalpha it does not render... if i try and do (x/y)/z..."
-            // Updated rule: Allow ANY prefix EXCEPT '\' (to prevent loops).
-
+            // Get character before the trigger
             const charBefore = finalContent[finalContent.length - triggerLen - 1];
 
-            // Critical Loop Prevention: If already escaped, ignore.
+            // CRITICAL: Prevent double conversion
+            // If charBefore is '\', we're already at a LaTeX command - skip!
             if (charBefore === '\\') continue;
 
-            // If we are strictly at the end, replace.
+            // Also check if the content already ends with the command
+            // This prevents re-processing on cursor re-entry
+            if (finalContent.endsWith(sym.cmd)) continue;
+
+            // Safe to replace
             finalContent = finalContent.slice(0, -triggerLen) + sym.cmd + " ";
             break;
         }
