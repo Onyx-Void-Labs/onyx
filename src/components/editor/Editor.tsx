@@ -4,8 +4,7 @@ import { EditorBlock } from './Block';
 import { BlockType } from '../../types';
 import { MATH_SYMBOLS, MathSymbol } from '../../data/mathSymbols';
 import { useEditor } from '../../hooks/useEditor';
-import { InlineMath } from 'react-katex';
-import 'katex/dist/katex.min.css';
+import { LazyInlineMath, preloadMath } from './MathWrappers';
 import { processSmartInput } from '../../utils/smartMath';
 
 const COMMAND_OPTIONS: { type: BlockType; label: string; indicator: string }[] = [
@@ -18,6 +17,11 @@ const COMMAND_OPTIONS: { type: BlockType; label: string; indicator: string }[] =
 ];
 
 export default function Editor({ activeNoteId, onSave }: { activeNoteId: number | null; onSave: () => void; }) {
+    const {
+        blocks, setBlocks, updateBlock, addBlock,
+        splitBlock, mergeBlock, undo, redo, handlePaste
+    } = useEditor([]);
+
     const [title, setTitle] = useState("");
     const [focusedId, setFocusedId] = useState<string | null>(null);
     const [zoom, setZoom] = useState(1.0);
@@ -27,11 +31,14 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
     const mathMenuScrollRef = useRef<HTMLDivElement>(null);
     const titleRef = useRef<HTMLInputElement>(null);
     const pendingCursor = useRef<{ id: string; pos: number } | null>(null);
+    const blocksRef = useRef<any[]>(blocks);
+    const titleStateRef = useRef<string>(title);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const loadedNoteIdRef = useRef<number | null>(null);
 
-    const {
-        blocks, setBlocks, updateBlock, addBlock,
-        splitBlock, mergeBlock, undo, redo, handlePaste
-    } = useEditor([]);
+    // Keep refs in sync
+    useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+    useEffect(() => { titleStateRef.current = title || ""; }, [title]);
 
     const [commandMenu, setCommandMenu] = useState<{
         isOpen: boolean; x: number; y: number; blockId: string | null; selectedIndex: number; filterText: string; direction: 'up' | 'down'; triggerIdx: number;
@@ -77,37 +84,67 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
     }, [commandMenu?.selectedIndex, mathMenu?.selectedIndex, commandMenu?.isOpen, mathMenu?.isOpen]);
 
     // --- LOAD NOTE ---
+    // --- LOAD NOTE ---
     useEffect(() => {
-        if (!activeNoteId) { setTitle(""); setBlocks([]); return; }
+        let isCancelled = false;
+        if (!activeNoteId) {
+            setTitle("");
+            setBlocks([]);
+            loadedNoteIdRef.current = null;
+            return;
+        }
+
         invoke<any>("get_note_content", { id: activeNoteId }).then(data => {
+            if (isCancelled) return;
             if (data) {
                 const parsed = data.content ? JSON.parse(data.content) : [{ id: crypto.randomUUID(), type: "p", content: "" }];
                 setTitle(data.title || ""); // Keep empty for new notes
                 setBlocks(parsed);
                 loadedRef.current = JSON.stringify({ t: data.title || "", c: parsed });
+                loadedNoteIdRef.current = activeNoteId;
+
                 // Auto-focus title for new notes (empty title)
                 if (!data.title) {
                     setTimeout(() => titleRef.current?.focus(), 50);
                 }
             }
         });
+
+        return () => { isCancelled = true; };
     }, [activeNoteId, setBlocks]);
 
     // --- AUTO SAVE ---
     useEffect(() => {
         if (!activeNoteId) return;
-        // Default to "Untitled" if title is empty when saving
-        const saveTitle = title.trim() || "Untitled";
-        const current = JSON.stringify({ t: title, c: blocks });
+
+        // CRITICAL: Don't save if we haven't loaded the data for this note ID yet
+        if (loadedNoteIdRef.current !== activeNoteId) return;
+
+        // Capture current state for this effect cycle
+        const noteIdToSave = activeNoteId;
+        const titleToSave = titleStateRef.current?.trim() || "Untitled";
+        const blocksToSave = [...blocksRef.current];
+        const current = JSON.stringify({ t: titleStateRef.current, c: blocksRef.current });
+
         if (current === loadedRef.current) return;
         setIsSaving(true);
+
         const t = setTimeout(async () => {
-            await invoke("update_note", { id: activeNoteId, title: saveTitle, content: JSON.stringify(blocks) });
+            await invoke("update_note", { id: noteIdToSave, title: titleToSave, content: JSON.stringify(blocksToSave) });
             loadedRef.current = current;
             setIsSaving(false);
             onSave();
-        }, 800);
-        return () => clearTimeout(t);
+        }, 400);
+
+        return () => {
+            clearTimeout(t);
+            // Instant save on unmount/switch - use captured values, not current refs
+            const finalCurrent = JSON.stringify({ t: titleStateRef.current, c: blocksToSave });
+            if (finalCurrent !== loadedRef.current) {
+                invoke("update_note", { id: noteIdToSave, title: titleToSave, content: JSON.stringify(blocksToSave) })
+                    .then(() => onSave());
+            }
+        };
     }, [blocks, title, activeNoteId, onSave]);
 
     // --- CURSOR RESTORATION (SYNCHRONOUS) ---
@@ -133,6 +170,7 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
         return MATH_SYMBOLS.filter(s => s.name.toLowerCase().includes(filter) || s.cmd.toLowerCase().includes(filter) || s.keywords.includes(filter)).slice(0, 50);
     }, [mathMenu]);
 
+
     // --- MENU POSITIONING HELPER ---
     const getMenuPosition = (rect: DOMRect, height: number = 300): { y: number; direction: 'up' | 'down' } => {
         const spaceBelow = window.innerHeight - rect.bottom;
@@ -148,6 +186,7 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
         if (!block) return;
 
         if (type === 'math') {
+            preloadMath();
             updateBlock(commandMenu.blockId, "", "math", true);
             setCommandMenu(null);
             setFocusedId(commandMenu.blockId);
@@ -233,9 +272,10 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
             if (content === '# ') { updateBlock(id, '', 'h1', true); setFocusedId(id); }
             if (content === '## ') { updateBlock(id, '', 'h2', true); setFocusedId(id); }
             if (content === '### ') { updateBlock(id, '', 'h3', true); setFocusedId(id); }
-            if (content === '$ ') { updateBlock(id, '', 'math', true); setFocusedId(id); }
-            if (content === '$$ ') { updateBlock(id, '', 'math', true); setFocusedId(id); }
+            if (content === '$$ ') { preloadMath(); updateBlock(id, '', 'math', true); setFocusedId(id); }
         }
+        // Preload math early when user types $$
+        if (content === '$$') preloadMath();
     };
 
     const handleKeyDown = (e: React.KeyboardEvent, id: string, index: number) => {
@@ -372,7 +412,11 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
     if (!activeNoteId) return <div className="flex-1 bg-zinc-950 flex items-center justify-center text-zinc-700 font-mono text-xs uppercase tracking-widest select-none">Awaiting Input...</div>;
 
     return (
-        <main className="flex-1 h-screen bg-zinc-950 text-white p-16 pb-[50vh] overflow-y-auto relative custom-scrollbar w-full max-w-full" onClick={() => { }}>
+        <main
+            ref={scrollContainerRef}
+            className="flex-1 h-screen bg-zinc-950 text-white p-16 pb-[50vh] overflow-y-auto relative custom-scrollbar w-full max-w-full"
+            onClick={() => { }}
+        >
             <div className="absolute top-4 right-8 text-[10px] uppercase tracking-widest font-black select-none">
                 {isSaving ? <span className="text-purple-500 animate-pulse">Syncing...</span> : <span className="text-zinc-800">Synced</span>}
             </div>
@@ -398,6 +442,8 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
                     placeholder="Untitled"
                     style={{ fontSize: `${zoom * 5}rem` }}
                 />
+
+                {/* BLOCKS */}
                 <div className="flex flex-col gap-2 w-full max-w-full">
                     {blocks.map((block, index) => (
                         <EditorBlock
@@ -410,11 +456,12 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
                             zoom={zoom}
                         />
                     ))}
-                    <div className="h-40 cursor-text" onClick={() => {
-                        if (blocks.length > 0) return;
-                        addBlock(null);
-                    }} />
                 </div>
+
+                <div className="h-40 cursor-text" onClick={() => {
+                    if (blocks.length > 0) return;
+                    addBlock(null);
+                }} />
             </div>
 
             {/* COMMAND MENU */}
@@ -449,7 +496,7 @@ export default function Editor({ activeNoteId, onSave }: { activeNoteId: number 
                     <div ref={mathMenuScrollRef} className="max-h-80 overflow-y-auto no-scrollbar flex flex-col">
                         {filteredMath.map((symbol, i) => (
                             <button key={symbol.cmd} onClick={() => insertMathSymbol(symbol)} className={`flex items-center gap-4 w-full px-6 py-3 rounded-lg transition-colors duration-75 text-left ${mathMenu.selectedIndex === i ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-zinc-800/40 hover:text-zinc-300'}`}>
-                                <div className={`w-10 h-10 shrink-0 flex items-center justify-center bg-black/40 rounded ${mathMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-500'}`}><InlineMath math={symbol.cmd} /></div>
+                                <div className={`w-10 h-10 shrink-0 flex items-center justify-center bg-black/40 rounded ${mathMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-500'}`}><LazyInlineMath math={symbol.cmd} /></div>
                                 <div className="flex flex-col"><span className={`text-base font-bold ${mathMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-400'}`}>{symbol.name}</span><span className="text-xs font-mono opacity-40">{symbol.cmd}</span></div>
                             </button>
                         ))}

@@ -10,7 +10,7 @@ interface SidebarProps {
     onSelectNote: (id: number, forceNew: boolean) => void;
     activeNoteId: number | null;
     notes: Note[];
-    refreshNotes: () => void;
+    refreshNotes: () => Promise<void>;
     openTabs: number[];
     onDeleteNote: (id: number) => void;
     onOpenSearch: () => void;
@@ -32,7 +32,7 @@ export default function Sidebar({
                 title: "",
                 content: ""
             });
-            refreshNotes();
+            await refreshNotes(); // Wait for notes to refresh before selecting
             onSelectNote(newId, true);
         } catch (error) {
             console.error("Failed to create note:", error);

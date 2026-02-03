@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useLayoutEffect } from 'react';
-import { BlockMath, InlineMath } from 'react-katex';
+import { LazyBlockMath, LazyInlineMath } from './MathWrappers';
 import { Block, BlockType } from '../../types';
 
 // Matching user's simple RenderedParagraph logic but keeping markdown support for "Phase 4"
@@ -10,7 +10,7 @@ const RenderedContent = ({ text }: { text: string }) => {
     return (
         <>
             {parts.map((part, i) => {
-                if (i % 2 === 1) return <span key={i} className="text-purple-400 px-1 inline-block"><InlineMath math={part} /></span>;
+                if (i % 2 === 1) return <span key={i} className="text-purple-400 px-1 inline-block"><LazyInlineMath math={part} /></span>;
                 return <span key={i}>{part}</span>;
             })}
         </>
@@ -26,16 +26,23 @@ interface BlockProps {
     onKeyDown: (e: React.KeyboardEvent, id: string, index: number) => void;
     onPaste: (e: React.ClipboardEvent, id: string) => void;
     zoom: number;
+    onResize?: (id: string, height: number) => void;
 }
 
-export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, onFocus, onKeyDown, onPaste, zoom }: BlockProps) => {
+export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, onFocus, onKeyDown, onPaste, zoom, onResize }: BlockProps) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
     const wasClicked = useRef(false); // Track if focus came from a click
 
     useLayoutEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
             textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+        }
+        // Report height for virtualization
+        if (containerRef.current && onResize) {
+            // Add a small buffer or ensure exact measurement
+            onResize(block.id, containerRef.current.getBoundingClientRect().height);
         }
     }, [block.content, zoom, isFocused, block.type]);
 
@@ -60,6 +67,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
     if (block.type === 'math') {
         return (
             <div
+                ref={containerRef}
                 className="group relative w-full mb-6 px-8"
                 onMouseDown={() => { wasClicked.current = true; }} // Logic for Math click
                 onClick={(e) => { e.stopPropagation(); onFocus(block.id); }}
@@ -81,7 +89,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
                     )}
                     <div className="flex justify-center overflow-x-auto py-2 custom-scrollbar">
                         <div className="text-3xl text-zinc-200">
-                            <BlockMath math={block.content || "\\text{Empty Equation}"} />
+                            <LazyBlockMath math={block.content || "\\text{Empty Equation}"} />
                         </div>
                     </div>
                 </div>
@@ -93,7 +101,7 @@ export const EditorBlock = React.memo(({ block, isFocused, index, updateBlock, o
     const textClasses = block.type.startsWith('h') ? 'text-zinc-100 tracking-tighter' : 'text-zinc-400';
 
     return (
-        <div className="group relative w-full px-8 py-1">
+        <div ref={containerRef} className="group relative w-full px-8 py-1">
             <div className="absolute left-2 top-2.5 bottom-2.5 w-1 rounded-full transition-all duration-300 bg-zinc-800 opacity-20 group-hover:opacity-100" />
 
             {isFocused ? (

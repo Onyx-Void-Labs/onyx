@@ -122,6 +122,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onR
     const manyTabs = tabs.length > 6;
 
     const handleMouseDown = (e: React.MouseEvent, index: number, tabId: number) => {
+        wasDragging.current = false; // Reset drag state on new interaction
         if (e.button === 0 && tabs.length > 1) {
             e.preventDefault();
             setDragState({
