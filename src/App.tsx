@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/ui/Sidebar";
-import Editor from "./components/editor/Editor";
+import Editor from "./components/editor/EditorV2"; // Using CodeMirror 6 editor
 import TabBar from "./components/ui/TabBar";
 import Titlebar from "./components/ui/TitleBar";
 import SearchModal from "./components/ui/SearchModal";
@@ -32,8 +32,8 @@ export default function App() {
         e.preventDefault();
         setSearchOpen(true);
       }
-      // Ctrl+B - Toggle sidebar
-      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+      // Ctrl+\ - Toggle sidebar (VS Code style)
+      if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
         e.preventDefault();
         setSidebarCollapsed(prev => !prev);
       }
