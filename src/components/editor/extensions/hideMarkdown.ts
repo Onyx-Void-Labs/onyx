@@ -10,27 +10,20 @@
 import { EditorView, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
 
-// Decoration to hide text (zero-width, invisible)
-const hiddenMark = Decoration.mark({ class: 'cm-hidden-formatting' });
+// Decoration to hide text completely (replaced with nothing)
+// This avoids layout shifts and "invisible character" width issues
+const hiddenMark = Decoration.replace({});
 
-// CSS for hidden marks
-export const hideMarkdownTheme = EditorView.theme({
-    '.cm-hidden-formatting': {
-        fontSize: '0 !important',
-        width: '0 !important',
-        display: 'inline-block',
-        overflow: 'hidden',
-        verticalAlign: 'baseline',
-    },
-});
+// Theme not needed anymore as we use replacement instead of styling
+export const hideMarkdownTheme = EditorView.theme({});
 
 interface FormatMatch {
     fullStart: number;  // Start of entire match including markers
     fullEnd: number;    // End of entire match including markers
     openStart: number;  // Start of opening marker
     openEnd: number;    // End of opening marker
-    closeStart: number; // Start of closing marker
-    closeEnd: number;   // End of closing marker
+    closeStart: number; // Start of closing marker (-1 if no closing)
+    closeEnd: number;   // End of closing marker (-1 if no closing)
 }
 
 /**
@@ -53,6 +46,7 @@ export const hideMarkdownPlugin = ViewPlugin.fromClass(class {
         const builder = new RangeSetBuilder<Decoration>();
         const doc = view.state.doc;
         const cursorPos = view.state.selection.main.head;
+        const cursorLine = doc.lineAt(cursorPos).number;
 
         const matches: FormatMatch[] = [];
 
@@ -62,10 +56,19 @@ export const hideMarkdownPlugin = ViewPlugin.fromClass(class {
             const text = line.text;
             const lineStart = line.from;
 
-            // Note: We DON'T hide heading markers (# ## etc) because:
-            // 1. They're at the start of the line and hiding shifts text
-            // 2. They're already styled differently (large, colored)
-            // 3. Obsidian also doesn't fully hide them in Live Preview
+            // Headings: # ## ### etc (only hide if cursor not on this line)
+            const headingMatch = text.match(/^(#{1,6})\s/);
+            if (headingMatch && i !== cursorLine) {
+                // Hide the # and space
+                matches.push({
+                    fullStart: lineStart,
+                    fullEnd: lineStart + headingMatch[0].length + (text.length - headingMatch[0].length),
+                    openStart: lineStart,
+                    openEnd: lineStart + headingMatch[0].length, // Include the space
+                    closeStart: -1,
+                    closeEnd: -1,
+                });
+            }
 
             // Bold **text**
             let match;

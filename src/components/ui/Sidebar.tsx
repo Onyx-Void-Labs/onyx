@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Search, PlusSquare, FileText, Trash2 } from "lucide-react";
+import { Search, PlusSquare, FileText, Trash2, Lock } from "lucide-react";
+import { useState } from "react";
+import LockModal from "./LockModal";
 
 type Note = {
     id: number;
@@ -14,6 +16,7 @@ interface SidebarProps {
     openTabs: number[];
     onDeleteNote: (id: number) => void;
     onOpenSearch: () => void;
+    onLockNote: (id: number, password: string) => Promise<void>;
 }
 
 export default function Sidebar({
@@ -23,8 +26,12 @@ export default function Sidebar({
     refreshNotes,
     openTabs,
     onDeleteNote,
-    onOpenSearch
+    onOpenSearch,
+    onLockNote
 }: SidebarProps) {
+
+    const [lockingNoteId, setLockingNoteId] = useState<number | null>(null);
+    const [lockingNoteTitle, setLockingNoteTitle] = useState("");
 
     const handleNewPage = async () => {
         try {
@@ -39,8 +46,24 @@ export default function Sidebar({
         }
     };
 
+    const handleLockClick = (id: number, title: string) => {
+        setLockingNoteId(id);
+        setLockingNoteTitle(title);
+    }
+
     return (
         <aside className="w-64 h-full bg-gradient-to-b from-zinc-900 to-zinc-950 text-zinc-400 flex flex-col">
+            <LockModal
+                isOpen={!!lockingNoteId}
+                onClose={() => setLockingNoteId(null)}
+                onConfirm={async (password) => {
+                    if (lockingNoteId) {
+                        await onLockNote(lockingNoteId, password);
+                        setLockingNoteId(null);
+                    }
+                }}
+                noteTitle={lockingNoteTitle}
+            />
             {/* ACTION MENU */}
             <div className="p-3 space-y-1">
                 <div
@@ -98,6 +121,20 @@ export default function Sidebar({
                                         {note.title || "Untitled"}
                                     </span>
                                 </div>
+
+                                {/* LOCK BUTTON */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Pass handler up (requires new prop)
+                                        // For now, let's just use the local state and we will add the prop next.
+                                        handleLockClick(note.id, note.title);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 transition-all mr-1"
+                                    title="Lock Note"
+                                >
+                                    <Lock size={12} />
+                                </button>
 
                                 {/* DELETE BUTTON */}
                                 <button

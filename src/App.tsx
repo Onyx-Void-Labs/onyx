@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/ui/Sidebar";
-import Editor from "./components/editor/EditorV2"; // Using CodeMirror 6 editor
+import Editor from "./components/editor/Editor"; // Using CodeMirror 6 editor
 import TabBar from "./components/ui/TabBar";
 import Titlebar from "./components/ui/TitleBar";
 import SearchModal from "./components/ui/SearchModal";
+import { encryptNote } from "./services/SecurityService";
 
 export default function App() {
   const [notes, setNotes] = useState<any[]>([]);
@@ -12,6 +13,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const fetchNotes = async () => {
     try {
@@ -37,6 +39,13 @@ export default function App() {
         e.preventDefault();
         setSidebarCollapsed(prev => !prev);
       }
+
+      // Ctrl+F - Prevent default (Tauri/Browser Find) globally
+      // We handle this inside EditorV2 locally, but we need to stop it elsewhere too
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+      }
+
       // Ctrl+W - Close current tab
       if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
         e.preventDefault();
@@ -125,6 +134,38 @@ export default function App() {
     setTabs(newTabs);
   };
 
+  const handleLockNote = async (id: number, password: string) => {
+    try {
+      // 1. Fetch current content
+      // detailed note structure: { id, title, content, ... }
+      const note: any = await invoke("get_note", { id });
+
+      // 2. Encrypt
+      const encryptedData = await encryptNote(note.content, password);
+      const encryptedContentString = JSON.stringify(encryptedData);
+
+      // 3. Save
+      await invoke("update_note", {
+        id,
+        title: note.title,
+        content: encryptedContentString
+      });
+
+      console.log(`Note ${id} locked successfully.`);
+
+      // Force refresh to ensure UI reflects state if needed? 
+      // Actually, EditorV2 needs to know.
+      // If we locked the ACTIVE note, we should force it to reload.
+      if (activeTabId === id) {
+        setRefreshTrigger(prev => prev + 1);
+      }
+      fetchNotes();
+
+    } catch (e) {
+      console.error("Locking failed", e);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-zinc-950 overflow-hidden select-none rounded-lg">
       {/* Custom Titlebar */}
@@ -143,10 +184,11 @@ export default function App() {
             onSelectNote={openTab}
             activeNoteId={activeTabId}
             notes={notes}
-            refreshNotes={fetchNotes}
+            refreshNotes={async () => { await fetchNotes(); }}
             openTabs={tabs}
             onDeleteNote={handleDeleteNote}
             onOpenSearch={() => setSearchOpen(true)}
+            onLockNote={handleLockNote}
           />
         </div>
 
@@ -162,6 +204,7 @@ export default function App() {
           />
           <Editor
             activeNoteId={activeTabId}
+            refreshTrigger={refreshTrigger}
             onSave={fetchNotes}
           />
         </div>

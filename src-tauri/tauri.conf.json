@@ -9,6 +9,16 @@
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/om-itani/onyx/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwM0JENzNDODEyQTRDRkEKUldUNlRDcUJQTmM3WVBNbjdZSi9Eb0lRaDFZS3o5U0tabVlRUHJTRFA1clZHMGZ4V3N4SVJLTlgK"
+    }
+  },
   "app": {
     "windows": [
       {
