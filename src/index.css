@@ -9,7 +9,8 @@ body {
   font-family: var(--font-sans);
   background-color: #000;
   color: #fff;
-  overflow: hidden; /* Prevent body scroll, use containers */
+  overflow: hidden;
+  /* Prevent body scroll, use containers */
 }
 
 /* --- PREMIUM SCROLLBAR --- */
@@ -23,13 +24,15 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a; /* zinc-800 */
+  background: #27272a;
+  /* zinc-800 */
   border-radius: 99px;
   transition: background 0.2s;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b; /* zinc-600 */
+  background: #52525b;
+  /* zinc-600 */
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -37,34 +40,54 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar {
-    width: 5px;
+  width: 5px;
 }
 
 /* --- ANIMATIONS --- */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  from { transform: translateY(10px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 10px rgba(168, 85, 247, 0.1); }
-    50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.1);
+  }
+
+  50% {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.3);
+  }
 }
 
 /* --- UTILITIES --- */
 .glass {
-    background: rgba(24, 24, 27, 0.6); /* zinc-900/60 */
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(24, 24, 27, 0.6);
+  /* zinc-900/60 */
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .glass-panel {
-    background: linear-gradient(145deg, rgba(24, 24, 27, 0.9), rgba(9, 9, 11, 0.9));
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5);
+  background: linear-gradient(145deg, rgba(24, 24, 27, 0.9), rgba(9, 9, 11, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
 }

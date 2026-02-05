@@ -1,713 +1,884 @@
-import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
+/**
+ * EditorV2
+ * Core CodeMirror 6 editor component for Onyx.
+ * Handles markdown editing, theming, encryption, and custom highlighter extensions.
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { EditorBlock } from './Block';
-import { BlockType } from '../../types';
-import { MATH_SYMBOLS, MathSymbol } from '../../data/mathSymbols';
-import { useEditor } from '../../hooks/useEditor';
-import { LazyInlineMath, preloadMath } from './MathWrappers';
-import { processSmartInput } from '../../utils/smartMath';
+import {
+    EditorView,
+    keymap,
+    drawSelection,
+    placeholder,
+    ViewPlugin,
+    Decoration,
+    type DecorationSet,
+    type ViewUpdate,
+    highlightActiveLine
+} from '@codemirror/view';
+import { EditorState, Extension, Prec } from '@codemirror/state';
+import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown';
+import { languages } from '@codemirror/language-data';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { HighlightStyle, syntaxHighlighting, foldGutter, codeFolding, foldKeymap } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
+import { hideMarkdown } from './extensions/hideMarkdown';
+import { autoPairs } from './extensions/autoPairs';
+import { bulletLists } from './extensions/bulletLists';
+import { mathLivePreview } from './extensions/mathLivePreview';
+import { mathTooltip } from './extensions/mathTooltip';
+import { mathMenuPlugin, mathMenuKeymap, mathMenuStateField, MathMenuState } from './extensions/mathAutocomplete';
+import { MathMenu } from './MathMenu';
+import { FindWidget } from './FindWidget';
 
-const COMMAND_OPTIONS: { type: BlockType; label: string; indicator: string }[] = [
-    { type: 'h1', label: 'Heading 1', indicator: 'H1' },
-    { type: 'h2', label: 'Heading 2', indicator: 'H2' },
-    { type: 'h3', label: 'Heading 3', indicator: 'H3' },
-    { type: 'p', label: 'Paragraph', indicator: 'P' },
-    { type: 'code', label: 'Code Block', indicator: '<>' },
-    { type: 'math', label: 'Math Block', indicator: 'Σ' },
-];
+import { search } from '@codemirror/search';
+import { encryptNote, decryptNote, EncryptedNote } from '../../services/SecurityService';
+import UnlockScreen from '../ui/UnlockScreen';
 
-export default function Editor({ activeNoteId, onSave }: { activeNoteId: number | null; onSave: () => void; }) {
-    const {
-        blocks, setBlocks, updateBlock, addBlock,
-        splitBlock, mergeBlock, undo, redo, handlePaste
-    } = useEditor([]);
 
-    const [title, setTitle] = useState("");
-    const [focusedId, setFocusedId] = useState<string | null>(null);
-    const [zoom, setZoom] = useState(1.0);
-    const [isSaving, setIsSaving] = useState(false);
-    const loadedRef = useRef<string | null>(null);
-    const menuScrollRef = useRef<HTMLDivElement>(null);
-    const mathMenuScrollRef = useRef<HTMLDivElement>(null);
+import 'katex/dist/katex.min.css'; // KaTeX CSS
+
+// ============================================
+// ONYX DARK THEME
+// ============================================
+const onyxTheme = EditorView.theme({
+    '&': {
+        backgroundColor: 'transparent',
+        color: '#a1a1aa',
+        height: '100%',
+    },
+    '&.cm-focused': {
+        outline: 'none',
+    },
+    '.cm-scroller': {
+        fontFamily: 'inherit',
+        fontSize: '1.125rem',
+        lineHeight: '1.75',
+        padding: '0 2rem',
+        overflow: 'auto',
+    },
+    '.cm-content': {
+        caretColor: '#a855f7',
+        padding: '0',
+    },
+    '.cm-cursor': {
+        borderLeftColor: '#a855f7',
+        borderLeftWidth: '2px',
+    },
+
+    '.cm-activeLine': {
+        backgroundColor: 'transparent',
+    },
+    '.cm-gutters': {
+        backgroundColor: 'transparent',
+        border: 'none',
+        color: '#52525b', // zinc-600
+        minHeight: '100%',
+    },
+    '.cm-foldPlaceholder': {
+        backgroundColor: '#27272a',
+        border: 'none',
+        color: '#a1a1aa',
+    },
+    // Fold Gutter Arrows
+    '.cm-foldGutter span': {
+        opacity: '0',
+        transition: 'opacity 0.2s',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100%',
+        transform: 'translateY(3px)',
+    },
+    '.cm-foldGutter span.cm-fold-closed': {
+        opacity: '1',
+        color: '#d4d4d8',
+    },
+    '.cm-gutters:hover .cm-foldGutter span': {
+        opacity: '0.7',
+    },
+    '.cm-gutters:hover .cm-foldGutter span:hover': {
+        opacity: '1',
+    },
+    // Invisible Fold Placeholder
+    '.cm-folded-badge': {
+        display: 'inline-block',
+        width: '0',
+        height: '0',
+        overflow: 'hidden',
+    },
+    // Math Live Preview
+    '.cm-math-live': {
+        display: 'inline-block',
+        position: 'relative',
+        cursor: 'text',
+    },
+    // Tooltip
+    '.cm-tooltip': {
+        backgroundColor: '#18181b', // zinc-900
+        border: '1px solid #27272a', // zinc-800
+        borderRadius: '0.5rem',
+        padding: '0.5rem',
+        color: '#e4e4e7',
+        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
+    },
+    // ========================================================================
+    // SEARCH HIGHLIGHTS
+    // ========================================================================
+
+    // 1. Inactive Match (Purple Highlight)
+    // - Background: Semi-transparent purple
+    // - Layout Push: Margins force text to move, giving matches physical presence
+    // - Padding: Adds breathing room around the text
+    '.cm-searchMatch': {
+        backgroundColor: 'rgba(195, 105, 255, 0.5)',
+        textDecoration: 'none',
+        position: 'relative',
+        margin: '0 3px',
+        padding: '0 4px',
+        display: 'inline-block',
+        lineHeight: '1.2',
+        borderRadius: '0.5em',
+    },
+
+    // 2. Active Match (Pink Highlight)
+    // - Inherits geometry (margin/padding) from base class
+    // - Color: Distinct Pink to indicate current selection
+    '.cm-searchMatch.cm-searchMatch-selected': {
+        backgroundColor: 'rgba(255, 105, 180, 0.7)',
+    },
+    '.cm-searchMatch.cm-searchMatch-selected::after': {
+        display: 'none',
+    },
+
+    // 3. Native Selection (Transparent)
+    // - Set to transparent to avoid conflicts with custom highlights
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+        backgroundColor: 'transparent',
+        borderRadius: '0.5em',
+    },
+
+    // Hide default CodeMirror Search Panel
+    '.cm-panel, .cm-search': {
+        display: 'none !important',
+    },
+    // Blockquote Line Styling
+    '.cm-blockquote-line': {
+        backgroundColor: 'rgba(168, 85, 247, 0.05)',
+        borderLeft: '4px solid #a855f7',
+        borderRadius: '0 4px 4px 0',
+        paddingLeft: '12px !important',
+        marginTop: '0.5rem',
+        marginBottom: '0.5rem',
+    },
+    // Divider Line Styling
+    // BASE CLASS: Always applied. handles layout transparency.
+    '.cm-hr-line': {
+        position: 'relative',
+        margin: '0', /* Remove margin to prevent collapse */
+        paddingTop: '0rem', /* Reduced from 1.5rem to match visual collapse */
+        paddingBottom: '0rem',
+        cursor: 'text',
+        color: 'transparent', /* Hide text by default */
+        lineHeight: '1.75', /* Specific line height match */
+    },
+    // The Purple Line (Pseudo-element)
+    '.cm-hr-line::after': {
+        content: '""',
+        position: 'absolute',
+        top: '50%',
+        left: '0',
+        right: '0',
+        height: '4px',
+        backgroundColor: '#a855f7',
+        borderRadius: '2px',
+        transform: 'translateY(-50%)',
+        pointerEvents: 'none',
+    },
+    // MODIFIER: Active State (Cursor ON line)
+    // Simply makes text visible and hides the purple line.
+    // Layout properties (padding, etc) are inherited from base class, guaranteeing NO SHIFT.
+    '.cm-hr-active': {
+        color: 'inherit !important',
+    },
+    '.cm-hr-active span': {
+        color: 'inherit !important', /* Force text visibility on inner span */
+    },
+    '.cm-hr-active::after': {
+        display: 'none', /* Hide the purple line */
+    }
+}, { dark: true });
+
+// ============================================
+// HIGHLIGHTING STYLE
+// ============================================
+const onyxHighlighting = HighlightStyle.define([
+    { tag: tags.heading1, color: '#e4e4e7', fontWeight: '800', fontSize: '2.25em' },
+    { tag: tags.heading2, color: '#e4e4e7', fontWeight: '700', fontSize: '1.75em' },
+    { tag: tags.heading3, color: '#e4e4e7', fontWeight: '600', fontSize: '1.5em' },
+    { tag: tags.heading4, color: '#e4e4e7', fontWeight: '600', fontSize: '1.25em' },
+    { tag: tags.heading5, color: '#e4e4e7', fontWeight: '600', fontSize: '1.1em' },
+    { tag: tags.heading6, color: '#e4e4e7', fontWeight: '600', fontSize: '1em' },
+    { tag: tags.strong, color: '#e4e4e7', fontWeight: '700' },
+    { tag: tags.emphasis, fontStyle: 'italic', color: '#d4d4d8' },
+    { tag: tags.link, color: '#a855f7', textDecoration: 'underline' },
+    { tag: tags.url, color: '#71717a' },
+    { tag: tags.quote, color: '#a1a1aa', borderLeft: '2px solid #3f3f46', fontStyle: 'italic' },
+    { tag: tags.monospace, color: '#f472b6', backgroundColor: 'rgba(244, 114, 182, 0.1)', borderRadius: '3px', padding: '0 2px' }, // Inline code (Pink)
+    { tag: tags.comment, color: '#52525b', fontStyle: 'italic' },
+    { tag: tags.list, color: '#a1a1aa' },
+    { tag: tags.processingInstruction, color: '#71717a' }, // Math delimiters
+]);
+
+// Markdown Styling Plugin
+const markdownDecorations = ViewPlugin.fromClass(class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+        this.decorations = this.compute(view);
+    }
+    update(u: ViewUpdate) {
+        if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = this.compute(u.view);
+    }
+    compute(view: EditorView): DecorationSet {
+        const widgets = [];
+        const selection = view.state.selection.main;
+
+        for (const { from, to } of view.visibleRanges) {
+            for (let pos = from; pos <= to;) {
+                const line = view.state.doc.lineAt(pos);
+                const text = line.text.trim();
+                const isCursorOnLine = selection.head >= line.from && selection.head <= line.to;
+
+                // Blockquote
+                if (text.startsWith('>')) {
+                    widgets.push(Decoration.line({ class: 'cm-blockquote-line' }).range(line.from));
+                }
+                // Divider (---, ***, ___)
+                else if (/^(\*\*\*|---|___)$/.test(text)) {
+                    // Always add base class (Layout)
+                    let className = 'cm-hr-line';
+
+                    // If cursor is on line, add active modifier (Visibility)
+                    if (isCursorOnLine) {
+                        className += ' cm-hr-active';
+                    }
+
+                    widgets.push(Decoration.line({ class: className }).range(line.from));
+                }
+
+                pos = line.to + 1;
+            }
+        }
+        return Decoration.set(widgets);
+    }
+}, {
+    decorations: v => v.decorations
+});
+
+// Helper to wrap selection
+function wrapSelection(view: EditorView, wrapper: string) {
+    const { state, dispatch } = view;
+    const updates = state.selection.ranges.map(range => {
+        if (range.empty) return null;
+        return {
+            range,
+            changes: [
+                { from: range.from, insert: wrapper },
+                { from: range.to, insert: wrapper }
+            ]
+        };
+    }).filter(u => u !== null);
+
+    if (updates.length > 0) {
+        dispatch(state.update({
+            changes: updates.flatMap(u => u!.changes),
+            scrollIntoView: true,
+            selection: { anchor: updates[0]!.range.from + wrapper.length } // Imperfect for multi-select but works for single
+        }));
+        return true;
+    }
+    return false;
+}
+
+
+interface EditorProps {
+    activeNoteId: number | null;
+    onSave: () => void;
+    refreshTrigger?: number; // Prop to force re-check of content
+}
+
+export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: EditorProps) {
+    // UI State
+    const [title, setTitle] = useState('');
+    const [zoom, setZoom] = useState(1);
+
+    // Refs for mutable state
+    const editorRef = useRef<HTMLDivElement>(null);
+    const [mathMenuData, setMathMenuData] = useState<MathMenuState | null>(null);
+    const [showFindWidget, setShowFindWidget] = useState(false);
+    // Signal to force-focus the FindWidget (increments to trigger effect)
+    const [findFocusSignal, setFindFocusSignal] = useState(0);
+    // Signal for Live Search Updates (re-count matches on doc/selection change)
+    const [searchTick, setSearchTick] = useState(0);
+    const viewRef = useRef<EditorView | null>(null);
     const titleRef = useRef<HTMLInputElement>(null);
-    const pendingCursor = useRef<{ id: string; pos: number } | null>(null);
-    const blocksRef = useRef<any[]>(blocks);
-    const titleStateRef = useRef<string>(title);
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const loadedNoteIdRef = useRef<number | null>(null);
 
-    // Keep refs in sync
-    useEffect(() => { blocksRef.current = blocks; }, [blocks]);
-    useEffect(() => { titleStateRef.current = title || ""; }, [title]);
+    // Data refs - SINGLE SOURCE OF TRUTH
+    const noteIdRef = useRef<number | null>(null);
+    const titleValueRef = useRef<string>('');
+    const contentValueRef = useRef<string>('');
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isLoadingRef = useRef(false);
 
-    const [commandMenu, setCommandMenu] = useState<{
-        isOpen: boolean; x: number; y: number; blockId: string | null; selectedIndex: number; filterText: string; direction: 'up' | 'down'; triggerIdx: number;
-    } | null>(null);
+    // Security State
+    const [isLocked, setIsLocked] = useState(false);
+    // const [decryptedContent, setDecryptedContent] = useState<string | null>(null); // Unused
+    const sessionPasswordRef = useRef<string | null>(null);
 
-    const [mathMenu, setMathMenu] = useState<{
-        isOpen: boolean; x: number; y: number; blockId: string | null; selectedIndex: number; filterText: string; direction: 'up' | 'down'; triggerIdx: number;
-    } | null>(null);
+    // ============================================
+    // SAVE FUNCTION
+    // ============================================
+    const saveToDatabase = async (instantCallback = false) => {
+        // LOCK: Don't save while loading
+        if (isLoadingRef.current) return;
 
-    // --- ZOOM LISTENER ---
+        const id = noteIdRef.current;
+        if (!id || id !== activeNoteId) return;
+
+        const titleVal = titleValueRef.current;
+        let contentVal = contentValueRef.current;
+
+        // --- SECURITY CHECK ---
+        // If the note is locked, we must re-encrypt the content before saving.
+        // If we don't have a session password, we abort save to prevent overwriting with plain text.
+        if (isLocked) {
+            if (sessionPasswordRef.current) {
+                try {
+                    const encrypted = await encryptNote(contentVal, sessionPasswordRef.current);
+                    contentVal = JSON.stringify(encrypted);
+                } catch (e) {
+                    console.error("Encryption failed during save", e);
+                    return; // Critical failure, do not save
+                }
+            } else {
+                console.warn("Attempted to save locked note without session password. Aborting.");
+                return;
+            }
+        }
+
+        // Safeguard: Don't save empty content (prevents accidental data loss)
+        if (contentVal.length === 0) {
+            // Still save title
+            try {
+                await invoke('update_note', {
+                    id,
+                    title: titleVal,
+                    content: JSON.stringify([{ id: 'main', type: 'p', content: '' }])
+                });
+                if (instantCallback) onSave();
+            } catch (e) {
+                console.error('Save failed:', e);
+            }
+            return;
+        }
+
+        try {
+            await invoke('update_note', {
+                id,
+                title: titleVal,
+                content: JSON.stringify([{ id: 'main', type: 'p', content: contentVal }])
+            });
+            if (instantCallback) onSave();
+        } catch (e) {
+            console.error('Save failed:', e);
+        }
+    };
+
+    // Debounced save for content
+    const scheduleSave = () => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(async () => {
+            await saveToDatabase(true); // Call onSave after debounce
+        }, 1000);
+    };
+
+    // ============================================
+    // LOAD NOTE
+    // ============================================
+    useEffect(() => {
+        if (!activeNoteId) {
+            noteIdRef.current = null;
+            setTitle('');
+            setIsLocked(false); // Ensure lock state is reset
+            // setDecryptedContent(null);
+            sessionPasswordRef.current = null;
+            // Clear editor
+            if (viewRef.current) {
+                viewRef.current.dispatch({
+                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: '' }
+                });
+            }
+            return;
+        }
+
+        // Skip if already loaded (prevents re-fetching on small updates)
+        // We use a simple check: if IDs match, we usually skip, UNLESS refreshTrigger changed (we can't easily track change direction here without ref,
+        // but since we want to fix bugs, let's just ALLOW reloading if we clearly aren't sure).
+        // Safest fix for "Notes Vanished": Just load it. The network/invoke overhead is local and tiny.
+        // Optimization can come later.
+
+        // However, we MUST NOT overwrite user work if they are typing and we spuriously reload.
+        // But `activeNoteId` changing implies a real switch.
+        // The only case is 'refreshTrigger' forcing a reload on the SAME note (Locking).
+
+        if (noteIdRef.current === activeNoteId && typeof refreshTrigger !== 'undefined' && refreshTrigger === 0) {
+            // If this is just a re-render and Trigger is 0, maybe skip?
+            // But treating '0' as special is dangerous.
+        }
+
+        // SIMPLIFIED LOGIC:
+        // Always load. The specific "skip" optimization was causing the "Same Note" bug.
+        // We will just protect against overwriting dirty state if needed, but for now,
+        // if activeNoteId changes, we LOAD.
+
+        console.log("Loading note:", activeNoteId);
+
+        isLoadingRef.current = true;
+
+        invoke<any>('get_note_content', { id: activeNoteId }).then(async (result) => {
+            if (!result) {
+                isLoadingRef.current = false;
+                return;
+            }
+
+            // --- SECURITY CHECK DISABLED (Emergency Rollback) ---
+            // let loadedContent = result.content;
+            // let locked = false;
+
+            // try {
+            //     const parsed = JSON.parse(loadedContent);
+            //     if (parsed.iv && parsed.salt && parsed.data) {
+            //         locked = true;
+            //     }
+            // } catch (e) {
+            //     // Not JSON, plain text
+            // }
+
+            // // Update Lock State
+            // setIsLocked(false); // Force Unlocked
+
+            // // if (locked) { ... } // Disabled Locked Flow
+
+            let loadedContent = result.content;
+            if (!loadedContent) loadedContent = "";
+            setIsLocked(false);
+
+
+            // Normal Flow
+            // Handles empty/null/undefined content safely
+            if (!loadedContent) loadedContent = "";
+
+            // 1. Parse content (if not locked)
+            let content = '';
+            try {
+                // Handle both JSON format and raw string
+                if (loadedContent.trim().startsWith('[')) {
+                    const parsed = JSON.parse(loadedContent);
+                    if (Array.isArray(parsed)) {
+                        content = parsed.map((b: any) => b.content || '').join('\n\n');
+                    } else {
+                        content = loadedContent || '';
+                    }
+                } else {
+                    content = loadedContent || '';
+                }
+            } catch (e) {
+                content = loadedContent || '';
+            }
+
+            // 2. Update refs immediately (Single Source of Truth)
+            noteIdRef.current = activeNoteId;
+            titleValueRef.current = result.title || '';
+            contentValueRef.current = content;
+
+            // 3. Update UI
+            setTitle(result.title || '');
+
+            // Update Editor
+            if (viewRef.current) {
+                // We use a transaction that doesn't trigger our own update listener logic if possible, 
+                // but our listener checks isLoadingRef, so it's safe.
+                viewRef.current.dispatch({
+                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: content }
+                });
+            }
+
+            isLoadingRef.current = false;
+
+            // Focus title if empty (User preference)
+            if (!result.title) {
+                setTimeout(() => titleRef.current?.focus(), 50);
+            }
+        }).catch(e => {
+            console.error('Load failed:', e);
+            isLoadingRef.current = false;
+        });
+    }, [activeNoteId]);
+
+    // ============================================
+    // INITIALIZE CODEMIRROR
+    // ============================================
+    useEffect(() => {
+        if (!editorRef.current) return;
+
+        // Clean up existing view if any (for HMR)
+        if (viewRef.current) {
+            viewRef.current.destroy();
+            viewRef.current = null;
+        }
+
+        const extensions: Extension[] = [
+            EditorView.editable.of(true),
+            EditorState.allowMultipleSelections.of(true),
+            history(),
+            drawSelection(),
+            highlightActiveLine(),
+            EditorView.lineWrapping,
+            markdownDecorations, // Add custom decorations
+            autoPairs,
+            hideMarkdown, // Hide markdown syntax
+
+            keymap.of([
+                {
+                    key: 'Mod-f', run: () => {
+                        setShowFindWidget(true);
+                        setFindFocusSignal(prev => prev + 1); // Signal to focus
+                        return true;
+                    }
+                }, // Ctrl+F
+
+                // Formatting shortcuts (Highest Priority)
+                { key: 'Ctrl-b', run: (view) => { wrapSelection(view, '**'); return true; } },
+                { key: 'Ctrl-i', run: (view) => { wrapSelection(view, '*'); return true; } },
+                { key: 'Ctrl-`', run: (view) => { wrapSelection(view, '`'); return true; } },
+                { key: 'Ctrl-m', run: (view) => { wrapSelection(view, '$'); return true; } },
+                { key: 'Ctrl-Shift-m', run: (view) => { wrapSelection(view, '$$'); return true; } },
+
+                // Disable Comment shortcut (Ctrl-/)
+                { key: 'Ctrl-/', run: () => true },
+
+                // Mac equivalents
+                { key: 'Cmd-b', run: (view) => { wrapSelection(view, '**'); return true; } },
+                { key: 'Cmd-i', run: (view) => { wrapSelection(view, '*'); return true; } },
+                { key: 'Cmd-`', run: (view) => { wrapSelection(view, '`'); return true; } },
+                { key: 'Cmd-m', run: (view) => { wrapSelection(view, '$'); return true; } },
+                { key: 'Cmd-Shift-m', run: (view) => { wrapSelection(view, '$$'); return true; } },
+
+                ...defaultKeymap,
+                ...historyKeymap,
+                ...foldKeymap,
+                indentWithTab,
+                ...markdownKeymap,
+            ]),
+
+            markdown({
+                base: markdownLanguage,
+                codeLanguages: languages,
+                extensions: [
+                    { remove: ['SetextHeading'] } // Disable setext headers (text followed by ---)
+                ]
+            }),
+
+            foldGutter({
+                markerDOM: (open) => {
+                    const el = document.createElement("span");
+                    // Add class for Hybrid Visibility logic
+                    if (!open) el.className = "cm-fold-closed";
+
+                    if (open) {
+                        el.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`; // Down
+                    } else {
+                        el.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`; // Right
+                    }
+                    return el;
+                }
+            }),
+            codeFolding({
+                placeholderDOM: (_view, onclick) => {
+                    const el = document.createElement("span");
+                    el.className = "cm-folded-badge";
+                    el.textContent = "..."; // Content exists but hidden via CSS
+                    el.onclick = onclick;
+                    return el;
+                }
+            }),
+
+            onyxTheme,
+            syntaxHighlighting(onyxHighlighting),
+            hideMarkdown,
+            autoPairs, // Auto-close pairs: $ ` * ( [ {
+            bulletLists, // Nested bullet styling
+
+            // Math Support
+            mathLivePreview,
+            mathTooltip, // Re-enabled for real-time preview
+            mathMenuStateField, // REQUIRED: Register the state field!
+            mathMenuPlugin, // The Logic Plugin
+            Prec.highest(keymap.of(mathMenuKeymap)), // The Keyboard Interceptor (Highest Priority)
+            EditorView.updateListener.of((update) => {
+                // Always check if the state field changed, even if doc didn't change (e.g. index update)
+                const prevState = update.startState.field(mathMenuStateField, false);
+                const nextState = update.state.field(mathMenuStateField, false);
+
+                if (prevState !== nextState) { // Reference comparison works because we create new object on update
+                    setMathMenuData(nextState ? { ...nextState } : null);
+                }
+            }),
+            search({ top: true }), // Enable Search commands without default UI (hidden by CSS)
+
+            placeholder("Start writing...\n\nUse # for headings, **bold**, *italic*, `code`, $math$"),
+
+            // Content change handler
+            EditorView.updateListener.of(update => {
+                // Only update if document ACTUALLY changed
+                if (update.docChanged) {
+                    // Update ref
+                    contentValueRef.current = update.state.doc.toString();
+
+                    // Only schedule save if NOT loading
+                    if (!isLoadingRef.current) {
+                        scheduleSave();
+                    }
+                }
+
+                // LIVE SEARCH RE-INDEXING
+                // If the doc changed OR selection changed, and search is open, triggers re-count.
+                if ((update.docChanged || update.selectionSet) && showFindWidget) {
+                    setSearchTick(prev => prev + 1);
+                }
+
+                // LIVE SEARCH RE-INDEXING
+                // If the doc changed OR selection changed, and search is open, triggers re-count.
+                if ((update.docChanged || update.selectionSet) && showFindWidget) {
+                    setSearchTick(prev => prev + 1);
+                }
+            }),
+
+            // Instant save on blur (when user switches tabs/clicks away)
+            EditorView.domEventHandlers({
+                blur: () => {
+                    saveToDatabase(true);
+                }
+            }),
+        ];
+
+        const state = EditorState.create({
+            doc: contentValueRef.current, // CRITICAL: Init with current content in case load finished first
+            extensions,
+        });
+
+        const view = new EditorView({
+            state,
+            parent: editorRef.current,
+        });
+
+        viewRef.current = view;
+
+        return () => {
+            view.destroy();
+            viewRef.current = null;
+        };
+    }, [activeNoteId, refreshTrigger]); // Re-run when note changes or force refresh
+
+    // ============================================
+    // TITLE HANDLERS
+    // ============================================
+    const handleTitleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newTitle = e.target.value;
+        // Update UI
+        setTitle(newTitle);
+        // Update Ref
+        titleValueRef.current = newTitle;
+
+        // INSTANT SAVE FOR TITLE
+        // We bypass debounce because user wants instant Sidebar updates
+        // But we MUST check isLoadingRef to be safe
+        if (!isLoadingRef.current && noteIdRef.current) {
+            try {
+                // Fire and forget - don't await to keep UI responsive
+                saveToDatabase(true);
+            } catch (e) {
+                console.error("Instant title save error", e);
+            }
+        }
+    };
+
+    const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            viewRef.current?.focus();
+        }
+    };
+
+    // ============================================
+    // ZOOM
+    // ============================================
     useEffect(() => {
         const handleWheel = (e: WheelEvent) => {
             if (e.ctrlKey) {
                 e.preventDefault();
-                setZoom(prev => Math.min(Math.max(prev - e.deltaY * 0.001, 0.5), 2.0));
+                setZoom(prev => Math.max(0.5, Math.min(2, prev + (e.deltaY > 0 ? -0.1 : 0.1))));
             }
         };
         window.addEventListener('wheel', handleWheel, { passive: false });
         return () => window.removeEventListener('wheel', handleWheel);
     }, []);
 
-    // --- CLICK OUTSIDE MENUS ---
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            const target = e.target as Node;
-            if (commandMenu?.isOpen && !document.getElementById('onyx-context-menu')?.contains(target)) setCommandMenu(null);
-            if (mathMenu?.isOpen && !document.getElementById('onyx-math-menu')?.contains(target)) setMathMenu(null);
-        };
-        window.addEventListener('mousedown', handleClickOutside);
-        return () => window.removeEventListener('mousedown', handleClickOutside);
-    }, [commandMenu, mathMenu]);
+    const handleUnlock = async (password: string): Promise<boolean> => {
+        try {
+            // Fetch the raw encrypted content again to be sure
+            const result: any = await invoke('get_note', { id: activeNoteId });
+            const encryptedContent = result.content;
 
-    // --- SCROLL TO SELECTED ITEM ---
-    useEffect(() => {
-        if (commandMenu?.isOpen && menuScrollRef.current) {
-            const el = menuScrollRef.current.children[commandMenu.selectedIndex] as HTMLElement;
-            el?.scrollIntoView({ block: 'nearest' });
-        }
-        if (mathMenu?.isOpen && mathMenuScrollRef.current) {
-            const el = mathMenuScrollRef.current.children[mathMenu.selectedIndex] as HTMLElement;
-            el?.scrollIntoView({ block: 'nearest' });
-        }
-    }, [commandMenu?.selectedIndex, mathMenu?.selectedIndex, commandMenu?.isOpen, mathMenu?.isOpen]);
+            // Parse
+            const encryptedData: EncryptedNote = JSON.parse(encryptedContent);
 
-    // --- LOAD NOTE ---
-    // --- LOAD NOTE ---
-    useEffect(() => {
-        let isCancelled = false;
-        if (!activeNoteId) {
-            setTitle("");
-            setBlocks([]);
-            loadedNoteIdRef.current = null;
-            return;
-        }
+            // Decrypt
+            const decryptedText = await decryptNote(encryptedData, password);
 
-        invoke<any>("get_note_content", { id: activeNoteId }).then(data => {
-            if (isCancelled) return;
-            if (data) {
-                const parsed = data.content ? JSON.parse(data.content) : [{ id: crypto.randomUUID(), type: "p", content: "" }];
-                setTitle(data.title || ""); // Keep empty for new notes
-                setBlocks(parsed);
-                loadedRef.current = JSON.stringify({ t: data.title || "", c: parsed });
-                loadedNoteIdRef.current = activeNoteId;
+            // Success
+            // setDecryptedContent(decryptedText);
+            sessionPasswordRef.current = password; // Store session password for re-encryption on save
+            setIsLocked(false);
 
-                // Auto-focus title for new notes (empty title)
-                if (!data.title) {
-                    setTimeout(() => titleRef.current?.focus(), 50);
-                }
-            }
-        });
-
-        return () => { isCancelled = true; };
-    }, [activeNoteId, setBlocks]);
-
-    // --- AUTO SAVE ---
-    useEffect(() => {
-        if (!activeNoteId) return;
-
-        // CRITICAL: Don't save if we haven't loaded the data for this note ID yet
-        if (loadedNoteIdRef.current !== activeNoteId) return;
-
-        // Capture current state for this effect cycle
-        const noteIdToSave = activeNoteId;
-        const titleToSave = titleStateRef.current?.trim() || "Untitled";
-        const blocksToSave = [...blocksRef.current];
-        const current = JSON.stringify({ t: titleStateRef.current, c: blocksRef.current });
-
-        if (current === loadedRef.current) return;
-        setIsSaving(true);
-
-        const t = setTimeout(async () => {
-            await invoke("update_note", { id: noteIdToSave, title: titleToSave, content: JSON.stringify(blocksToSave) });
-            loadedRef.current = current;
-            setIsSaving(false);
-            onSave();
-        }, 400);
-
-        return () => {
-            clearTimeout(t);
-            // Instant save on unmount/switch - use captured values, not current refs
-            const finalCurrent = JSON.stringify({ t: titleStateRef.current, c: blocksToSave });
-            if (finalCurrent !== loadedRef.current) {
-                invoke("update_note", { id: noteIdToSave, title: titleToSave, content: JSON.stringify(blocksToSave) })
-                    .then(() => onSave());
-            }
-        };
-    }, [blocks, title, activeNoteId, onSave]);
-
-    // --- CURSOR RESTORATION (SYNCHRONOUS) ---
-    useLayoutEffect(() => {
-        if (pendingCursor.current) {
-            const { id, pos } = pendingCursor.current;
-            requestAnimationFrame(() => {
-                const el = document.querySelector(`textarea[data-block-id="${id}"]`) as HTMLTextAreaElement;
-                if (el) {
-                    el.focus();
-                    el.setSelectionRange(pos, pos);
-                }
-                pendingCursor.current = null;
-            });
-        }
-    }, [blocks, focusedId]);
-
-    // --- MENU FILTERING ---
-    const filteredCommands = useMemo(() => COMMAND_OPTIONS.filter(c => c.label.toLowerCase().includes(commandMenu?.filterText.toLowerCase() || "")), [commandMenu?.filterText]);
-    const filteredMath = useMemo(() => {
-        if (!mathMenu) return [];
-        const filter = mathMenu.filterText.toLowerCase().trim();
-        if (!filter) return MATH_SYMBOLS.slice(0, 50); // Show all when no filter
-        return MATH_SYMBOLS.filter(s =>
-            s.name.toLowerCase().includes(filter) ||
-            s.cmd.toLowerCase().includes(filter) ||
-            s.keywords.toLowerCase().includes(filter)
-        ).slice(0, 50);
-    }, [mathMenu?.filterText]);
-
-
-    // --- MENU POSITIONING HELPER ---
-    const getMenuPosition = (rect: DOMRect, height: number = 300): { y: number; direction: 'up' | 'down' } => {
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const direction = spaceBelow < height ? 'up' : 'down';
-        const y = direction === 'down' ? rect.bottom + 10 : rect.top - 10;
-        return { y, direction };
-    };
-
-    // --- ACTIONS ---
-    const transformBlock = (type: BlockType) => {
-        if (!commandMenu?.blockId) return;
-        const block = blocks.find(b => b.id === commandMenu.blockId);
-        if (!block) return;
-
-        if (type === 'math') {
-            preloadMath();
-            updateBlock(commandMenu.blockId, "", "math", true);
-            setCommandMenu(null);
-            setFocusedId(commandMenu.blockId);
-            return;
-        }
-
-        const cleanContent = block.content.slice(0, commandMenu.triggerIdx);
-        updateBlock(commandMenu.blockId, cleanContent, type, true);
-        setCommandMenu(null);
-        setFocusedId(commandMenu.blockId);
-    };
-
-    const insertMathSymbol = (symbol: MathSymbol) => {
-        if (!mathMenu?.blockId) return;
-        const block = blocks.find(b => b.id === mathMenu.blockId);
-        if (!block) return;
-        const lastBackslash = block.content.lastIndexOf('\\');
-        const newContent = block.content.substring(0, lastBackslash) + symbol.cmd + " ";
-        updateBlock(mathMenu.blockId, newContent);
-        setMathMenu(null);
-        setFocusedId(mathMenu.blockId);
-    };
-
-    // --- BLOCK UPDATE HANDLER ---
-    const handleBlockUpdate = (id: string, content: string, type?: BlockType, pushHistory?: boolean, cursorPos?: number) => {
-        let finalContent = content;
-        const block = blocks.find(b => b.id === id);
-        let cursorOffset = 0;
-
-        // Instant Smart Math (Math Block)
-        if (block && block.type === 'math' && (!type || type === 'math')) {
-            finalContent = processSmartInput(content);
-        }
-
-        // NOTE: Inline smart math disabled due to backslash multiplication bug
-        // Will be properly fixed with CodeMirror 6 integration
-        // if (block && block.type === 'p' && finalContent.includes('$')) {
-        //     ...
-        // }
-
-        updateBlock(id, finalContent, type, pushHistory);
-
-        // If we changed length and have a cursor position, restore it adjusted
-        if (cursorPos !== undefined && cursorOffset !== 0) {
-            pendingCursor.current = { id, pos: cursorPos + cursorOffset };
-        }
-
-        if (!block) return;
-
-        // MENU CLOSING LOGIC
-        if (mathMenu && mathMenu.blockId === id) {
-            if (!content.includes('\\', mathMenu.triggerIdx)) {
-                setMathMenu(null);
-            }
-        }
-        if (commandMenu && commandMenu.blockId === id) {
-            if (!content.includes('/', commandMenu.triggerIdx)) {
-                setCommandMenu(null);
-            }
-        }
-
-        // COMMAND TRIGGER (/)
-        if (content.endsWith('/') && !commandMenu && block.type !== 'math') {
-            const el = document.activeElement;
-            const rect = el?.getBoundingClientRect();
-            if (rect) {
-                const { y, direction } = getMenuPosition(rect);
-                setCommandMenu({ isOpen: true, x: rect.left, y, blockId: id, selectedIndex: 0, filterText: "", direction, triggerIdx: content.length - 1 });
-                setMathMenu(null);
-            }
-        }
-        // MATH TRIGGER (\)
-        else if (content.endsWith('\\') && !mathMenu && block.type === 'math') {
-            const el = document.activeElement;
-            const rect = el?.getBoundingClientRect();
-            if (rect) {
-                const { y, direction } = getMenuPosition(rect);
-                setMathMenu({ isOpen: true, x: rect.left, y, blockId: id, selectedIndex: 0, filterText: "", direction, triggerIdx: content.length - 1 });
-                setCommandMenu(null);
-            }
-        }
-        // FILTER MENUS
-        else if (commandMenu && commandMenu.blockId === id) {
-            const newFilter = content.slice(commandMenu.triggerIdx + 1);
-            if (newFilter.includes(" ")) setCommandMenu(null);
-            else setCommandMenu(prev => prev ? { ...prev, filterText: newFilter } : null);
-        }
-        else if (mathMenu && mathMenu.blockId === id) {
-            const newFilter = content.slice(mathMenu.triggerIdx + 1);
-            if (newFilter.includes(" ")) setMathMenu(null);
-            else setMathMenu(prev => prev ? { ...prev, filterText: newFilter } : null);
-        }
-
-        // AUTO-TRANSFORMS
-        if (content.endsWith(' ')) {
-            if (content === '# ') { updateBlock(id, '', 'h1', true); setFocusedId(id); }
-            if (content === '## ') { updateBlock(id, '', 'h2', true); setFocusedId(id); }
-            if (content === '### ') { updateBlock(id, '', 'h3', true); setFocusedId(id); }
-            if (content === '$$ ') { preloadMath(); updateBlock(id, '', 'math', true); setFocusedId(id); }
-        }
-        // Preload math early when user types $$
-        // Preload math early when user types $$
-        if (content === '$$') preloadMath();
-    };
-
-    // Helper to insert wrapped text
-    const insertWrap = (id: string, wrapper: string) => {
-        const el = document.activeElement as HTMLTextAreaElement;
-        if (!el || el.dataset.blockId !== id) return;
-
-        const start = el.selectionStart;
-        const end = el.selectionEnd;
-        const text = el.value;
-
-        let newText = "";
-        let newCursorPos = 0;
-
-        if (start !== end) {
-            // Wrap selection
-            const selection = text.slice(start, end);
-            newText = text.slice(0, start) + wrapper + selection + wrapper + text.slice(end);
-            newCursorPos = end + wrapper.length * 2; // Move after format? Or keep selection? Let's keep selection wrapped.
-            // Actually standard is to wrap and select content? Or just cursor after?
-            // Let's wrap and cursor after.
-            newCursorPos = end + wrapper.length;
-        } else {
-            // Insert empty pair
-            newText = text.slice(0, start) + wrapper + wrapper + text.slice(start);
-            newCursorPos = start + wrapper.length;
-        }
-
-        updateBlock(id, newText);
-        setTimeout(() => el.setSelectionRange(newCursorPos, newCursorPos), 0);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent, id: string, index: number) => {
-        // --- SHORTCUTS ---
-        if (e.ctrlKey || e.metaKey) {
-            if (e.key === 'b') { e.preventDefault(); insertWrap(id, "**"); return; }
-            if (e.key === 'i') { e.preventDefault(); insertWrap(id, "*"); return; }
-            if (e.key === 'e') { e.preventDefault(); insertWrap(id, "`"); return; } // 'e' for code? or `?
-            if (e.key === '`') { e.preventDefault(); insertWrap(id, "`"); return; }
-            if (e.key === 'm') { e.preventDefault(); insertWrap(id, "$"); return; }
-        }
-
-        // --- AUTO PAIRING ---
-        const pairs: Record<string, string> = {
-            '(': ')',
-            '[': ']',
-            '{': '}',
-            '"': '"',
-            "'": "'",
-            '`': '`',
-            '*': '*',
-            '$': '$'
-        };
-
-        if (pairs[e.key] && !e.ctrlKey && !e.altKey && !e.metaKey) {
-            const el = e.target as HTMLTextAreaElement;
-            const start = el.selectionStart;
-            const end = el.selectionEnd;
-            const val = el.value;
-            const char = e.key;
-            const close = pairs[char];
-
-            // 1. BOLD FIX: Must come FIRST before skip-over
-            // If we're at *|* (cursor between two stars) and typing *, turn into **|**
-            // val = "**", start = 1, val[0] = *, val[1] = *
-            if (char === '*' && start > 0 && val[start - 1] === '*' && val[start] === '*') {
-                e.preventDefault();
-                // Insert * BEFORE the first star AND AFTER the second star
-                // "*|*" -> "**|**"
-                // Before: val.slice(0, start-1) = "" 
-                // First pair: "**"
-                // Middle (cursor): "" 
-                // Second pair: "**"
-                // After: val.slice(start+1) = ""
-                const before = val.slice(0, start - 1);
-                const after = val.slice(start + 1);
-                const newText = before + '**' + '**' + after;
-                updateBlock(id, newText);
-                // Cursor should be at position: before.length + 2 (between the two **)
-                setTimeout(() => el.setSelectionRange(before.length + 2, before.length + 2), 0);
-                return;
-            }
-
-            // 2. Skip-over: If next char is same closing char, just move cursor
-            if (val[start] === char) {
-                e.preventDefault();
-                el.setSelectionRange(start + 1, start + 1);
-                return;
-            }
-
-            // 3. Wrap selection
-            if (start !== end) {
-                e.preventDefault();
-                const selection = val.slice(start, end);
-                const newText = val.slice(0, start) + char + selection + close + val.slice(end);
-                updateBlock(id, newText);
-                setTimeout(() => el.setSelectionRange(start + 1, end + 1), 0);
-                return;
-            }
-
-            // 4. Insert empty pair
-            e.preventDefault();
-            const newText = val.slice(0, start) + char + close + val.slice(end);
-            updateBlock(id, newText);
-            setTimeout(() => el.setSelectionRange(start + 1, start + 1), 0);
-            return;
-        }
-
-        // --- SMART MATH & MENUS ---
-        // Check if cursor is inside dollar signs
-        // Heuristic: Count valid $ pairs? Or just odd number of $ before cursor?
-        const textBefore = blocks[index].content.slice(0, (e.target as HTMLTextAreaElement).selectionStart);
-        const dollarsBefore = (textBefore.match(/\$/g) || []).length;
-        const isInlineMath = dollarsBefore % 2 === 1;
-
-        if (isInlineMath) {
-            const el = e.target as HTMLTextAreaElement;
-            const start = el.selectionStart;
-            const val = el.value;
-
-            // 1. Math Menu Trigger (\)
-            if (e.key === '\\' || e.key === 'Backslash') {
-                // Trigger logic similar to / command but for math
-                const rect = el.getBoundingClientRect();
-                const { y, direction } = getMenuPosition(rect);
-                const caretPos = el.selectionStart;
-                // We need to calculate exact caret X/Y? 
-                // For now, use the block position logic but filter math commands
-                // We can re-use `mathMenu` state!
-                setMathMenu({
-                    isOpen: true,
-                    x: rect.left, // Ideally caret X
-                    y,
-                    blockId: id,
-                    selectedIndex: 0,
-                    filterText: "",
-                    direction,
-                    triggerIdx: caretPos
+            // Load into Editor
+            contentValueRef.current = decryptedText;
+            if (viewRef.current) {
+                viewRef.current.dispatch({
+                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: decryptedText }
                 });
-                // We don't preventDefault, let the \ be typed as filter start
             }
 
-            // 2. Instant Smart Replacement (on KeyDown? No, has to be careful)
-            // User wants "pi" -> "\pi" without space?
-            // "type pi and no space it automatically converts it instant"
-            // Risk: Typing "pickle" -> "\pickle" ?
-            // If we limit to STRICT keys, we can do it.
-            // But detecting "pi" ending requires state of previous key?
-            // Let's stick to the SPACE trigger for now as per plan, but FIX the list.
-
-            // Simplified Smart Math: Instant replacement on recognized token
-            const textBeforeCursor = val.slice(0, start);
-            const lastTokenMatch = textBeforeCursor.match(/(\w+)$/); // Match last word before cursor
-            if (lastTokenMatch) {
-                const lastToken = lastTokenMatch[1];
-                const SYMBOL_MAP: Record<string, string> = {
-                    'alpha': '\\alpha', 'beta': '\\beta', 'gamma': '\\gamma', 'delta': '\\delta',
-                    'pi': '\\pi', 'theta': '\\theta', 'lambda': '\\lambda', 'sigma': '\\sigma',
-                    'omega': '\\omega', 'phi': '\\phi', 'mu': '\\mu', 'epsilon': '\\epsilon',
-                    'rho': '\\rho', 'tau': '\\tau', 'inf': '\\infty', 'sum': '\\sum',
-                    'prod': '\\prod', 'int': '\\int', 'sqrt': '\\sqrt', 'approx': '\\approx',
-                    'neq': '\\neq', 'leq': '\\leq', 'geq': '\\geq'
-                };
-
-                if (SYMBOL_MAP[lastToken]) {
-                    // Only trigger if the next character typed is not part of the token
-                    // This means, if the user types 'p', then 'i', and 'pi' is a symbol,
-                    // it should convert. But if they type 'p', 'i', 'c', it should not.
-                    // This is tricky with keydown.
-                    // For now, let's keep the space/enter/tab trigger for safety,
-                    // as the user's prompt implies "simplify Smart Math to be instant" but the code still has the trigger.
-                    // The most "instant" way without breaking normal typing is to convert on space/enter/tab.
-                    // If the user truly wants instant, we'd need to check on every keypress and potentially revert.
-                    // Sticking to the provided code's structure for now.
-                    if (e.key === ' ' || e.key === 'Enter' || e.key === 'Tab') {
-                        e.preventDefault();
-                        const replacement = SYMBOL_MAP[lastToken];
-                        // Replace token with symbol
-                        const newText = val.slice(0, start - lastToken.length) + replacement + (e.key === ' ' ? ' ' : '') + val.slice(start);
-                        updateBlock(id, newText);
-                        // Move cursor
-                        const newCursor = start - lastToken.length + replacement.length + (e.key === ' ' ? 1 : 0);
-                        setTimeout(() => el.setSelectionRange(newCursor, newCursor), 0);
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Auto-Brackets for Math Block (Legacy)
-        if (blocks[index].type === 'math' && e.key === '(') {
-            e.preventDefault();
-            const target = e.currentTarget as HTMLTextAreaElement;
-            const start = target.selectionStart;
-            const val = target.value;
-            const newVal = val.slice(0, start) + "()" + val.slice(start);
-            const processed = processSmartInput(newVal);
-            updateBlock(id, processed);
-            setTimeout(() => {
-                target.setSelectionRange(start + 1, start + 1);
-            }, 0);
-            return;
-        }
-
-        // MENU NAVIGATION
-        if (commandMenu?.isOpen) {
-            if (e.key === "ArrowDown") { e.preventDefault(); setCommandMenu({ ...commandMenu, selectedIndex: (commandMenu.selectedIndex + 1) % filteredCommands.length }); return; }
-            if (e.key === "ArrowUp") { e.preventDefault(); setCommandMenu({ ...commandMenu, selectedIndex: (commandMenu.selectedIndex - 1 + filteredCommands.length) % filteredCommands.length }); return; }
-            if (e.key === "Enter") { e.preventDefault(); const selected = filteredCommands[commandMenu.selectedIndex]; if (selected) transformBlock(selected.type); return; }
-            if (e.key === "Escape") { setCommandMenu(null); return; }
-        }
-        if (mathMenu?.isOpen) {
-            if (e.key === "ArrowDown") { e.preventDefault(); setMathMenu({ ...mathMenu, selectedIndex: (mathMenu.selectedIndex + 1) % filteredMath.length }); return; }
-            if (e.key === "ArrowUp") { e.preventDefault(); setMathMenu({ ...mathMenu, selectedIndex: (mathMenu.selectedIndex - 1 + filteredMath.length) % filteredMath.length }); return; }
-            if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); const selected = filteredMath[mathMenu.selectedIndex]; if (selected) insertMathSymbol(selected); return; }
-            if (e.key === "Escape") { setMathMenu(null); return; }
-        }
-
-        // UNDO/REDO
-        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-            e.preventDefault();
-            if (e.shiftKey) redo(); else undo();
-            return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-            e.preventDefault();
-            redo();
-            return;
-        }
-
-        // ZOOM SHORTCUTS
-        if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
-            e.preventDefault();
-            setZoom(prev => Math.min(prev + 0.1, 2.0));
-            return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === '-') {
-            e.preventDefault();
-            setZoom(prev => Math.max(prev - 0.1, 0.5));
-            return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === '0') {
-            e.preventDefault();
-            setZoom(1.0);
-            return;
-        }
-
-        const block = blocks.find(b => b.id === id);
-        if (!block) return;
-
-        // ENTER - SPLIT BLOCK
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            const target = e.currentTarget as HTMLTextAreaElement;
-            const newId = splitBlock(id, target.selectionStart);
-            setFocusedId(newId);
-            pendingCursor.current = { id: newId, pos: 0 };
-            return;
-        }
-
-        // BACKSPACE - MERGE UP
-        if (e.key === 'Backspace') {
-            const target = e.currentTarget as HTMLTextAreaElement;
-            if (target.selectionStart === 0 && target.selectionEnd === 0 && index > 0) {
-                e.preventDefault();
-                const prevBlock = blocks[index - 1];
-                const joinPos = prevBlock.content.length;
-                const prevId = mergeBlock(id, 'up');
-                setFocusedId(prevId);
-                pendingCursor.current = { id: prevId, pos: joinPos };
-            }
-        }
-
-        // DELETE - MERGE DOWN
-        if (e.key === 'Delete') {
-            const target = e.currentTarget as HTMLTextAreaElement;
-            if (target.selectionStart === target.value.length && target.selectionEnd === target.value.length && index < blocks.length - 1) {
-                e.preventDefault();
-                const currentLen = block.content.length;
-                mergeBlock(id, 'down');
-                pendingCursor.current = { id: id, pos: currentLen };
-            }
-        }
-
-        // ARROW UP
-        if (e.key === "ArrowUp" && index > 0) {
-            const target = e.currentTarget as HTMLTextAreaElement;
-            if (target.selectionStart === 0) {
-                e.preventDefault();
-                const prevBlock = blocks[index - 1];
-                setFocusedId(prevBlock.id);
-                pendingCursor.current = { id: prevBlock.id, pos: prevBlock.content.length };
-            }
-        }
-
-        // ARROW DOWN
-        if (e.key === "ArrowDown" && index < blocks.length - 1) {
-            const target = e.currentTarget as HTMLTextAreaElement;
-            if (target.selectionStart === target.value.length) {
-                e.preventDefault();
-                setFocusedId(blocks[index + 1].id);
-                pendingCursor.current = { id: blocks[index + 1].id, pos: 0 };
-            }
+            return true;
+        } catch (e) {
+            console.error("Unlock failed", e);
+            return false;
         }
     };
 
-    const onPaste = (e: React.ClipboardEvent, id: string) => {
-        e.preventDefault();
-        const text = e.clipboardData.getData('text/plain');
-        const target = e.currentTarget as HTMLTextAreaElement;
-        const success = handlePaste(id, text, target.selectionStart);
-        if (!success) {
-            const currentBlock = blocks.find(b => b.id === id);
-            if (!currentBlock) return;
-            const newContent = currentBlock.content.slice(0, target.selectionStart) + text + currentBlock.content.slice(target.selectionEnd);
-            updateBlock(id, newContent);
-        }
-    };
-
-    if (!activeNoteId) return <div className="flex-1 bg-zinc-950 flex items-center justify-center text-zinc-700 font-mono text-xs uppercase tracking-widest select-none">Awaiting Input...</div>;
+    // ============================================
+    // RENDER
+    // ============================================
+    if (!activeNoteId) {
+        return (
+            <main className="flex-1 flex items-center justify-center text-zinc-600 text-lg bg-zinc-950">
+                <div className="text-center">
+                    <div className="text-4xl mb-4 opacity-20">📝</div>
+                    <p>Select a note or create a new one</p>
+                    <p className="text-sm mt-2 text-zinc-700">Ctrl+P to search</p>
+                </div>
+            </main>
+        );
+    }
 
     return (
         <main
-            ref={scrollContainerRef}
-            className="flex-1 h-screen bg-zinc-950 text-white p-16 pb-[50vh] overflow-y-auto relative custom-scrollbar w-full max-w-full"
-            onClick={() => { }}
+            className="flex-1 overflow-hidden bg-zinc-950 relative flex flex-col"
+            style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${100 / zoom}%` }}
         >
-            <div className="absolute top-4 right-8 text-[10px] uppercase tracking-widest font-black select-none">
-                {isSaving ? <span className="text-purple-500 animate-pulse">Syncing...</span> : <span className="text-zinc-800">Synced</span>}
-            </div>
+            {/* UNLOCK SCREEN OVERLAY */}
+            {isLocked && (
+                <div className="absolute inset-0 z-[100] flex items-center justify-center bg-zinc-950/90 backdrop-blur-sm">
+                    <UnlockScreen
+                        title={title}
+                        onUnlock={handleUnlock}
+                    />
+                </div>
+            )}
 
-            {/* ZOOM WRAPPER */}
-            <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}% ` }}>
-                <input
-                    ref={titleRef}
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            if (blocks.length > 0) {
-                                setFocusedId(blocks[0].id);
-                                pendingCursor.current = { id: blocks[0].id, pos: 0 };
-                            } else {
-                                addBlock(null);
-                            }
+            {/* Find Widget Overlay */}
+            {showFindWidget && (
+                <FindWidget
+                    view={viewRef.current}
+                    onClose={() => setShowFindWidget(false)}
+                    focusSignal={findFocusSignal}
+                    searchTick={searchTick} // Pass the tick!
+                />
+            )}
+
+            {/* Math Menu Overlay */}
+            {mathMenuData && (
+                <MathMenu
+                    visible={mathMenuData.isOpen}
+                    position={{ x: mathMenuData.x, y: mathMenuData.y }}
+                    options={mathMenuData.filteredOptions}
+                    selectedIndex={mathMenuData.selectedIndex}
+                    onSelect={(cmd) => {
+                        const view = viewRef.current;
+                        if (!view) return;
+
+                        // Re-calculate replacement range (Backwards from cursor to '\')
+                        const main = view.state.selection.main;
+                        const line = view.state.doc.lineAt(main.from);
+                        const lineText = line.text;
+                        const relPos = main.from - line.from;
+
+                        let start = relPos - 1;
+                        while (start >= 0) {
+                            if (lineText[start] === '\\') break;
+                            start--;
+                        }
+
+                        if (start !== -1) {
+                            const from = line.from + start;
+                            const hasArgs = cmd.endsWith("{}");
+                            const insertText = hasArgs ? cmd : cmd + " ";
+
+                            view.dispatch({
+                                changes: { from: from, to: main.from, insert: insertText },
+                                selection: { anchor: from + insertText.length - (hasArgs ? 1 : 0) }
+                            });
+                            view.focus();
                         }
                     }}
-                    className="text-7xl font-black bg-transparent border-none outline-none text-zinc-100 mb-20 w-full tracking-tighter placeholder-zinc-900 break-words"
-                    placeholder="Untitled"
-                    style={{ fontSize: `${zoom * 5} rem` }}
                 />
+            )}
 
-                {/* BLOCKS */}
-                <div className="flex flex-col gap-2 w-full max-w-full">
-                    {blocks.map((block, index) => (
-                        <EditorBlock
-                            key={block.id} block={block} index={index}
-                            isFocused={focusedId === block.id}
-                            updateBlock={handleBlockUpdate}
-                            onFocus={setFocusedId}
-                            onKeyDown={handleKeyDown}
-                            onPaste={onPaste}
-                            zoom={zoom}
-                        />
-                    ))}
+            {/* Header / Title Area */}
+            <div className="p-4 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-between shrink-0 h-14 z-10 w-full">
+                {/* Title */}
+                <div className="flex-1 mr-4">
+                    <input
+                        ref={titleRef}
+                        data-title-input
+                        type="text"
+                        value={title}
+                        onChange={handleTitleChange}
+                        onKeyDown={handleTitleKeyDown}
+                        placeholder="Untitled"
+                        className="w-full bg-transparent text-zinc-100 text-2xl font-bold tracking-tight outline-none placeholder:text-zinc-700 font-display"
+                    />
                 </div>
-
-                <div className="h-40 cursor-text" onClick={() => {
-                    if (blocks.length > 0) return;
-                    addBlock(null);
-                }} />
             </div>
 
-            {/* COMMAND MENU */}
-            {commandMenu?.isOpen && (
-                <div id="onyx-context-menu" className="fixed z-50 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-96 flex flex-col overflow-hidden shadow-2xl" style={{
-                    [commandMenu.direction === 'up' ? 'bottom' : 'top']: commandMenu.direction === 'up' ? (window.innerHeight - commandMenu.y + 20) : commandMenu.y,
-                    left: commandMenu.x,
-                    transform: `scale(${zoom})`,
-                    transformOrigin: commandMenu.direction === 'up' ? 'bottom left' : 'top left'
-                }}>
-                    <div className="px-4 py-2 text-xs font-bold text-zinc-600 uppercase tracking-widest">Turn Into</div>
-                    <div ref={menuScrollRef} className="max-h-96 overflow-y-auto no-scrollbar flex flex-col">
-                        {filteredCommands.map((option, i) => (
-                            <button key={option.type} onClick={() => transformBlock(option.type)} className={`flex items-center gap-4 w-full px-6 py-4 rounded-lg transition-colors duration-75 text-left ${commandMenu.selectedIndex === i ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-zinc-800/40 hover:text-zinc-300'}`}>
-                                <div className={`w-10 h-10 shrink-0 flex items-center justify-center text-sm font-black bg-black/40 rounded ${commandMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-600'}`}>{option.indicator}</div>
-                                <span className={`text-lg font-bold tracking-tight ${commandMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-400'}`}>{option.label}</span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* MATH MENU */}
-            {mathMenu?.isOpen && (
-                <div id="onyx-math-menu" className="fixed z-50 bg-zinc-900 border border-zinc-800 rounded-xl p-2 w-96 flex flex-col overflow-hidden shadow-2xl" style={{
-                    [mathMenu.direction === 'up' ? 'bottom' : 'top']: mathMenu.direction === 'up' ? (window.innerHeight - mathMenu.y + 20) : mathMenu.y,
-                    left: mathMenu.x,
-                    transform: `scale(${zoom})`,
-                    transformOrigin: mathMenu.direction === 'up' ? 'bottom left' : 'top left'
-                }}>
-                    <div className="px-4 py-2 text-xs font-bold text-zinc-500 uppercase tracking-widest">Math Symbols</div>
-                    <div ref={mathMenuScrollRef} className="max-h-80 overflow-y-auto no-scrollbar flex flex-col">
-                        {filteredMath.map((symbol, i) => (
-                            <button key={symbol.cmd} onClick={() => insertMathSymbol(symbol)} className={`flex items-center gap-4 w-full px-6 py-3 rounded-lg transition-colors duration-75 text-left ${mathMenu.selectedIndex === i ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-zinc-800/40 hover:text-zinc-300'}`}>
-                                <div className={`w-10 h-10 shrink-0 flex items-center justify-center bg-black/40 rounded ${mathMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-500'}`}><LazyInlineMath math={symbol.cmd} /></div>
-                                <div className="flex flex-col"><span className={`text-base font-bold ${mathMenu.selectedIndex === i ? 'text-zinc-100' : 'text-zinc-400'}`}>{symbol.name}</span><span className="text-xs font-mono opacity-40">{symbol.cmd}</span></div>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
+            {/* CodeMirror Editor */}
+            {/* EMERGENCY ROLLBACK: Disabled UnlockScreen */}
+            {/* {isLocked ? (
+                <UnlockScreen 
+                    onUnlock={handleUnlock}
+                    title={title} 
+                />
+            ) : ( */}
+            <div
+                ref={editorRef}
+                className="flex-1 w-full h-full overflow-hidden focus:outline-none"
+                style={{
+                    fontSize: `${zoom}px`,
+                }}
+            />
+            {/* )} */}
         </main>
     );
 }
