@@ -1,29 +1,43 @@
-# ONYX Notes
+# 💎 ONYX Notes
 
-A modular, local-only note-taking application designed to fit every user's needs. Built with Tauri, React, and TypeScript for a high-performance, native-like experience.
+A modular, local-first note-taking application designed for speed, privacy, and aesthetics. Built with **Tauri**, **React**, and **CodeMirror 6** for a high-performance, native-like experience.
+
+> **Current Version**: `v0.0.2-alpha`
 
 ## 🚀 Features
 
 ### ✅ Implemented
-- **Premium UI/UX**: Custom window frame with Discord-like aesthetics, seamless titlebar integration, and glassmorphism effects.
-- **Fluid Tab System**:
-  - Browser-grade tab dragging and reordering.
-  - Smooth "settle" animations (FLIP) for a natural feel.
-  - Smart positioning and visual feedback.
-- **Modern Sidebar**: Collapsible navigation with smooth animations and custom styling.
-- **Fast Search**: 
-  - `Ctrl+P` Quick Open modal for files.
-  - Keyboard-centric navigation.
-- **Block-Based Editor**: Foundation for a modular content editing experience.
-- **Local-First**: All data is stored locally for maximum privacy and speed.
+- **Core Engine (CodeMirror 6)**:
+  - Replaced legacy block editor with a high-performance text engine.
+  - **Hybrid Markdown**: Markdown syntax is hidden while you type, giving a rich-text feel while keeping plain-text portability.
+  - **Math Support**: Full LaTeX support using KaTeX. Use `$$` for block math and `$` for inline.
+  - **Smart Lists**: Auto-indenting bullets and numbered lists.
+  - **Code Folding**: Collapse headers and sections for focused editing.
 
-### 🚧 Roadmap & Upcoming
-- [ ] **Rich Text Support**: Bold, Italic, Underline, and more inline styles.
-- [ ] **Mathematical Notation**: Inline LaTeX/KaTeX support.
-- [ ] **Plugin System**: Modular architecture to allow community extensions.
-- [ ] **In-File Search**: `Ctrl+F` to find text within the active note.
-- [ ] **Media Support**: Drag & drop images and file attachments.
-- [ ] **Export Options**: Export notes to Markdown, PDF, or HTML.
+- **Strict Search Engine**:
+  - Zero-latency "Live Indexing" search.
+  - **Strict Matching**: No fuzzy guessing. Exact matches only.
+  - **Native Highlights**: Search matches look and feel like native text selection.
+
+- **Security & Privacy**:
+  - **Local-First**: Data lives on your disk, not our cloud.
+  - **Encryption**: AES-256-GCM encryption for "Locked Notes". Password-protected at rest.
+
+- **Premium UI/UX**:
+  - "Discord-like" dark aesthetic.
+  - **Fluid Tabs**: Browser-grade dragging (dnd-kit) with FLIP animations.
+  - **Glassmorphism**: Subtle translucent effects and smooth transitions.
+
+- **Infrastructure**:
+  - **Auto-Updater**: Built-in support for background updates.
+  - **Cross-Platform**: Builds native binaries for **Windows** (`.exe`), **macOS** (`.dmg`), and **Linux** (`.deb`).
+
+### 🚧 Roadmap
+- [ ] **Mobile App**: Native Android port (Tablet/Phone support).
+- [ ] **Cloud Sync**: Optional encrypted sync (Git/S3/WebDAV).
+- [ ] **Command Palette**: `Ctrl+Shift+P` for keyboard-only control.
+- [ ] **Plugin System**: API for community extensions.
+- [ ] **Export**: PDF and HTML export with themes.
 
 ## 🛠️ Setup & Development
 
@@ -48,17 +62,17 @@ A modular, local-only note-taking application designed to fit every user's needs
    ```bash
    npm run tauri dev
    ```
-   This command starts the React frontend and the Tauri native window handler with hot-reload enabled.
+   *Starts the React frontend and Tauri native host with hot-reload.*
 
 ### Building for Production
-To build the application for your OS:
+To build individual binaries:
 ```bash
 npm run tauri build
 ```
-The output binaries will be located in `src-tauri/target/release/`.
+*Artifacts will be in `src-tauri/target/release/bundle`*
 
 ## 🤝 Contributing
-ONYX is currently in active development. Usage and testing feedback is highly appreciated!
+ONYX is open source and active. Feel free to open issues or PRs!
 
 ---
-*Created by [Omar Itani](https://github.com/omar.itaniau)*
+*Created by [Omar Itani](https://github.com/om-itani)*
