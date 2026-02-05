@@ -1,4 +1,4 @@
-import { Extension, StateField, StateEffect, RangeSet } from "@codemirror/state";
+import { StateField } from "@codemirror/state";
 import { EditorView, Decoration, DecorationSet, WidgetType } from "@codemirror/view";
 import katex from "katex";
 

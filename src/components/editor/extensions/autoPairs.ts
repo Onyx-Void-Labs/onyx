@@ -13,7 +13,7 @@
  */
 
 import { EditorView, keymap } from '@codemirror/view';
-import { Extension, Prec } from '@codemirror/state';
+import { Prec } from '@codemirror/state';
 
 // Pair mappings
 const PAIRS: Record<string, string> = {

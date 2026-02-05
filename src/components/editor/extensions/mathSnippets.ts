@@ -1,4 +1,4 @@
-import { Extension, EditorState } from "@codemirror/state";
+import { Extension } from "@codemirror/state";
 import { EditorView, KeyBinding, keymap } from "@codemirror/view";
 import { MATH_SYMBOLS } from "../../../data/mathSymbols";
 
@@ -158,7 +158,7 @@ function checkLazyFraction(view: EditorView, from: number, triggerText: string):
     return false;
 }
 
-const snippetHandler = EditorView.inputHandler.of((view, from, to, text) => {
+const snippetHandler = EditorView.inputHandler.of((view, from, _to, text) => {
     const textBefore = view.state.sliceDoc(0, from);
     const dollars = (textBefore.match(/\$/g) || []).length;
     const isMath = dollars % 2 !== 0;

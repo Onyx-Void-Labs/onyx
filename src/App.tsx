@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/ui/Sidebar";
 import Editor from "./components/editor/Editor"; // Using CodeMirror 6 editor
 import TabBar from "./components/ui/TabBar";
-import Titlebar from "./components/ui/TitleBar";
+import Titlebar from "./components/ui/Titlebar";
 import SearchModal from "./components/ui/SearchModal";
 import { encryptNote } from "./services/SecurityService";
 
