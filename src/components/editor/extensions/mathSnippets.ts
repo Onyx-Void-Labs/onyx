@@ -1,4 +1,4 @@
-import { Extension } from "@codemirror/state";
+
 import { EditorView, KeyBinding, keymap } from "@codemirror/view";
 import { MATH_SYMBOLS } from "../../../data/mathSymbols";
 
