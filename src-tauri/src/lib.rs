@@ -1,11 +1,11 @@
-mod database;
-mod commands; // Tell Rust to look for commands.rs
+mod commands;
+mod database; // Tell Rust to look for commands.rs
 
 use database::Database;
 use tauri::Manager;
 
 // We "use" everything from the commands module so the generate_handler can see them
-use commands::*; 
+use commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,7 +24,10 @@ pub fn run() {
             get_notes,
             get_note_content,
             update_note,
-            delete_note
+            update_note_pb_id,
+            import_note_from_pb,
+            delete_note,
+            delete_note_by_pb_id
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

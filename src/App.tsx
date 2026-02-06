@@ -7,6 +7,8 @@ import Titlebar from "./components/ui/Titlebar";
 import SearchModal from "./components/ui/SearchModal";
 import { encryptNote } from "./services/SecurityService";
 
+import { PocketBaseProvider } from "./contexts/PocketBaseContext";
+
 export default function App() {
   const [notes, setNotes] = useState<any[]>([]);
   const [tabs, setTabs] = useState<number[]>([]);
@@ -24,7 +26,17 @@ export default function App() {
     }
   };
 
-  useEffect(() => { fetchNotes(); }, []);
+  useEffect(() => {
+    fetchNotes();
+
+    // Listen for Sync Events
+    const handleSyncRefresh = () => {
+      console.log("Sync Refresh Triggered");
+      fetchNotes();
+    };
+    window.addEventListener('onyx:refresh-notes', handleSyncRefresh);
+    return () => window.removeEventListener('onyx:refresh-notes', handleSyncRefresh);
+  }, []);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -111,6 +123,10 @@ export default function App() {
 
   const handleDeleteNote = async (id: number) => {
     try {
+      // Find the note first to get its PB ID for sync
+      const noteToDelete = notes.find(n => n.id === id);
+      const pbId = noteToDelete?.pb_id;
+
       await invoke("delete_note", { id });
       setTabs(tabs.filter(t => t !== id));
       if (activeTabId === id) {
@@ -118,6 +134,12 @@ export default function App() {
         setActiveTabId(remaining.length > 0 ? remaining[remaining.length - 1] : null);
       }
       fetchNotes();
+
+      // Notify Sync Engine to delete from Cloud
+      if (pbId) {
+        console.log(`Dispatching delete event for PB ID: ${pbId}`);
+        window.dispatchEvent(new CustomEvent('onyx:deleted-note', { detail: { pbId } }));
+      }
     } catch (e) {
       console.error("Delete failed", e);
     }
@@ -128,10 +150,10 @@ export default function App() {
   };
 
   const reorderTabs = (fromIndex: number, toIndex: number) => {
-    const newTabs = [...tabs];
-    const [moved] = newTabs.splice(fromIndex, 1);
-    newTabs.splice(toIndex, 0, moved);
-    setTabs(newTabs);
+    const reorderedTabs = [...tabs];
+    const [moved] = reorderedTabs.splice(fromIndex, 1);
+    reorderedTabs.splice(toIndex, 0, moved);
+    setTabs(reorderedTabs);
   };
 
   const handleLockNote = async (id: number, password: string) => {
@@ -167,57 +189,59 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-zinc-950 overflow-hidden select-none rounded-lg">
-      {/* Custom Titlebar */}
-      <Titlebar
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-      />
+    <PocketBaseProvider>
+      <div className="flex flex-col h-screen w-screen bg-zinc-950 overflow-hidden select-none rounded-lg">
+        {/* Custom Titlebar */}
+        <Titlebar
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar with collapse animation */}
-        <div
-          className={`transition-all duration-300 ease-in-out overflow-hidden ${sidebarCollapsed ? 'w-0' : 'w-64'}`}
-        >
-          <Sidebar
-            onSelectNote={openTab}
-            activeNoteId={activeTabId}
-            notes={notes}
-            refreshNotes={async () => { await fetchNotes(); }}
-            openTabs={tabs}
-            onDeleteNote={handleDeleteNote}
-            onOpenSearch={() => setSearchOpen(true)}
-            onLockNote={handleLockNote}
-          />
+        {/* Main Content */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar with collapse animation */}
+          <div
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${sidebarCollapsed ? 'w-0' : 'w-64'}`}
+          >
+            <Sidebar
+              onSelectNote={openTab}
+              activeNoteId={activeTabId}
+              notes={notes}
+              refreshNotes={async () => { await fetchNotes(); }}
+              openTabs={tabs}
+              onDeleteNote={handleDeleteNote}
+              onOpenSearch={() => setSearchOpen(true)}
+              onLockNote={handleLockNote}
+            />
+          </div>
+
+          {/* Editor Area */}
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <TabBar
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelectTab={setActiveTabId}
+              onCloseTab={closeTab}
+              onReorderTabs={reorderTabs}
+              notes={notes}
+            />
+            <Editor
+              activeNoteId={activeTabId}
+              refreshTrigger={refreshTrigger}
+              onSave={fetchNotes}
+            />
+          </div>
         </div>
 
-        {/* Editor Area */}
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <TabBar
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onSelectTab={setActiveTabId}
-            onCloseTab={closeTab}
-            onReorderTabs={reorderTabs}
-            notes={notes}
-          />
-          <Editor
-            activeNoteId={activeTabId}
-            refreshTrigger={refreshTrigger}
-            onSave={fetchNotes}
-          />
-        </div>
+        {/* Search Modal */}
+        <SearchModal
+          isOpen={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          notes={notes}
+          onSelectNote={handleSearchSelect}
+          onRefreshNotes={fetchNotes}
+        />
       </div>
-
-      {/* Search Modal */}
-      <SearchModal
-        isOpen={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        notes={notes}
-        onSelectNote={handleSearchSelect}
-        onRefreshNotes={fetchNotes}
-      />
-    </div>
+    </PocketBaseProvider>
   );
 }

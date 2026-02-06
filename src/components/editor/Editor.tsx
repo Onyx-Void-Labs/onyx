@@ -33,14 +33,18 @@ import { MathMenu } from './MathMenu';
 import { FindWidget } from './FindWidget';
 
 import { search } from '@codemirror/search';
-import { encryptNote, decryptNote, EncryptedNote } from '../../services/SecurityService';
-import UnlockScreen from '../ui/UnlockScreen';
-
+// Yjs Imports
+import * as Y from 'yjs';
+// import { IndexeddbPersistence } from 'y-indexeddb'; // CAUSING DUPLICATION
+import { yCollab } from 'y-codemirror.next';
+import { usePocketBase } from '../../contexts/PocketBaseContext';
 
 import 'katex/dist/katex.min.css'; // KaTeX CSS
 
-// ============================================
-// ONYX DARK THEME
+// ... existing code ...
+
+
+
 // ============================================
 const onyxTheme = EditorView.theme({
     '&': {
@@ -329,13 +333,68 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
     const noteIdRef = useRef<number | null>(null);
     const titleValueRef = useRef<string>('');
     const contentValueRef = useRef<string>('');
+    const pbIdRef = useRef<string | null>(null); // Real PB ID
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isLoadingRef = useRef(false);
 
-    // Security State
-    const [isLocked, setIsLocked] = useState(false);
-    // const [decryptedContent, setDecryptedContent] = useState<string | null>(null); // Unused
-    const sessionPasswordRef = useRef<string | null>(null);
+    // Sync State
+    const [loadedId, setLoadedId] = useState<number | null>(null); // Prevents View Init race condition
+
+    // Yjs State
+    const yDocRef = useRef<Y.Doc | null>(null);
+    const yProviderRef = useRef<any | null>(null);
+
+    // PocketBase Sync
+    const { pb, user, isConnected } = usePocketBase();
+
+
+    // ============================================
+    // POCKETBASE SYNC
+    // ============================================
+    useEffect(() => {
+        if (!activeNoteId || !user || !isConnected || loadedId !== activeNoteId) return;
+
+        const pbId = pbIdRef.current;
+        if (!pbId) return; // If no PB ID yet, we can't subscribe. Save will create it.
+
+        const syncRemote = async () => {
+            try {
+                // Subscribe to THIS note
+                await pb.collection('notes').subscribe(pbId, (e) => {
+                    if (e.action === 'update' && e.record.content) {
+                        // Check if this update originated from US? 
+                        // PocketBase doesn't easily tell us "who" sent it excluding us without custom headers.
+                        // Simple check: If content matches current, ignore.
+                        if (contentValueRef.current === e.record.content) return;
+
+                        console.log("Remote update received!");
+                        // Ideally: Update Yjs doc
+                        if (yDocRef.current) {
+                            const doc = yDocRef.current;
+                            const yText = doc.getText('codemirror');
+                            doc.transact(() => {
+                                if (yText.toString() !== e.record.content) {
+                                    yText.delete(0, yText.length);
+                                    yText.insert(0, e.record.content);
+                                }
+                            });
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error("Failed to subscribe", err);
+            }
+        };
+
+        syncRemote();
+
+        return () => {
+            if (activeNoteId && pbId) {
+                pb.collection('notes').unsubscribe(pbId).catch(() => { });
+            }
+        };
+    }, [activeNoteId, loadedId, user, isConnected, pb]);
+
 
     // ============================================
     // SAVE FUNCTION
@@ -348,48 +407,53 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
         if (!id || id !== activeNoteId) return;
 
         const titleVal = titleValueRef.current;
-        let contentVal = contentValueRef.current;
+        const contentVal = contentValueRef.current; // Raw Text
 
-        // --- SECURITY CHECK ---
-        // If the note is locked, we must re-encrypt the content before saving.
-        // If we don't have a session password, we abort save to prevent overwriting with plain text.
-        if (isLocked) {
-            if (sessionPasswordRef.current) {
-                try {
-                    const encrypted = await encryptNote(contentVal, sessionPasswordRef.current);
-                    contentVal = JSON.stringify(encrypted);
-                } catch (e) {
-                    console.error("Encryption failed during save", e);
-                    return; // Critical failure, do not save
-                }
-            } else {
-                console.warn("Attempted to save locked note without session password. Aborting.");
-                return;
-            }
-        }
-
-        // Safeguard: Don't save empty content (prevents accidental data loss)
-        if (contentVal.length === 0) {
-            // Still save title
-            try {
-                await invoke('update_note', {
-                    id,
-                    title: titleVal,
-                    content: JSON.stringify([{ id: 'main', type: 'p', content: '' }])
-                });
-                if (instantCallback) onSave();
-            } catch (e) {
-                console.error('Save failed:', e);
-            }
-            return;
-        }
+        // Prepare Local Content (JSON wrapper)
+        const contentJson = JSON.stringify([{
+            id: 'main',
+            type: 'p',
+            content: contentVal
+        }]);
 
         try {
+            // 1. Local Save (Tauri)
             await invoke('update_note', {
                 id,
                 title: titleVal,
-                content: JSON.stringify([{ id: 'main', type: 'p', content: contentVal }])
+                content: contentJson
             });
+
+            // 2. Cloud Save (PocketBase) - Fire and Forget
+            if (user && isConnected) {
+                let pbId = pbIdRef.current;
+
+                // Lazy Load: If we don't have a PB ID yet, check if the Sync Engine assigned one in the background
+                if (!pbId) {
+                    try {
+                        const result = await invoke<any>('get_note_content', { id });
+                        if (result && result.pb_id) {
+                            pbId = result.pb_id;
+                            pbIdRef.current = pbId; // Update ref for next time
+                            console.log("Lazy loaded PB ID:", pbId);
+                        }
+                    } catch (e) {
+                        // Ignore lookup error
+                    }
+                }
+
+                if (pbId) {
+                    // Update Existing ONLY
+                    // We let the Sync Hook handle creation of new notes to avoid race conditions/duplication.
+                    pb.collection('notes').update(pbId, {
+                        title: titleVal,
+                        content: contentVal,
+                    }).catch(async (e) => {
+                        console.error("Cloud Sync Update Failed", e);
+                    });
+                }
+            }
+
             if (instantCallback) onSave();
         } catch (e) {
             console.error('Save failed:', e);
@@ -411,14 +475,11 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
         if (!activeNoteId) {
             noteIdRef.current = null;
             setTitle('');
-            setIsLocked(false); // Ensure lock state is reset
-            // setDecryptedContent(null);
-            sessionPasswordRef.current = null;
+            setLoadedId(null);
             // Clear editor
             if (viewRef.current) {
-                viewRef.current.dispatch({
-                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: '' }
-                });
+                viewRef.current.destroy();
+                viewRef.current = null;
             }
             return;
         }
@@ -446,6 +507,7 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
         console.log("Loading note:", activeNoteId);
 
         isLoadingRef.current = true;
+        setLoadedId(null); // Signals "Loading..."
 
         invoke<any>('get_note_content', { id: activeNoteId }).then(async (result) => {
             if (!result) {
@@ -473,8 +535,6 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
 
             let loadedContent = result.content;
             if (!loadedContent) loadedContent = "";
-            setIsLocked(false);
-
 
             // Normal Flow
             // Handles empty/null/undefined content safely
@@ -498,24 +558,74 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
                 content = loadedContent || '';
             }
 
-            // 2. Update refs immediately (Single Source of Truth)
+            // 2. YJS INITIALIZATION
+            // Cleanup old doc
+            if (yDocRef.current) {
+                yDocRef.current.destroy();
+            }
+            if (yProviderRef.current) {
+                yProviderRef.current.destroy();
+                yProviderRef.current = null;
+            }
+
+            const doc = new Y.Doc();
+            const yText = doc.getText('codemirror');
+
+            // Apply loaded content to Yjs (Single Source of Truth)
+            // We strip existing content and insert new to ensure FS sync
+            doc.transact(() => {
+                if (yText.length > 0) yText.delete(0, yText.length);
+                yText.insert(0, content);
+            });
+
+            // OFFLINE PERSISTENCE (Only for Unlocked Notes)
+            // We use the ID as the room name for IndexedDB
+            // SECURITY: Locked notes are memory-only.
+            /* 
+            {
+                const provider = new IndexeddbPersistence(`onyx-note-${activeNoteId}`, doc);
+                yProviderRef.current = provider;
+
+                // If we have unsaved local changes in IndexedDB that are NEWER than FS, Yjs handles checking? 
+                // Actually relying on FS as 'Master' for now is safer for phase 1.
+                // So we overwrite Yjs with FS content above.
+                // Persistence here mainly acts as a cache for the NEXT session/crash recovery.
+            }
+            */
+
+            yDocRef.current = doc;
+
+            // 3. Update refs immediately (Single Source of Truth)
             noteIdRef.current = activeNoteId;
+            pbIdRef.current = result.pb_id || null;
             titleValueRef.current = result.title || '';
             contentValueRef.current = content;
 
-            // 3. Update UI
+            // 4. Update UI
             setTitle(result.title || '');
 
             // Update Editor
-            if (viewRef.current) {
-                // We use a transaction that doesn't trigger our own update listener logic if possible, 
-                // but our listener checks isLoadingRef, so it's safe.
-                viewRef.current.dispatch({
-                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: content }
-                });
-            }
+            // We rely on the NEW view creation to bind Yjs, so we force a re-mount essentially?
+            // Actually, we need to pass the yText to the extensions.
+            // Since `extensions` is defined in the dependencies of the *next* useEffect, 
+            // updating `yDocRef.current` here isn't enough unless we trigger a re-render or re-init.
+
+            // We'll trust the next useEffect to pick up `yDocRef.current`.
+            // But wait, the next useEffect depends on `activeNoteId`.
+            // So it runs concurrently? No, sequential often.
+
+            // Hack: trigger a re-render to force editor re-init with new Ydoc
+            // We can use a state dummy or just rely on the fact that we set refs.
+            // Actually, let's move the View Init logic HERE or unify them. 
+            // For now, let's stick to the current pattern:
+            // 1. Load Data. 2. Set State. 3. Re-render triggers View Init.
+
+            // To ensure the View Init effect picks up the new YDoc, we need to signal it.
+            // `isLoadingRef` toggle might do it if it caused a render, but it uses ref.
+            // `setTitle` causes a render.
 
             isLoadingRef.current = false;
+            setLoadedId(activeNoteId);
 
             // Focus title if empty (User preference)
             if (!result.title) {
@@ -525,13 +635,22 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
             console.error('Load failed:', e);
             isLoadingRef.current = false;
         });
-    }, [activeNoteId]);
+    }, [activeNoteId]); // Removed refreshTrigger from dependency array to simplify for now, logic handled internally if needed
 
     // ============================================
     // INITIALIZE CODEMIRROR
     // ============================================
     useEffect(() => {
         if (!editorRef.current) return;
+
+        // CRITICAL: Wait for Data Load before init
+        if (loadedId !== activeNoteId) {
+            if (viewRef.current) {
+                viewRef.current.destroy();
+                viewRef.current = null;
+            }
+            return;
+        }
 
         // Clean up existing view if any (for HMR)
         if (viewRef.current) {
@@ -638,6 +757,15 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
             }),
             search({ top: true }), // Enable Search commands without default UI (hidden by CSS)
 
+            // YJS COLLAB (The Magic)
+            // Only add if we have a valid Doc
+            ...(yDocRef.current ? [
+                yCollab(yDocRef.current.getText('codemirror'), null, { undoManager: false }) // Disable default Yjs UndoManager to use CM6 history? Or use Yjs history?
+                // Actually Yjs + CM6 usually requires `y-codemirror`'s own history handling or we keep CM6 history. 
+                // `y-codemirror.next` binds well. Let's keep CM6 `history()` for local undo stack, it usually works fine for single user.
+                // For multi-user, we need Yjs UndoManager. For Phase 2 (Local), CM6 history is safer UI-wise.
+            ] : []),
+
             placeholder("Start writing...\n\nUse # for headings, **bold**, *italic*, `code`, $math$"),
 
             // Content change handler
@@ -690,7 +818,7 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
             view.destroy();
             viewRef.current = null;
         };
-    }, [activeNoteId, refreshTrigger]); // Re-run when note changes or force refresh
+    }, [activeNoteId, refreshTrigger, loadedId]); // Re-run when note changes or force refresh
 
     // ============================================
     // TITLE HANDLERS
@@ -736,38 +864,6 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
         return () => window.removeEventListener('wheel', handleWheel);
     }, []);
 
-    const handleUnlock = async (password: string): Promise<boolean> => {
-        try {
-            // Fetch the raw encrypted content again to be sure
-            const result: any = await invoke('get_note', { id: activeNoteId });
-            const encryptedContent = result.content;
-
-            // Parse
-            const encryptedData: EncryptedNote = JSON.parse(encryptedContent);
-
-            // Decrypt
-            const decryptedText = await decryptNote(encryptedData, password);
-
-            // Success
-            // setDecryptedContent(decryptedText);
-            sessionPasswordRef.current = password; // Store session password for re-encryption on save
-            setIsLocked(false);
-
-            // Load into Editor
-            contentValueRef.current = decryptedText;
-            if (viewRef.current) {
-                viewRef.current.dispatch({
-                    changes: { from: 0, to: viewRef.current.state.doc.length, insert: decryptedText }
-                });
-            }
-
-            return true;
-        } catch (e) {
-            console.error("Unlock failed", e);
-            return false;
-        }
-    };
-
     // ============================================
     // RENDER
     // ============================================
@@ -788,15 +884,7 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
             className="flex-1 overflow-hidden bg-zinc-950 relative flex flex-col"
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${100 / zoom}%` }}
         >
-            {/* UNLOCK SCREEN OVERLAY */}
-            {isLocked && (
-                <div className="absolute inset-0 z-[100] flex items-center justify-center bg-zinc-950/90 backdrop-blur-sm">
-                    <UnlockScreen
-                        title={title}
-                        onUnlock={handleUnlock}
-                    />
-                </div>
-            )}
+
 
             {/* Find Widget Overlay */}
             {showFindWidget && (

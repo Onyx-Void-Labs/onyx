@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Search, PlusSquare, FileText, Trash2, Lock } from "lucide-react";
+import { Search, PlusSquare, FileText, Trash2, Lock, Cloud, LogOut } from "lucide-react";
 import { useState } from "react";
 import LockModal from "./LockModal";
+import LoginModal from "./LoginModal";
+import { usePocketBase } from "../../contexts/PocketBaseContext";
 
 type Note = {
     id: number;
@@ -32,6 +34,10 @@ export default function Sidebar({
 
     const [lockingNoteId, setLockingNoteId] = useState<number | null>(null);
     const [lockingNoteTitle, setLockingNoteTitle] = useState("");
+    const [isLoginOpen, setIsLoginOpen] = useState(false);
+
+    // Auth Context
+    const { user, login, logout } = usePocketBase();
 
     const handleNewPage = async () => {
         try {
@@ -40,6 +46,7 @@ export default function Sidebar({
                 content: ""
             });
             await refreshNotes(); // Wait for notes to refresh before selecting
+            window.dispatchEvent(new Event('onyx:refresh-notes')); // Notify Sync Engine
             onSelectNote(newId, true);
         } catch (error) {
             console.error("Failed to create note:", error);
@@ -64,6 +71,13 @@ export default function Sidebar({
                 }}
                 noteTitle={lockingNoteTitle}
             />
+
+            <LoginModal
+                isOpen={isLoginOpen}
+                onClose={() => setIsLoginOpen(false)}
+                onLogin={login}
+            />
+
             {/* ACTION MENU */}
             <div className="p-3 space-y-1">
                 <div
@@ -80,6 +94,26 @@ export default function Sidebar({
                     <PlusSquare size={16} className="text-zinc-500 group-hover:text-purple-400 transition-colors" />
                     <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">New Page</span>
                 </div>
+
+                {/* CLOUD SYNC BUTTON */}
+                {user ? (
+                    <div
+                        onClick={logout}
+                        className="flex items-center gap-2 px-3 py-2.5 hover:bg-red-500/10 rounded-lg cursor-pointer transition-all duration-150 group"
+                        title={`Logged in as ${user.email}`}
+                    >
+                        <LogOut size={16} className="text-zinc-500 group-hover:text-red-400 transition-colors" />
+                        <span className="text-sm font-medium text-zinc-400 group-hover:text-red-300">Disconnect</span>
+                    </div>
+                ) : (
+                    <div
+                        onClick={() => setIsLoginOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-150 group"
+                    >
+                        <Cloud size={16} className="text-zinc-500 group-hover:text-blue-400 transition-colors" />
+                        <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">Connect Cloud</span>
+                    </div>
+                )}
             </div>
 
             {/* DIVIDER */}

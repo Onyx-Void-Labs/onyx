@@ -42,18 +42,50 @@ impl Database {
             .unwrap();
 
         // Table Creation
-        sqlx::query(
+        println!("Checking 'notes' table...");
+        if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 content TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                pb_id TEXT
             )",
         )
         .execute(&pool)
         .await
-        .unwrap();
+        {
+            eprintln!("CRITICAL ERROR: Failed to create tables: {}", e);
+            panic!("Database setup failed: {}", e);
+        }
+
+        // Migration: Add pb_id if missing (for existing users)
+        println!("Checking migration for pb_id...");
+        let has_pb_id: bool = sqlx::query_scalar(
+            "SELECT count(*) FROM pragma_table_info('notes') WHERE name='pb_id'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+
+        if !has_pb_id {
+            println!("Applying migration: Adding pb_id column...");
+            match sqlx::query("ALTER TABLE notes ADD COLUMN pb_id TEXT")
+                .execute(&pool)
+                .await
+            {
+                Ok(_) => println!("Migration successful: pb_id added."),
+                Err(e) => {
+                    // Start assuming it might have failed because it exists (race condition?), check again or log warn
+                    eprintln!("Migration failed: {}", e);
+                    // Check if it exists now?
+                }
+            }
+        } else {
+            println!("Migration skipped: pb_id already exists.");
+        }
 
         // Trigger Creation
         sqlx::query(
