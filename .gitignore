@@ -26,5 +26,12 @@ dist-ssr
 *.sln
 *.sw?
 
+
+# Production Data (Do NOT commit)
+deploy/pb_data
+deploy/hp_data
+deploy/caddy_data
+deploy/caddy_config
+
 # AI Context
 AI_CHEATSHEET.md
