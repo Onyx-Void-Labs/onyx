@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Search, FileText, Plus } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { useSync } from '../../contexts/SyncContext';
 
 type Note = {
-    id: number;
+    id: string;
     title: string;
 };
 
@@ -11,11 +11,12 @@ interface SearchModalProps {
     isOpen: boolean;
     onClose: () => void;
     notes: Note[];
-    onSelectNote: (id: number) => void;
-    onRefreshNotes: () => void;
+    onSelectNote: (id: string) => void;
 }
 
-export default function SearchModal({ isOpen, onClose, notes, onSelectNote, onRefreshNotes }: SearchModalProps) {
+export default function SearchModal({ isOpen, onClose, notes, onSelectNote }: SearchModalProps) {
+    const { createFile, updateFile } = useSync();
+
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -41,13 +42,12 @@ export default function SearchModal({ isOpen, onClose, notes, onSelectNote, onRe
         setSelectedIndex(0);
     }, [query]);
 
-    const handleCreateNew = async () => {
+    const handleCreateNew = () => {
         try {
-            const newId = await invoke<number>("create_note", {
-                title: query.trim(),
-                content: ""
-            });
-            onRefreshNotes();
+            const newId = createFile();
+            if (query.trim()) {
+                updateFile(newId, { title: query.trim() });
+            }
             onSelectNote(newId);
             onClose();
         } catch (error) {
@@ -109,8 +109,8 @@ export default function SearchModal({ isOpen, onClose, notes, onSelectNote, onRe
                                 onClose();
                             }}
                             className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${i === selectedIndex
-                                    ? 'bg-purple-500/10 text-zinc-100'
-                                    : 'text-zinc-400 hover:bg-white/5'
+                                ? 'bg-purple-500/10 text-zinc-100'
+                                : 'text-zinc-400 hover:bg-white/5'
                                 }`}
                         >
                             <FileText size={16} className={i === selectedIndex ? 'text-purple-400' : 'text-zinc-600'} />
@@ -123,8 +123,8 @@ export default function SearchModal({ isOpen, onClose, notes, onSelectNote, onRe
                         <div
                             onClick={handleCreateNew}
                             className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-t border-zinc-800/50 ${selectedIndex === filtered.length
-                                    ? 'bg-purple-500/10 text-zinc-100'
-                                    : 'text-zinc-400 hover:bg-white/5'
+                                ? 'bg-purple-500/10 text-zinc-100'
+                                : 'text-zinc-400 hover:bg-white/5'
                                 }`}
                         >
                             <Plus size={16} className={selectedIndex === filtered.length ? 'text-purple-400' : 'text-zinc-600'} />

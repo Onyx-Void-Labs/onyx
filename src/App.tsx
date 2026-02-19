@@ -1,71 +1,101 @@
+
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+
 import Sidebar from "./components/ui/Sidebar";
-import Editor from "./components/editor/Editor"; // Using CodeMirror 6 editor
+import Editor from "./components/editor/Editor";
 import TabBar from "./components/ui/TabBar";
 import Titlebar from "./components/ui/Titlebar";
 import SearchModal from "./components/ui/SearchModal";
-import { encryptNote } from "./services/SecurityService";
+import { pb } from "./lib/pocketbase";
 
-import { PocketBaseProvider } from "./contexts/PocketBaseContext";
+import { remove } from "@tauri-apps/plugin-fs";
+import { documentDir, join } from "@tauri-apps/api/path";
 
-export default function App() {
-  const [notes, setNotes] = useState<any[]>([]);
-  const [tabs, setTabs] = useState<number[]>([]);
-  const [activeTabId, setActiveTabId] = useState<number | null>(null);
+import { useSync } from "./contexts/SyncContext";
+import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
+import { WorkspaceProvider, useWorkspace } from "./contexts/WorkspaceContext";
+import SettingsModal from "./components/settings/v2/SettingsModal";
+import AuthModal from "./components/auth/AuthModal";
+
+// Module Views
+import MessagesView from "./components/messages/MessagesView";
+import CalendarView from "./components/calendar/CalendarView";
+import EmailView from "./components/email/EmailView";
+import PhotosView from "./components/photos/PhotosView";
+import PasswordsView from "./components/passwords/PasswordsView";
+import CloudView from "./components/cloud/CloudView";
+
+function AppContent() {
+  // Use Sync Context for File List (Single Source of Truth)
+  const { files, deleteFile } = useSync();
+  const { toggleSettings, settings } = useSettings();
+  const { activeWorkspace } = useWorkspace();
+
+  // Local UI State
+  const [tabs, setTabs] = useState<string[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-
-  const fetchNotes = async () => {
-    try {
-      const fetched = await invoke<any[]>("get_notes");
-      setNotes(fetched);
-    } catch (e) {
-      console.error("Fetch failed", e);
-    }
-  };
+  const [authOpen, setAuthOpen] = useState(false);
+  const [user, setUser] = useState<any>(pb.authStore.model);
 
   useEffect(() => {
-    fetchNotes();
+    // Subscribe to auth changes
+    const unsubscribe = pb.authStore.onChange((_token, model) => {
+      setUser(model);
+    });
 
-    // Listen for Sync Events
-    const handleSyncRefresh = () => {
-      console.log("Sync Refresh Triggered");
-      fetchNotes();
+    return () => {
+      unsubscribe();
     };
-    window.addEventListener('onyx:refresh-notes', handleSyncRefresh);
-    return () => window.removeEventListener('onyx:refresh-notes', handleSyncRefresh);
   }, []);
+
+  const handleLogout = () => {
+    pb.authStore.clear();
+  };
+
+
+  // Cleanup tabs when files are deleted remotely
+  useEffect(() => {
+    const loadedNoteIds = new Set(files.map(n => n.id));
+    const validTabs = tabs.filter(tabId => loadedNoteIds.has(tabId));
+
+    if (validTabs.length !== tabs.length) {
+      console.log("Reconciling tabs: Closing deleted notes");
+      setTabs(validTabs);
+
+      if (activeTabId !== null && !loadedNoteIds.has(activeTabId)) {
+        setActiveTabId(validTabs.length > 0 ? validTabs[validTabs.length - 1] : null);
+      }
+    }
+  }, [files, tabs, activeTabId]);
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+P or Ctrl+T - Open search
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 't')) {
         e.preventDefault();
         setSearchOpen(true);
       }
-      // Ctrl+\ - Toggle sidebar (VS Code style)
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        if (!import.meta.env.VITE_DEMO_MODE) {
+          toggleSettings(true);
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
         e.preventDefault();
         setSidebarCollapsed(prev => !prev);
       }
-
-      // Ctrl+F - Prevent default (Tauri/Browser Find) globally
-      // We handle this inside EditorV2 locally, but we need to stop it elsewhere too
       if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
       }
-
-      // Ctrl+W - Close current tab
       if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
         e.preventDefault();
         if (activeTabId !== null) {
           closeTab(activeTabId);
         }
       }
-      // Ctrl+Tab - Next tab
       if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
         if (tabs.length > 1 && activeTabId !== null) {
@@ -74,7 +104,6 @@ export default function App() {
           setActiveTabId(tabs[nextIndex]);
         }
       }
-      // Ctrl+Shift+Tab - Previous tab
       if (e.ctrlKey && e.key === 'Tab' && e.shiftKey) {
         e.preventDefault();
         if (tabs.length > 1 && activeTabId !== null) {
@@ -88,7 +117,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [tabs, activeTabId]);
 
-  const openTab = (id: number, forceNew: boolean = false) => {
+  const openTab = (id: string, forceNew: boolean = false) => {
     if (tabs.includes(id)) {
       setActiveTabId(id);
       return;
@@ -108,12 +137,11 @@ export default function App() {
     }
   };
 
-  const closeTab = (id: number) => {
+  const closeTab = (id: string) => {
     const currentIndex = tabs.indexOf(id);
     const newTabs = tabs.filter((t) => t !== id);
     setTabs(newTabs);
     if (activeTabId === id && newTabs.length > 0) {
-      // Select the next tab (right), or previous if closing last tab
       const nextIndex = Math.min(currentIndex, newTabs.length - 1);
       setActiveTabId(newTabs[nextIndex]);
     } else if (newTabs.length === 0) {
@@ -121,32 +149,56 @@ export default function App() {
     }
   };
 
-  const handleDeleteNote = async (id: number) => {
+  // Import at top level needed (handled by next tool or assume globals? No, imports needed)
+  // But for this block:
+  const handleDeleteNote = async (id: string) => {
     try {
-      // Find the note first to get its PB ID for sync
-      const noteToDelete = notes.find(n => n.id === id);
-      const pbId = noteToDelete?.pb_id;
+      // 1. Delete from Sync Context (Database)
+      deleteFile(id);
 
-      await invoke("delete_note", { id });
-      setTabs(tabs.filter(t => t !== id));
-      if (activeTabId === id) {
-        const remaining = tabs.filter(t => t !== id);
-        setActiveTabId(remaining.length > 0 ? remaining[remaining.length - 1] : null);
-      }
-      fetchNotes();
+      // 2. Delete Mirror File (if enabled)
+      if (settings.mirrorEnabled) {
+        try {
+          let basePath = settings.mirrorPath;
+          // Resolve default path if not set
+          if (!basePath) {
+            const docs = await documentDir();
+            basePath = await join(docs, 'Onyx Notes');
+          }
 
-      // Notify Sync Engine to delete from Cloud
-      if (pbId) {
-        console.log(`Dispatching delete event for PB ID: ${pbId}`);
-        window.dispatchEvent(new CustomEvent('onyx:deleted-note', { detail: { pbId } }));
+          // PERSISTENT FILE MAPPING: Use localStorage to get the actual filename
+          const storedFilename = localStorage.getItem(`mirror-filename-${id}`);
+          if (storedFilename) {
+            const fileName = `${storedFilename}.md`;
+            const fullPath = await join(basePath, fileName);
+
+            // Delete file (to bin or permanent based on setting)
+            if (settings.mirrorDeleteToBin) {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('move_to_trash', { path: fullPath });
+              console.log('[App] Moved mirror file to Recycle Bin:', fullPath);
+            } else {
+              await remove(fullPath);
+              console.log('[App] Deleted mirror file permanently:', fullPath);
+            }
+
+            // Clean up localStorage entry
+            localStorage.removeItem(`mirror-filename-${id}`);
+          }
+        } catch (err) {
+          console.error('[App] Failed to delete mirror file:', err);
+          // Don't block UI for this failure
+        }
       }
+
+      closeTab(id);
     } catch (e) {
       console.error("Delete failed", e);
     }
   };
 
-  const handleSearchSelect = (id: number) => {
-    openTab(id, true); // Always add to end
+  const handleSearchSelect = (id: string) => {
+    openTab(id, true);
   };
 
   const reorderTabs = (fromIndex: number, toIndex: number) => {
@@ -156,92 +208,111 @@ export default function App() {
     setTabs(reorderedTabs);
   };
 
-  const handleLockNote = async (id: number, password: string) => {
-    try {
-      // 1. Fetch current content
-      // detailed note structure: { id, title, content, ... }
-      const note: any = await invoke("get_note", { id });
-
-      // 2. Encrypt
-      const encryptedData = await encryptNote(note.content, password);
-      const encryptedContentString = JSON.stringify(encryptedData);
-
-      // 3. Save
-      await invoke("update_note", {
-        id,
-        title: note.title,
-        content: encryptedContentString
-      });
-
-      console.log(`Note ${id} locked successfully.`);
-
-      // Force refresh to ensure UI reflects state if needed? 
-      // Actually, EditorV2 needs to know.
-      // If we locked the ACTIVE note, we should force it to reload.
-      if (activeTabId === id) {
-        setRefreshTrigger(prev => prev + 1);
-      }
-      fetchNotes();
-
-    } catch (e) {
-      console.error("Locking failed", e);
-    }
+  const handleLockNote = async (_id: string, _password: string) => {
+    console.warn("Locking not yet implemented for Pure Yjs");
   };
 
-  return (
-    <PocketBaseProvider>
-      <div className="flex flex-col h-screen w-screen bg-zinc-950 overflow-hidden select-none rounded-lg">
-        {/* Custom Titlebar */}
-        <Titlebar
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        />
+  // ─── Determine sidebar visibility per module ────────────────────────────
+  // Some modules have their own built-in sidebars (messages, email, photos, cloud)
+  // Notes uses the existing sidebar. Calendar has its own agenda sidebar.
+  const showNoteSidebar = activeWorkspace === 'notes';
 
-        {/* Main Content */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar with collapse animation */}
-          <div
-            className={`transition-all duration-300 ease-in-out overflow-hidden ${sidebarCollapsed ? 'w-0' : 'w-64'}`}
-          >
-            <Sidebar
-              onSelectNote={openTab}
-              activeNoteId={activeTabId}
-              notes={notes}
-              refreshNotes={async () => { await fetchNotes(); }}
-              openTabs={tabs}
-              onDeleteNote={handleDeleteNote}
-              onOpenSearch={() => setSearchOpen(true)}
-              onLockNote={handleLockNote}
-            />
-          </div>
-
-          {/* Editor Area */}
-          <div className="flex flex-col flex-1 overflow-hidden">
+  // ─── Render the active module content ───────────────────────────────────
+  const renderModuleContent = () => {
+    switch (activeWorkspace) {
+      case 'notes':
+        return (
+          <div className="flex flex-col flex-1 overflow-hidden relative">
             <TabBar
               tabs={tabs}
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
               onCloseTab={closeTab}
               onReorderTabs={reorderTabs}
-              notes={notes}
+              notes={files}
             />
             <Editor
               activeNoteId={activeTabId}
-              refreshTrigger={refreshTrigger}
-              onSave={fetchNotes}
             />
           </div>
-        </div>
+        );
+      case 'messages':
+        return <MessagesView />;
+      case 'calendar':
+        return <CalendarView />;
+      case 'email':
+        return <EmailView />;
+      case 'photos':
+        return <PhotosView />;
+      case 'passwords':
+        return <PasswordsView />;
+      case 'cloud':
+        return <CloudView />;
+      default:
+        return null;
+    }
+  };
 
-        {/* Search Modal */}
-        <SearchModal
-          isOpen={searchOpen}
-          onClose={() => setSearchOpen(false)}
-          notes={notes}
-          onSelectNote={handleSearchSelect}
-          onRefreshNotes={fetchNotes}
-        />
+  return (
+    <div className="flex flex-col h-screen w-screen bg-zinc-950 overflow-hidden select-none rounded-lg relative">
+      <Titlebar
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+      />
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Notes sidebar — only shown for notes workspace */}
+        {showNoteSidebar && (
+          <div
+            className={`shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${sidebarCollapsed ? 'w-0' : 'w-64'}`}
+          >
+            <Sidebar
+              onSelectNote={openTab}
+              activeNoteId={activeTabId}
+              notes={files}
+              openTabs={tabs}
+              onDeleteNote={handleDeleteNote}
+              onOpenSearch={() => setSearchOpen(true)}
+              onLockNote={handleLockNote}
+              onOpenAuth={() => toggleSettings(true)}
+            />
+          </div>
+        )}
+
+        {/* Main content area — switches based on active workspace */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {renderModuleContent()}
+        </div>
       </div>
-    </PocketBaseProvider>
+
+      <SearchModal
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        notes={files}
+        onSelectNote={handleSearchSelect}
+      />
+
+      <SettingsModal
+        user={user}
+        onLogout={handleLogout}
+      />
+
+      <AuthModal
+        isOpen={authOpen}
+        onClose={() => setAuthOpen(false)}
+      />
+
+
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <WorkspaceProvider>
+        <AppContent />
+      </WorkspaceProvider>
+    </SettingsProvider>
   );
 }

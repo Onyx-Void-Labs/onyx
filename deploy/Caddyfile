@@ -1,19 +1,27 @@
-# Onyx PocketBase (Auth & DB)
-onyx.omaritani.dev {
-    # WebSocket endpoint for Hocuspocus
-    # display_name: 'Stripe API + Hocuspocus'
-    handle_path /ws* {
+# OnyxVoid PocketBase (Auth & DB)
+api.onyxvoid.com {
+    # WebSocket endpoint for Hocuspocus (Real-time sync)
+    handle /ws* {
         reverse_proxy hocuspocus:1234
     }
     
-    # API endpoints for Stripe
-    handle_path /api* {
-        rewrite * /api{path}
+    # Stripe API endpoints (Hocuspocus handles these)
+    handle /api/create-subscription {
+        reverse_proxy hocuspocus:1234
+    }
+    handle /api/webhook {
         reverse_proxy hocuspocus:1234
     }
 
-    # Default to PocketBase
-    reverse_proxy pocketbase:8090
+    # Email Relay (OTP / Magic Links)
+    handle /api/email/* {
+        reverse_proxy relay:3000
+    }
+
+    # Everything else goes to PocketBase (including /api/*)
+    handle {
+        reverse_proxy pocketbase:8090
+    }
     
     # Disable logs for "Zero-Log" policy
     log {

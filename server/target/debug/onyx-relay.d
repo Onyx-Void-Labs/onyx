@@ -1,0 +1,1 @@
+C:\Users\omar_\Documents\Onyx\ Development\onyx\server\target\debug\onyx-relay.exe: C:\Users\omar_\Documents\Onyx\ Development\onyx\server\src\main.rs C:\Users\omar_\Documents\Onyx\ Development\onyx\server\src\templates.rs

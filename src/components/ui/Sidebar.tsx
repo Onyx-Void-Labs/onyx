@@ -1,62 +1,75 @@
-import { invoke } from "@tauri-apps/api/core";
-import { Search, PlusSquare, FileText, Trash2, Lock, Cloud, LogOut } from "lucide-react";
-import { useState } from "react";
+
+import { Search, PlusSquare, FileText, Trash2, Lock, Settings } from "lucide-react";
+import { useState, useEffect } from "react";
 import LockModal from "./LockModal";
-import LoginModal from "./LoginModal";
-import { usePocketBase } from "../../contexts/PocketBaseContext";
+// import LoginModal from "./LoginModal";
+// import { usePocketBase } from "../../contexts/PocketBaseContext";
+import { useSync } from "../../contexts/SyncContext";
+import { useSettings } from "../../contexts/SettingsContext";
 
 type Note = {
-    id: number;
+    id: string;
     title: string;
 };
 
 interface SidebarProps {
-    onSelectNote: (id: number, forceNew: boolean) => void;
-    activeNoteId: number | null;
+    onSelectNote: (id: string, forceNew: boolean) => void;
+    activeNoteId: string | null;
     notes: Note[];
-    refreshNotes: () => Promise<void>;
-    openTabs: number[];
-    onDeleteNote: (id: number) => void;
+    openTabs: string[];
+    onDeleteNote: (id: string) => void;
     onOpenSearch: () => void;
-    onLockNote: (id: number, password: string) => Promise<void>;
+    onLockNote: (id: string, password: string) => Promise<void>;
+    onOpenAuth: () => void;
 }
 
 export default function Sidebar({
     onSelectNote,
     activeNoteId,
     notes,
-    refreshNotes,
     openTabs,
     onDeleteNote,
     onOpenSearch,
-    onLockNote
+    onLockNote,
+    onOpenAuth
 }: SidebarProps) {
 
-    const [lockingNoteId, setLockingNoteId] = useState<number | null>(null);
+    const [lockingNoteId, setLockingNoteId] = useState<string | null>(null);
     const [lockingNoteTitle, setLockingNoteTitle] = useState("");
-    const [isLoginOpen, setIsLoginOpen] = useState(false);
 
-    // Auth Context
-    const { user, login, logout } = usePocketBase();
+    // Auth Context - Removed for Pure Yjs Rewrite
+    const { status, createFile } = useSync();
+    const { offlineMode } = useSettings();
 
     const handleNewPage = async () => {
         try {
-            const newId = await invoke<number>("create_note", {
-                title: "",
-                content: ""
-            });
-            await refreshNotes(); // Wait for notes to refresh before selecting
-            window.dispatchEvent(new Event('onyx:refresh-notes')); // Notify Sync Engine
+            // Yjs: Create Local File Instantly
+            const newId = createFile();
+            // onSelectNote will handle the UI update
             onSelectNote(newId, true);
         } catch (error) {
             console.error("Failed to create note:", error);
         }
     };
 
-    const handleLockClick = (id: number, title: string) => {
+    const handleLockClick = (id: string, title: string) => {
         setLockingNoteId(id);
         setLockingNoteTitle(title);
     }
+
+    // Debounce status to prevent flickering (RGB light effect)
+    const [displayedStatus, setDisplayedStatus] = useState(status);
+
+    useEffect(() => {
+        // If connected, update instantly (responsiveness), otherwise debounce to hide micro-outages
+        // Actually, debouncing everything is smoother for "flickering" issues.
+        // If we go Connected -> Disconnected -> Connected, we want to ignore the middle part.
+        const timer = setTimeout(() => {
+            setDisplayedStatus(status);
+        }, 1000); // 1s delay to stabilize UI
+
+        return () => clearTimeout(timer);
+    }, [status]);
 
     return (
         <aside className="w-64 h-full bg-gradient-to-b from-zinc-900 to-zinc-950 text-zinc-400 flex flex-col">
@@ -72,48 +85,51 @@ export default function Sidebar({
                 noteTitle={lockingNoteTitle}
             />
 
-            <LoginModal
-                isOpen={isLoginOpen}
-                onClose={() => setIsLoginOpen(false)}
-                onLogin={login}
-            />
-
             {/* ACTION MENU */}
             <div className="p-3 space-y-1">
                 <div
                     onClick={onOpenSearch}
-                    className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-150 group"
+                    className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-300 group relative overflow-hidden"
                 >
-                    <Search size={16} className="text-zinc-500 group-hover:text-purple-400 transition-colors" />
-                    <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">Search</span>
+                    <div className="absolute inset-0 bg-purple-500/0 group-hover:bg-purple-500/5 transition-colors duration-500" />
+                    <Search size={16} className="text-zinc-500 group-hover:text-purple-400 group-hover:scale-125 group-hover:rotate-12 transition-all duration-500 ease-out z-10" />
+                    <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors duration-300 z-10">Search</span>
                 </div>
                 <div
                     onClick={handleNewPage}
-                    className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-150 group"
+                    className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-300 group relative overflow-hidden"
                 >
-                    <PlusSquare size={16} className="text-zinc-500 group-hover:text-purple-400 transition-colors" />
-                    <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">New Page</span>
+                    <div className="absolute inset-0 bg-emerald-500/0 group-hover:bg-emerald-500/5 transition-colors duration-500" />
+                    <PlusSquare size={16} className="text-zinc-500 group-hover:text-emerald-400 group-hover:rotate-90 group-hover:scale-110 transition-all duration-500 ease-in-out z-10" />
+                    <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors duration-300 z-10">New Page</span>
                 </div>
 
-                {/* CLOUD SYNC BUTTON */}
-                {user ? (
+                {/* SETTINGS BUTTON - Hidden in Demo Mode */}
+                {!import.meta.env.VITE_DEMO_MODE && (
                     <div
-                        onClick={logout}
-                        className="flex items-center gap-2 px-3 py-2.5 hover:bg-red-500/10 rounded-lg cursor-pointer transition-all duration-150 group"
-                        title={`Logged in as ${user.email}`}
-                    >
-                        <LogOut size={16} className="text-zinc-500 group-hover:text-red-400 transition-colors" />
-                        <span className="text-sm font-medium text-zinc-400 group-hover:text-red-300">Disconnect</span>
-                    </div>
-                ) : (
-                    <div
-                        onClick={() => setIsLoginOpen(true)}
+                        onClick={onOpenAuth}
                         className="flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 rounded-lg cursor-pointer transition-all duration-150 group"
                     >
-                        <Cloud size={16} className="text-zinc-500 group-hover:text-blue-400 transition-colors" />
-                        <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">Connect Cloud</span>
+                        <Settings
+                            size={16}
+                            className="text-zinc-500 group-hover:text-purple-400 group-hover:rotate-90 transition-all duration-500 ease-in-out"
+                        />
+                        <div className="flex flex-1 items-center justify-between">
+                            <span className="text-sm font-medium text-zinc-400 group-hover:text-zinc-200">Settings</span>
+
+                            {/* SUBTLE STATUS DOT - Debounced */}
+                            <div className="flex items-center gap-2">
+                                {(!offlineMode) && (
+                                    <div className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${displayedStatus === 'connected' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                                        displayedStatus === 'connecting' ? 'bg-amber-500 animate-pulse' :
+                                            'bg-red-500'
+                                        }`} />
+                                )}
+                            </div>
+                        </div>
                     </div>
                 )}
+
             </div>
 
             {/* DIVIDER */}
@@ -160,8 +176,6 @@ export default function Sidebar({
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        // Pass handler up (requires new prop)
-                                        // For now, let's just use the local state and we will add the prop next.
                                         handleLockClick(note.id, note.title);
                                     }}
                                     className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 transition-all mr-1"

@@ -2,10 +2,10 @@ import { X, FileText } from "lucide-react";
 import { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
 
 interface TabBarProps {
-    tabs: number[];
-    activeTabId: number | null;
-    onSelectTab: (id: number) => void;
-    onCloseTab: (id: number) => void;
+    tabs: string[];
+    activeTabId: string | null;
+    onSelectTab: (id: string) => void;
+    onCloseTab: (id: string) => void;
     onReorderTabs: (fromIndex: number, toIndex: number) => void;
     notes: any[];
 }
@@ -17,12 +17,12 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onR
         dragIndex: number;
         startX: number;
         currentX: number;
-        originalTabId: number; // Track ID to identify settling tab
+        originalTabId: string; // Track ID to identify settling tab
     } | null>(null);
 
     // Settling state for the dropped tab
     const [settlingState, setSettlingState] = useState<{
-        tabId: number;
+        tabId: string;
         startOffset: number;
     } | null>(null);
 
@@ -59,7 +59,6 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onR
         if (settlingState) {
             // Force reflow to ensure start position is applied? 
             // React batching might handle this, but let's clear it in the next tick just to be safe
-            // Actually, simply clearing it in a timeout works best for transitions
             requestAnimationFrame(() => {
                 setSettlingState(null);
             });
@@ -121,7 +120,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onR
 
     const manyTabs = tabs.length > 6;
 
-    const handleMouseDown = (e: React.MouseEvent, index: number, tabId: number) => {
+    const handleMouseDown = (e: React.MouseEvent, index: number, tabId: string) => {
         wasDragging.current = false; // Reset drag state on new interaction
         if (e.button === 0 && tabs.length > 1) {
             e.preventDefault();

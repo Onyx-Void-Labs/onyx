@@ -50,7 +50,8 @@ impl Database {
                 content TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                pb_id TEXT
+                pb_id TEXT,
+                local_uuid TEXT UNIQUE
             )",
         )
         .execute(&pool)
@@ -60,31 +61,32 @@ impl Database {
             panic!("Database setup failed: {}", e);
         }
 
-        // Migration: Add pb_id if missing (for existing users)
-        println!("Checking migration for pb_id...");
-        let has_pb_id: bool = sqlx::query_scalar(
-            "SELECT count(*) FROM pragma_table_info('notes') WHERE name='pb_id'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0)
-            > 0;
+        // Migration: Add pb_id if missing
+        let table_info: Vec<(i64, String, String, i64, Option<String>, i64)> =
+            sqlx::query_as("PRAGMA table_info('notes')")
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+        let has_pb_id = table_info.iter().any(|c| c.1 == "pb_id");
+        let has_uuid = table_info.iter().any(|c| c.1 == "local_uuid");
 
         if !has_pb_id {
             println!("Applying migration: Adding pb_id column...");
-            match sqlx::query("ALTER TABLE notes ADD COLUMN pb_id TEXT")
+            let _ = sqlx::query("ALTER TABLE notes ADD COLUMN pb_id TEXT")
                 .execute(&pool)
-                .await
-            {
-                Ok(_) => println!("Migration successful: pb_id added."),
-                Err(e) => {
-                    // Start assuming it might have failed because it exists (race condition?), check again or log warn
-                    eprintln!("Migration failed: {}", e);
-                    // Check if it exists now?
-                }
-            }
-        } else {
-            println!("Migration skipped: pb_id already exists.");
+                .await;
+        }
+
+        if !has_uuid {
+            println!("Applying migration: Adding local_uuid column...");
+            let _ = sqlx::query("ALTER TABLE notes ADD COLUMN local_uuid TEXT")
+                .execute(&pool)
+                .await;
+            // Generate UUIDs for existing notes
+            let _ = sqlx::query("UPDATE notes SET local_uuid = (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2,3) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2,3) || '-' || lower(hex(randomblob(6)))) WHERE local_uuid IS NULL")
+                .execute(&pool)
+                .await;
         }
 
         // Trigger Creation

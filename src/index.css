@@ -78,6 +78,30 @@ body {
   }
 }
 
+/* --- SHIMMER ANIMATION --- */
+@keyframes shimmer-effect {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.premium-shimmer {
+  background: linear-gradient(to right, #ffffff 0%, #a1a1aa 50%, #ffffff 100%);
+  background-size: 200% auto;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  transition: all 0.5s ease;
+}
+
+.shimmer-trigger:hover .premium-shimmer {
+  animation: shimmer-effect 2s linear infinite;
+}
+
 /* --- UTILITIES --- */
 .glass {
   background: rgba(24, 24, 27, 0.6);
@@ -90,4 +114,9 @@ body {
   background: linear-gradient(145deg, rgba(24, 24, 27, 0.9), rgba(9, 9, 11, 0.9));
   border: 1px solid rgba(255, 255, 255, 0.03);
   box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }

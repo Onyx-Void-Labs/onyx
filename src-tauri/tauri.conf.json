@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "onyx",
+  "productName": "Onyx",
   "version": "0.0.2",
-  "identifier": "com.omar.onyx",
+  "identifier": "com.onyxvoid.onyx",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/om-itani/onyx/releases/latest/download/latest.json"
+        "https://api.onyxvoid.com/updates/latest.json"
       ],
       "dialog": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwM0JENzNDODEyQTRDRkEKUldUNlRDcUJQTmM3WVBNbjdZSi9Eb0lRaDFZS3o5U0tabVlRUHJTRFA1clZHMGZ4V3N4SVJLTlgK"

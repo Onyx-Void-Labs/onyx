@@ -1,0 +1,46 @@
+services:
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: onyx-pocketbase
+    restart: always
+    volumes:
+      - ./pb_data:/pb/pb_data
+      - ./pb_hooks:/pb/pb_hooks
+    environment:
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY}
+    # No ports exposed directly, everything goes through Caddy
+
+  hocuspocus:
+    build:
+      context: ../hocuspocus-server
+    container_name: onyx-hocuspocus
+    restart: always
+    environment:
+      # Access PocketBase internally via Docker network
+      POCKETBASE_URL: http://pocketbase:8090
+      PORT: 1234
+    env_file:
+      - ../hocuspocus-server/.env
+    volumes:
+      # Persist SQLite DB
+      - ./hp_data:/app/data
+    depends_on:
+      - pocketbase
+
+  caddy:
+    image: caddy:alpine
+    container_name: onyx-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.pb:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - pocketbase
+
+volumes:
+  caddy_data:
+  caddy_config:

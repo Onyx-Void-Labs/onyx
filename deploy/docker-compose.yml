@@ -27,6 +27,18 @@ services:
     depends_on:
       - pocketbase
 
+  relay:
+    build:
+      context: ./server
+    container_name: onyx-relay
+    restart: always
+    environment:
+      PORT: "3000"
+      SMTP_HOST: smtp.purelymail.com
+      SMTP_USERNAME: noreply@onyxvoid.com
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      RUST_LOG: info
+
   caddy:
     image: caddy:alpine
     container_name: onyx-caddy
@@ -40,6 +52,7 @@ services:
       - caddy_config:/config
     depends_on:
       - pocketbase
+      - relay
 
 volumes:
   caddy_data:

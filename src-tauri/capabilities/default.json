@@ -8,11 +8,44 @@
   "permissions": [
     "core:default",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "$APPDATA/**"
+        },
+        {
+          "path": "$DOCUMENT/**"
+        }
+      ]
+    },
+    "dialog:default",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
-    "core:window:allow-toggle-maximize"
+    "core:window:allow-toggle-maximize",
+    "fs:default",
+    "fs:allow-write-text-file",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-read-text-file",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-stat",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/**",
+        "$DOCUMENT/**",
+        "$APPDATA/**"
+      ]
+    },
+    "oauth:allow-start",
+    "oauth:allow-cancel"
   ]
 }

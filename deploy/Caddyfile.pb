@@ -1,0 +1,23 @@
+# OnyxVoid PocketBase (Auth & DB)
+api.onyxvoid.com {
+    # WebSocket endpoint for Hocuspocus
+    # WebSocket endpoint for Hocuspocus
+    # display_name: 'Stripe API + Hocuspocus'
+    handle_path /ws* {
+        reverse_proxy hocuspocus:1234
+    }
+    
+    # API endpoints for Stripe
+    handle_path /api* {
+        rewrite * /api{path}
+        reverse_proxy hocuspocus:1234
+    }
+
+    # Default to PocketBase
+    reverse_proxy pocketbase:8090
+    
+    # Disable logs for "Zero-Log" policy
+    log {
+        output discard
+    }
+}

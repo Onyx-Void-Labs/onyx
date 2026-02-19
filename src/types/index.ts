@@ -1,6 +1,6 @@
 // src/types/index.ts
 
-export type BlockType = 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' |'p' | 'code' | 'math';
+export type BlockType = 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'p' | 'code' | 'math';
 
 export interface Block {
     id: string;
@@ -10,7 +10,7 @@ export interface Block {
 }
 
 export interface NoteContent {
-    id: number;
+    id: string;
     title: string;
     blocks: Block[];
     lastUpdated?: number;

@@ -5,7 +5,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
     EditorView,
     keymap,
@@ -15,9 +14,10 @@ import {
     Decoration,
     type DecorationSet,
     type ViewUpdate,
-    highlightActiveLine
+    highlightActiveLine as cmHighlightActiveLine,
+    lineNumbers as cmLineNumbers
 } from '@codemirror/view';
-import { EditorState, Extension, Prec } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -25,31 +25,36 @@ import { HighlightStyle, syntaxHighlighting, foldGutter, codeFolding, foldKeymap
 import { tags } from '@lezer/highlight';
 import { hideMarkdown } from './extensions/hideMarkdown';
 import { autoPairs } from './extensions/autoPairs';
-import { bulletLists } from './extensions/bulletLists';
+
 import { mathLivePreview } from './extensions/mathLivePreview';
 import { mathTooltip } from './extensions/mathTooltip';
 import { mathMenuPlugin, mathMenuKeymap, mathMenuStateField, MathMenuState } from './extensions/mathAutocomplete';
+import { mathAutoReplace } from './extensions/mathAutoReplace';
+
 import { MathMenu } from './MathMenu';
 import { FindWidget } from './FindWidget';
 
 import { search } from '@codemirror/search';
+
 // Yjs Imports
 import * as Y from 'yjs';
-// import { IndexeddbPersistence } from 'y-indexeddb'; // CAUSING DUPLICATION
+import { HocuspocusProvider } from '@hocuspocus/provider';
+import { IndexeddbPersistence } from 'y-indexeddb';
 import { yCollab } from 'y-codemirror.next';
-import { usePocketBase } from '../../contexts/PocketBaseContext';
+import { useSync } from '../../contexts/SyncContext';
+import { useSettings } from '../../contexts/SettingsContext';
+// import { writeTextFile, createDir, exists, BaseDirectory } from '@tauri-apps/plugin-fs'; // OLD
+import { writeTextFile, readTextFile, mkdir, exists, rename, stat } from '@tauri-apps/plugin-fs';
+import { documentDir, join } from '@tauri-apps/api/path';
 
 import 'katex/dist/katex.min.css'; // KaTeX CSS
-
-// ... existing code ...
-
 
 
 // ============================================
 const onyxTheme = EditorView.theme({
     '&': {
         backgroundColor: 'transparent',
-        color: '#a1a1aa',
+        color: '#f4f4f5', // zinc-100 (White-ish)
         height: '100%',
     },
     '&.cm-focused': {
@@ -212,8 +217,62 @@ const onyxTheme = EditorView.theme({
     },
     '.cm-hr-active::after': {
         display: 'none', /* Hide the purple line */
+    },
+    // ========================================================================
+    // REMOTE CURSORS (Yjs) - ENHANCED VISUALS
+    // ========================================================================
+    '.cm-ySelection': {
+        backgroundColor: 'rgba(250, 204, 21, 0.2) !important', // Yellow-400 opacity
+        margin: '0 -1px',
+    },
+    '.cm-ySelectionCaret': {
+        position: 'relative',
+        borderLeft: '2px solid #facc15', // Yellow-400
+        marginLeft: '-1px',
+    },
+    '.cm-ySelectionCaret::before': {
+        content: 'none !important', // HIDDEN AS REQUESTED
+        display: 'none !important',
+    },
+    '.cm-ySelectionCaret:hover::before': {
+        display: 'none !important',
+    },
+    // Better: Show on active line or when cursor moves? No, allow simpler UI:
+    // Just make it very subtle or only show if it's "Active".
+    // User requested "nothing like that on first line".
+    // Let's try: ONLY show if we are hovering the EDITOR or the CARET.
+    '.cm-content:hover .cm-ySelectionCaret::before': {
+        display: 'none !important',
+    },
+
+    // Fallback/Legacy classes
+    '.yRemoteSelection': {
+        backgroundColor: 'rgba(250, 204, 21, 0.2)',
+    },
+    '.yRemoteSelectionHead': {
+        position: 'absolute',
+        borderLeft: '2px solid #facc15',
+        height: '100%',
+        boxSizing: 'border-box',
+        zIndex: '10',
+    },
+    '.yRemoteSelectionHead::after': {
+        position: 'absolute',
+        content: 'attr(data-name)',
+        top: '-1.6em',
+        left: '-2px',
+        background: '#facc15',
+        color: '#000000',
+        fontSize: '0.70rem',
+        padding: '2px 6px',
+        borderRadius: '4px',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+        fontWeight: '700',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
     }
 }, { dark: true });
+
 
 // ============================================
 // HIGHLIGHTING STYLE
@@ -237,7 +296,7 @@ const onyxHighlighting = HighlightStyle.define([
 ]);
 
 // Markdown Styling Plugin
-const markdownDecorations = ViewPlugin.fromClass(class {
+const getMarkdownDecorations = (showDividers: boolean) => ViewPlugin.fromClass(class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
         this.decorations = this.compute(view);
@@ -260,7 +319,7 @@ const markdownDecorations = ViewPlugin.fromClass(class {
                     widgets.push(Decoration.line({ class: 'cm-blockquote-line' }).range(line.from));
                 }
                 // Divider (---, ***, ___)
-                else if (/^(\*\*\*|---|___)$/.test(text)) {
+                else if (showDividers && /^(\*\*\*|---|___)$/.test(text)) {
                     // Always add base class (Layout)
                     let className = 'cm-hr-line';
 
@@ -281,11 +340,30 @@ const markdownDecorations = ViewPlugin.fromClass(class {
     decorations: v => v.decorations
 });
 
-// Helper to wrap selection
+// Helper to wrap selection or insert template
 function wrapSelection(view: EditorView, wrapper: string) {
     const { state, dispatch } = view;
     const updates = state.selection.ranges.map(range => {
-        if (range.empty) return null;
+        if (range.empty) {
+            // Insert wrapper around cursor
+            // If $$ (Block), add newlines. If $ (Inline), just wrap.
+            if (wrapper === '$$') {
+                return {
+                    range,
+                    changes: { from: range.from, insert: "$$\n\n$$" },
+                    // Move cursor to middle line
+                    selection: { anchor: range.from + 3 }
+                };
+            } else {
+                return {
+                    range,
+                    changes: { from: range.from, insert: `${wrapper}${wrapper}` },
+                    // Move cursor to middle
+                    selection: { anchor: range.from + wrapper.length }
+                };
+            }
+        }
+        // Wrap existing selection
         return {
             range,
             changes: [
@@ -293,13 +371,33 @@ function wrapSelection(view: EditorView, wrapper: string) {
                 { from: range.to, insert: wrapper }
             ]
         };
-    }).filter(u => u !== null);
+    });
 
     if (updates.length > 0) {
+        // Calculate new selection for the FIRST range (primary cursor)
+        const primaryUpdate = updates[0];
+        let newSelection = undefined;
+
+        if (primaryUpdate.selection) {
+            newSelection = primaryUpdate.selection;
+        } else {
+            // For wrapped text, select the wrapped text? Or just cursor at end?
+            // Standard is to select the text inside.
+            // We inserted wrapper at from and to.
+            // Original: [from, to] -> New: [from+len, to+len]
+            // We want selection to assume the whole range?
+            // Let's just put cursor at end of wrapper for now to be safe, or keep selection.
+            // To keep selection: anchor += len, head += len
+            newSelection = {
+                anchor: primaryUpdate.range.from + wrapper.length,
+                head: primaryUpdate.range.to + wrapper.length
+            };
+        }
+
         dispatch(state.update({
-            changes: updates.flatMap(u => u!.changes),
+            changes: updates.flatMap(u => u.changes),
             scrollIntoView: true,
-            selection: { anchor: updates[0]!.range.from + wrapper.length } // Imperfect for multi-select but works for single
+            selection: newSelection
         }));
         return true;
     }
@@ -308,551 +406,528 @@ function wrapSelection(view: EditorView, wrapper: string) {
 
 
 interface EditorProps {
-    activeNoteId: number | null;
-    onSave: () => void;
-    refreshTrigger?: number; // Prop to force re-check of content
+    activeNoteId: string | null;
 }
 
-export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: EditorProps) {
+export default function Editor({ activeNoteId }: EditorProps) {
+    const { updateFile } = useSync();
+    const settings = useSettings();
+    const {
+        fontFamily, fontSize, lineHeight, showMath, showDividers,
+        lineNumbers: prefLineNumbers, wordWrap: prefWordWrap, highlightActiveLine: prefHighlightActiveLine
+    } = settings;
+
+    // DEMO MODE OVERRIDES
+    const isDemo = import.meta.env.VITE_DEMO_MODE === 'true' || import.meta.env.VITE_DEMO_MODE === true;
+    const effectiveLineNumbers = isDemo ? false : prefLineNumbers;
+
+    // Force clean font in demo mode, otherwise respect user setting
+    const finalFontFamily = isDemo ? 'Inter, system-ui, sans-serif' : (fontFamily === 'System' ? 'system-ui' : fontFamily);
+
     // UI State
     const [title, setTitle] = useState('');
     const [zoom, setZoom] = useState(1);
-
-    // Refs for mutable state
-    const editorRef = useRef<HTMLDivElement>(null);
+    const [status, setStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
     const [mathMenuData, setMathMenuData] = useState<MathMenuState | null>(null);
-    const [showFindWidget, setShowFindWidget] = useState(false);
-    // Signal to force-focus the FindWidget (increments to trigger effect)
-    const [findFocusSignal, setFindFocusSignal] = useState(0);
-    // Signal for Live Search Updates (re-count matches on doc/selection change)
-    const [searchTick, setSearchTick] = useState(0);
+
+    // Refs
+    const editorRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
-    const titleRef = useRef<HTMLInputElement>(null);
+    const [showFindWidget, setShowFindWidget] = useState(false);
+    const [findFocusSignal, setFindFocusSignal] = useState(0);
 
-    // Data refs - SINGLE SOURCE OF TRUTH
-    const noteIdRef = useRef<number | null>(null);
-    const titleValueRef = useRef<string>('');
-    const contentValueRef = useRef<string>('');
-    const pbIdRef = useRef<string | null>(null); // Real PB ID
-    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isLoadingRef = useRef(false);
-
-    // Sync State
-    const [loadedId, setLoadedId] = useState<number | null>(null); // Prevents View Init race condition
-
-    // Yjs State
+    // Yjs Refs - Single Connection per Note
+    const providerRef = useRef<HocuspocusProvider | null>(null);
     const yDocRef = useRef<Y.Doc | null>(null);
-    const yProviderRef = useRef<any | null>(null);
 
-    // PocketBase Sync
-    const { pb, user, isConnected } = usePocketBase();
-
-
-    // ============================================
-    // POCKETBASE SYNC
-    // ============================================
-    useEffect(() => {
-        if (!activeNoteId || !user || !isConnected || loadedId !== activeNoteId) return;
-
-        const pbId = pbIdRef.current;
-        if (!pbId) return; // If no PB ID yet, we can't subscribe. Save will create it.
-
-        const syncRemote = async () => {
-            try {
-                // Subscribe to THIS note
-                await pb.collection('notes').subscribe(pbId, (e) => {
-                    if (e.action === 'update' && e.record.content) {
-                        // Check if this update originated from US? 
-                        // PocketBase doesn't easily tell us "who" sent it excluding us without custom headers.
-                        // Simple check: If content matches current, ignore.
-                        if (contentValueRef.current === e.record.content) return;
-
-                        console.log("Remote update received!");
-                        // Ideally: Update Yjs doc
-                        if (yDocRef.current) {
-                            const doc = yDocRef.current;
-                            const yText = doc.getText('codemirror');
-                            doc.transact(() => {
-                                if (yText.toString() !== e.record.content) {
-                                    yText.delete(0, yText.length);
-                                    yText.insert(0, e.record.content);
-                                }
-                            });
-                        }
-                    }
-                });
-            } catch (err) {
-                console.error("Failed to subscribe", err);
-            }
-        };
-
-        syncRemote();
-
-        return () => {
-            if (activeNoteId && pbId) {
-                pb.collection('notes').unsubscribe(pbId).catch(() => { });
-            }
-        };
-    }, [activeNoteId, loadedId, user, isConnected, pb]);
+    // Mirror Refs
+    const lastSavedTitleRef = useRef<string | null>(null);
+    const lastWriteTimeRef = useRef<number>(0);
 
 
     // ============================================
-    // SAVE FUNCTION
-    // ============================================
-    const saveToDatabase = async (instantCallback = false) => {
-        // LOCK: Don't save while loading
-        if (isLoadingRef.current) return;
-
-        const id = noteIdRef.current;
-        if (!id || id !== activeNoteId) return;
-
-        const titleVal = titleValueRef.current;
-        const contentVal = contentValueRef.current; // Raw Text
-
-        // Prepare Local Content (JSON wrapper)
-        const contentJson = JSON.stringify([{
-            id: 'main',
-            type: 'p',
-            content: contentVal
-        }]);
-
-        try {
-            // 1. Local Save (Tauri)
-            await invoke('update_note', {
-                id,
-                title: titleVal,
-                content: contentJson
-            });
-
-            // 2. Cloud Save (PocketBase) - Fire and Forget
-            if (user && isConnected) {
-                let pbId = pbIdRef.current;
-
-                // Lazy Load: If we don't have a PB ID yet, check if the Sync Engine assigned one in the background
-                if (!pbId) {
-                    try {
-                        const result = await invoke<any>('get_note_content', { id });
-                        if (result && result.pb_id) {
-                            pbId = result.pb_id;
-                            pbIdRef.current = pbId; // Update ref for next time
-                            console.log("Lazy loaded PB ID:", pbId);
-                        }
-                    } catch (e) {
-                        // Ignore lookup error
-                    }
-                }
-
-                if (pbId) {
-                    // Update Existing ONLY
-                    // We let the Sync Hook handle creation of new notes to avoid race conditions/duplication.
-                    pb.collection('notes').update(pbId, {
-                        title: titleVal,
-                        content: contentVal,
-                    }).catch(async (e) => {
-                        console.error("Cloud Sync Update Failed", e);
-                    });
-                }
-            }
-
-            if (instantCallback) onSave();
-        } catch (e) {
-            console.error('Save failed:', e);
-        }
-    };
-
-    // Debounced save for content
-    const scheduleSave = () => {
-        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = setTimeout(async () => {
-            await saveToDatabase(true); // Call onSave after debounce
-        }, 1000);
-    };
-
-    // ============================================
-    // LOAD NOTE
+    // LOAD NOTE & YJS SETUP
     // ============================================
     useEffect(() => {
         if (!activeNoteId) {
-            noteIdRef.current = null;
+            if (viewRef.current) {
+                viewRef.current.destroy();
+                viewRef.current = null;
+            }
             setTitle('');
-            setLoadedId(null);
-            // Clear editor
-            if (viewRef.current) {
-                viewRef.current.destroy();
-                viewRef.current = null;
-            }
             return;
         }
 
-        // Skip if already loaded (prevents re-fetching on small updates)
-        // We use a simple check: if IDs match, we usually skip, UNLESS refreshTrigger changed (we can't easily track change direction here without ref,
-        // but since we want to fix bugs, let's just ALLOW reloading if we clearly aren't sure).
-        // Safest fix for "Notes Vanished": Just load it. The network/invoke overhead is local and tiny.
-        // Optimization can come later.
+        console.log("Initializing Yjs for Note:", activeNoteId);
+        setStatus('connecting');
+        setTitle('');
 
-        // However, we MUST NOT overwrite user work if they are typing and we spuriously reload.
-        // But `activeNoteId` changing implies a real switch.
-        // The only case is 'refreshTrigger' forcing a reload on the SAME note (Locking).
-
-        if (noteIdRef.current === activeNoteId && typeof refreshTrigger !== 'undefined' && refreshTrigger === 0) {
-            // If this is just a re-render and Trigger is 0, maybe skip?
-            // But treating '0' as special is dangerous.
-        }
-
-        // SIMPLIFIED LOGIC:
-        // Always load. The specific "skip" optimization was causing the "Same Note" bug.
-        // We will just protect against overwriting dirty state if needed, but for now,
-        // if activeNoteId changes, we LOAD.
-
-        console.log("Loading note:", activeNoteId);
-
-        isLoadingRef.current = true;
-        setLoadedId(null); // Signals "Loading..."
-
-        invoke<any>('get_note_content', { id: activeNoteId }).then(async (result) => {
-            if (!result) {
-                isLoadingRef.current = false;
-                return;
-            }
-
-            // --- SECURITY CHECK DISABLED (Emergency Rollback) ---
-            // let loadedContent = result.content;
-            // let locked = false;
-
-            // try {
-            //     const parsed = JSON.parse(loadedContent);
-            //     if (parsed.iv && parsed.salt && parsed.data) {
-            //         locked = true;
-            //     }
-            // } catch (e) {
-            //     // Not JSON, plain text
-            // }
-
-            // // Update Lock State
-            // setIsLocked(false); // Force Unlocked
-
-            // // if (locked) { ... } // Disabled Locked Flow
-
-            let loadedContent = result.content;
-            if (!loadedContent) loadedContent = "";
-
-            // Normal Flow
-            // Handles empty/null/undefined content safely
-            if (!loadedContent) loadedContent = "";
-
-            // 1. Parse content (if not locked)
-            let content = '';
-            try {
-                // Handle both JSON format and raw string
-                if (loadedContent.trim().startsWith('[')) {
-                    const parsed = JSON.parse(loadedContent);
-                    if (Array.isArray(parsed)) {
-                        content = parsed.map((b: any) => b.content || '').join('\n\n');
-                    } else {
-                        content = loadedContent || '';
-                    }
-                } else {
-                    content = loadedContent || '';
-                }
-            } catch (e) {
-                content = loadedContent || '';
-            }
-
-            // 2. YJS INITIALIZATION
-            // Cleanup old doc
-            if (yDocRef.current) {
-                yDocRef.current.destroy();
-            }
-            if (yProviderRef.current) {
-                yProviderRef.current.destroy();
-                yProviderRef.current = null;
-            }
-
-            const doc = new Y.Doc();
-            const yText = doc.getText('codemirror');
-
-            // Apply loaded content to Yjs (Single Source of Truth)
-            // We strip existing content and insert new to ensure FS sync
-            doc.transact(() => {
-                if (yText.length > 0) yText.delete(0, yText.length);
-                yText.insert(0, content);
-            });
-
-            // OFFLINE PERSISTENCE (Only for Unlocked Notes)
-            // We use the ID as the room name for IndexedDB
-            // SECURITY: Locked notes are memory-only.
-            /* 
-            {
-                const provider = new IndexeddbPersistence(`onyx-note-${activeNoteId}`, doc);
-                yProviderRef.current = provider;
-
-                // If we have unsaved local changes in IndexedDB that are NEWER than FS, Yjs handles checking? 
-                // Actually relying on FS as 'Master' for now is safer for phase 1.
-                // So we overwrite Yjs with FS content above.
-                // Persistence here mainly acts as a cache for the NEXT session/crash recovery.
-            }
-            */
-
-            yDocRef.current = doc;
-
-            // 3. Update refs immediately (Single Source of Truth)
-            noteIdRef.current = activeNoteId;
-            pbIdRef.current = result.pb_id || null;
-            titleValueRef.current = result.title || '';
-            contentValueRef.current = content;
-
-            // 4. Update UI
-            setTitle(result.title || '');
-
-            // Update Editor
-            // We rely on the NEW view creation to bind Yjs, so we force a re-mount essentially?
-            // Actually, we need to pass the yText to the extensions.
-            // Since `extensions` is defined in the dependencies of the *next* useEffect, 
-            // updating `yDocRef.current` here isn't enough unless we trigger a re-render or re-init.
-
-            // We'll trust the next useEffect to pick up `yDocRef.current`.
-            // But wait, the next useEffect depends on `activeNoteId`.
-            // So it runs concurrently? No, sequential often.
-
-            // Hack: trigger a re-render to force editor re-init with new Ydoc
-            // We can use a state dummy or just rely on the fact that we set refs.
-            // Actually, let's move the View Init logic HERE or unify them. 
-            // For now, let's stick to the current pattern:
-            // 1. Load Data. 2. Set State. 3. Re-render triggers View Init.
-
-            // To ensure the View Init effect picks up the new YDoc, we need to signal it.
-            // `isLoadingRef` toggle might do it if it caused a render, but it uses ref.
-            // `setTitle` causes a render.
-
-            isLoadingRef.current = false;
-            setLoadedId(activeNoteId);
-
-            // Focus title if empty (User preference)
-            if (!result.title) {
-                setTimeout(() => titleRef.current?.focus(), 50);
-            }
-        }).catch(e => {
-            console.error('Load failed:', e);
-            isLoadingRef.current = false;
-        });
-    }, [activeNoteId]); // Removed refreshTrigger from dependency array to simplify for now, logic handled internally if needed
-
-    // ============================================
-    // INITIALIZE CODEMIRROR
-    // ============================================
-    useEffect(() => {
-        if (!editorRef.current) return;
-
-        // CRITICAL: Wait for Data Load before init
-        if (loadedId !== activeNoteId) {
-            if (viewRef.current) {
-                viewRef.current.destroy();
-                viewRef.current = null;
-            }
-            return;
-        }
-
-        // Clean up existing view if any (for HMR)
         if (viewRef.current) {
             viewRef.current.destroy();
             viewRef.current = null;
         }
 
-        const extensions: Extension[] = [
-            EditorView.editable.of(true),
-            EditorState.allowMultipleSelections.of(true),
-            history(),
-            drawSelection(),
-            highlightActiveLine(),
-            EditorView.lineWrapping,
-            markdownDecorations, // Add custom decorations
-            autoPairs,
-            hideMarkdown, // Hide markdown syntax
+        // PERSISTENT FILE MAPPING
+        const storedFilename = localStorage.getItem(`mirror-filename-${activeNoteId}`);
+        const storedLastWrite = localStorage.getItem(`mirror-lastwrite-${activeNoteId}`);
+        lastSavedTitleRef.current = storedFilename;
+        lastWriteTimeRef.current = storedLastWrite ? parseInt(storedLastWrite, 10) : 0;
 
-            keymap.of([
-                {
-                    key: 'Mod-f', run: () => {
-                        setShowFindWidget(true);
-                        setFindFocusSignal(prev => prev + 1); // Signal to focus
-                        return true;
+        const doc = new Y.Doc();
+        yDocRef.current = doc;
+
+        const persistence = new IndexeddbPersistence(`onyx-note-${activeNoteId}`, doc);
+
+        // Wait for IndexedDB to sync before creating editor
+        persistence.on('synced', async () => {
+            console.log('[Editor] IndexedDB synced for note:', activeNoteId);
+
+            // STARTUP SYNC: Check if mirror file is newer than our last write
+            if (settings.mirrorEnabled && storedFilename && storedLastWrite) {
+                try {
+                    let basePath = settings.mirrorPath;
+                    if (!basePath) {
+                        const docs = await documentDir();
+                        basePath = await join(docs, 'Onyx Notes');
                     }
-                }, // Ctrl+F
+                    const fullPath = await join(basePath, `${storedFilename}.md`);
 
-                // Formatting shortcuts (Highest Priority)
-                { key: 'Ctrl-b', run: (view) => { wrapSelection(view, '**'); return true; } },
-                { key: 'Ctrl-i', run: (view) => { wrapSelection(view, '*'); return true; } },
-                { key: 'Ctrl-`', run: (view) => { wrapSelection(view, '`'); return true; } },
-                { key: 'Ctrl-m', run: (view) => { wrapSelection(view, '$'); return true; } },
-                { key: 'Ctrl-Shift-m', run: (view) => { wrapSelection(view, '$$'); return true; } },
+                    if (await exists(fullPath)) {
+                        const metadata = await stat(fullPath);
+                        const diskMtime = metadata.mtime ? new Date(metadata.mtime).getTime() : 0;
+                        const lastWrite = parseInt(storedLastWrite, 10);
 
-                // Disable Comment shortcut (Ctrl-/)
-                { key: 'Ctrl-/', run: () => true },
+                        if (diskMtime > lastWrite + 100) {
+                            console.log('[Mirror] Startup sync: File is newer! Loading from disk...');
+                            const newContent = await readTextFile(fullPath);
 
-                // Mac equivalents
-                { key: 'Cmd-b', run: (view) => { wrapSelection(view, '**'); return true; } },
-                { key: 'Cmd-i', run: (view) => { wrapSelection(view, '*'); return true; } },
-                { key: 'Cmd-`', run: (view) => { wrapSelection(view, '`'); return true; } },
-                { key: 'Cmd-m', run: (view) => { wrapSelection(view, '$'); return true; } },
-                { key: 'Cmd-Shift-m', run: (view) => { wrapSelection(view, '$$'); return true; } },
+                            doc.transact(() => {
+                                const yText = doc.getText('codemirror');
+                                yText.delete(0, yText.length);
+                                yText.insert(0, newContent);
+                            });
 
-                ...defaultKeymap,
-                ...historyKeymap,
-                ...foldKeymap,
-                indentWithTab,
-                ...markdownKeymap,
-            ]),
-
-            markdown({
-                base: markdownLanguage,
-                codeLanguages: languages,
-                extensions: [
-                    { remove: ['SetextHeading'] } // Disable setext headers (text followed by ---)
-                ]
-            }),
-
-            foldGutter({
-                markerDOM: (open) => {
-                    const el = document.createElement("span");
-                    // Add class for Hybrid Visibility logic
-                    if (!open) el.className = "cm-fold-closed";
-
-                    if (open) {
-                        el.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`; // Down
-                    } else {
-                        el.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>`; // Right
+                            lastWriteTimeRef.current = diskMtime;
+                            localStorage.setItem(`mirror-lastwrite-${activeNoteId}`, diskMtime.toString());
+                            console.log('[Mirror] Startup sync: Content loaded from file.');
+                        }
                     }
-                    return el;
+                } catch (e) {
+                    console.warn('[Mirror] Startup sync failed:', e);
                 }
-            }),
-            codeFolding({
-                placeholderDOM: (_view, onclick) => {
-                    const el = document.createElement("span");
-                    el.className = "cm-folded-badge";
-                    el.textContent = "..."; // Content exists but hidden via CSS
-                    el.onclick = onclick;
-                    return el;
+            }
+
+            // Only create offline editor if not already created and not logged in
+            import('../../lib/pocketbase').then(async ({ pb }) => {
+                if (!pb.authStore.isValid && editorRef.current && !viewRef.current) {
+                    console.log('[Editor] Creating offline editor after sync');
+                    const text = doc.getText('codemirror');
+                    const state = EditorState.create({
+                        doc: text.toString(),
+                        extensions: [
+                            EditorView.editable.of(true),
+                            EditorState.allowMultipleSelections.of(true),
+                            history(),
+                            drawSelection(),
+                            ...(prefHighlightActiveLine ? [cmHighlightActiveLine()] : []),
+                            ...(prefWordWrap ? [EditorView.lineWrapping] : []),
+                            autoPairs,
+                            hideMarkdown,
+                            EditorView.updateListener.of((update) => {
+                                if (update.docChanged) {
+                                    const transaction = update.transactions.find(tr => tr.docChanged);
+                                    if (transaction) {
+                                        transaction.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+                                            text.delete(fromA, toA - fromA);
+                                            text.insert(fromA, inserted.toString());
+                                        });
+                                    }
+                                }
+                            }),
+                            keymap.of([
+                                { key: 'Mod-f', run: () => { setShowFindWidget(true); setFindFocusSignal(prev => prev + 1); return true; } },
+                                { key: 'Mod-b', run: (view) => { wrapSelection(view, '**'); return true; } },
+                                { key: 'Mod-i', run: (view) => { wrapSelection(view, '*'); return true; } },
+                                { key: 'Mod-u', run: (view) => { wrapSelection(view, '__'); return true; } },
+                                { key: 'Mod-`', run: (view) => { wrapSelection(view, '`'); return true; } },
+                                { key: 'Mod-m', run: (view) => { wrapSelection(view, '$'); return true; } },
+                                {
+                                    key: 'Mod-Shift-m', run: (view) => {
+                                        const range = view.state.selection.main;
+                                        view.dispatch({
+                                            changes: { from: range.from, to: range.to, insert: '$$$$' },
+                                            selection: { anchor: range.from + 2 }
+                                        });
+                                        return true;
+                                    }
+                                },
+                                ...defaultKeymap,
+                                ...historyKeymap,
+                                indentWithTab,
+                                ...foldKeymap,
+                                ...markdownKeymap,
+                                ...mathMenuKeymap
+                            ]),
+                            markdown({ base: markdownLanguage, codeLanguages: languages }),
+                            syntaxHighlighting(onyxHighlighting),
+                            codeFolding(),
+                            ...(effectiveLineNumbers ? [foldGutter(),] : []),
+                            ...(effectiveLineNumbers ? [cmLineNumbers()] : []),
+                            placeholder('Start typing... (Changes save locally)'),
+                            onyxTheme,
+                            search({ top: true }),
+                            ...(showMath ? [mathLivePreview, mathTooltip, mathMenuPlugin, mathMenuStateField, mathAutoReplace] : []),
+                            EditorView.updateListener.of((update) => {
+                                const nextState = update.state.field(mathMenuStateField, false);
+                                setMathMenuData(nextState ? { ...nextState } : null);
+                            }),
+                            getMarkdownDecorations(showDividers),
+                        ],
+                    });
+
+                    const view = new EditorView({ state, parent: editorRef.current });
+                    viewRef.current = view;
+                    setStatus('offline');
                 }
-            }),
-
-            onyxTheme,
-            syntaxHighlighting(onyxHighlighting),
-            hideMarkdown,
-            autoPairs, // Auto-close pairs: $ ` * ( [ {
-            bulletLists, // Nested bullet styling
-
-            // Math Support
-            mathLivePreview,
-            mathTooltip, // Re-enabled for real-time preview
-            mathMenuStateField, // REQUIRED: Register the state field!
-            mathMenuPlugin, // The Logic Plugin
-            Prec.highest(keymap.of(mathMenuKeymap)), // The Keyboard Interceptor (Highest Priority)
-            EditorView.updateListener.of((update) => {
-                // Always check if the state field changed, even if doc didn't change (e.g. index update)
-                const prevState = update.startState.field(mathMenuStateField, false);
-                const nextState = update.state.field(mathMenuStateField, false);
-
-                if (prevState !== nextState) { // Reference comparison works because we create new object on update
-                    setMathMenuData(nextState ? { ...nextState } : null);
-                }
-            }),
-            search({ top: true }), // Enable Search commands without default UI (hidden by CSS)
-
-            // YJS COLLAB (The Magic)
-            // Only add if we have a valid Doc
-            ...(yDocRef.current ? [
-                yCollab(yDocRef.current.getText('codemirror'), null, { undoManager: false }) // Disable default Yjs UndoManager to use CM6 history? Or use Yjs history?
-                // Actually Yjs + CM6 usually requires `y-codemirror`'s own history handling or we keep CM6 history. 
-                // `y-codemirror.next` binds well. Let's keep CM6 `history()` for local undo stack, it usually works fine for single user.
-                // For multi-user, we need Yjs UndoManager. For Phase 2 (Local), CM6 history is safer UI-wise.
-            ] : []),
-
-            placeholder("Start writing...\n\nUse # for headings, **bold**, *italic*, `code`, $math$"),
-
-            // Content change handler
-            EditorView.updateListener.of(update => {
-                // Only update if document ACTUALLY changed
-                if (update.docChanged) {
-                    // Update ref
-                    contentValueRef.current = update.state.doc.toString();
-
-                    // Only schedule save if NOT loading
-                    if (!isLoadingRef.current) {
-                        scheduleSave();
-                    }
-                }
-
-                // LIVE SEARCH RE-INDEXING
-                // If the doc changed OR selection changed, and search is open, triggers re-count.
-                if ((update.docChanged || update.selectionSet) && showFindWidget) {
-                    setSearchTick(prev => prev + 1);
-                }
-
-                // LIVE SEARCH RE-INDEXING
-                // If the doc changed OR selection changed, and search is open, triggers re-count.
-                if ((update.docChanged || update.selectionSet) && showFindWidget) {
-                    setSearchTick(prev => prev + 1);
-                }
-            }),
-
-            // Instant save on blur (when user switches tabs/clicks away)
-            EditorView.domEventHandlers({
-                blur: () => {
-                    saveToDatabase(true);
-                }
-            }),
-        ];
-
-        const state = EditorState.create({
-            doc: contentValueRef.current, // CRITICAL: Init with current content in case load finished first
-            extensions,
+            });
         });
 
-        const view = new EditorView({
-            state,
-            parent: editorRef.current,
+        // 1. WebSocket Provider
+        const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:1234';
+
+        import('../../lib/pocketbase').then(async ({ pb }) => {
+            if (!pb.authStore.isValid) {
+                console.warn('[Editor] No auth token, operating in offline mode');
+                return;
+            }
+
+            const token = pb.authStore.token;
+            const userId = pb.authStore.model?.id;
+
+            if (!token || !userId) {
+                setStatus('offline');
+                return;
+            }
+
+            const roomName = `user-${userId}-note-${activeNoteId}`;
+            const provider = new HocuspocusProvider({
+                url: wsUrl,
+                name: roomName,
+                document: doc,
+                token: token,
+                onStatus: ({ status }) => {
+                    setStatus(status as any);
+                },
+                onAwarenessUpdate: () => {
+                }
+            });
+            providerRef.current = provider;
+
+            const userColor = '#' + Math.floor(Math.random() * 16777215).toString(16);
+            const userName = pb.authStore.model?.email?.split('@')[0] || 'User';
+            if (provider.awareness) {
+                provider.awareness.setLocalStateField('user', { name: userName, color: userColor });
+            }
+
+            if (editorRef.current && !viewRef.current) {
+                const state = EditorState.create({
+                    doc: doc.getText('codemirror').toString(),
+                    extensions: [
+                        EditorView.editable.of(true),
+                        EditorState.allowMultipleSelections.of(true),
+                        history(),
+                        drawSelection(),
+                        ...(prefHighlightActiveLine ? [cmHighlightActiveLine()] : []),
+                        ...(prefWordWrap ? [EditorView.lineWrapping] : []),
+                        autoPairs,
+                        hideMarkdown,
+                        yCollab(doc.getText('codemirror'), provider.awareness, { undoManager: false }),
+                        keymap.of([
+                            { key: 'Mod-f', run: () => { setShowFindWidget(true); setFindFocusSignal(prev => prev + 1); return true; } },
+                            { key: 'Mod-b', run: (view) => { wrapSelection(view, '**'); return true; } },
+                            { key: 'Mod-i', run: (view) => { wrapSelection(view, '*'); return true; } },
+                            { key: 'Mod-u', run: (view) => { wrapSelection(view, '__'); return true; } }, // Added Underline
+                            { key: 'Mod-`', run: (view) => { wrapSelection(view, '`'); return true; } },
+                            { key: 'Mod-m', run: (view) => { wrapSelection(view, '$'); return true; } },
+                            { key: 'Mod-Shift-m', run: (view) => { wrapSelection(view, '$$'); return true; } },
+                            ...defaultKeymap,
+                            ...historyKeymap,
+                            indentWithTab,
+                            ...foldKeymap,
+                            ...markdownKeymap,
+                            ...mathMenuKeymap
+                        ]),
+                        markdown({ base: markdownLanguage, codeLanguages: languages }),
+                        syntaxHighlighting(onyxHighlighting),
+                        codeFolding(),
+                        ...(prefLineNumbers ? [foldGutter(),] : []),
+                        ...(prefLineNumbers ? [cmLineNumbers()] : []),
+                        placeholder('Start typing... (Changes save instantly)'),
+                        onyxTheme,
+                        search({ top: true }),
+                        ...(showMath ? [mathLivePreview, mathTooltip, mathMenuPlugin, mathMenuStateField, mathAutoReplace] : []),
+                        EditorView.updateListener.of((update) => {
+                            const nextState = update.state.field(mathMenuStateField, false);
+                            setMathMenuData(nextState ? { ...nextState } : null);
+                        }),
+                        getMarkdownDecorations(showDividers),
+                    ],
+                });
+
+                const view = new EditorView({ state, parent: editorRef.current });
+                viewRef.current = view;
+            }
         });
 
-        viewRef.current = view;
+        // 4. Bind Title Update
+        const metaMap = doc.getMap('meta');
+        const updateTitleFromMap = () => {
+            const newTitle = metaMap.get('title') as string;
+            if (newTitle !== undefined) {
+                setTitle(newTitle || '');
+            }
+        };
+        metaMap.observe(updateTitleFromMap);
+        updateTitleFromMap();
+
+        // 5. LOCAL MIRROR LOGIC (Phase 19)
+        let mirrorTimeout: ReturnType<typeof setTimeout> | null = null;
+        let mirrorObserver: (() => void) | null = null;
+
+        if (settings.mirrorEnabled) {
+            const text = doc.getText('codemirror');
+
+            const handleMirrorSave = async () => {
+                const currentTitle = metaMap.get('title') as string || 'Untitled';
+                const safeTitle = currentTitle.replace(/[^a-z0-9\u00a0-\uffff\-_\. ]/gi, '_').trim();
+
+                console.log('[Mirror] Starting save process for:', safeTitle || 'Untitled');
+                let basePath = settings.mirrorPath;
+                if (!basePath) {
+                    try {
+                        const docs = await documentDir();
+                        basePath = await join(docs, 'Onyx Notes');
+                    } catch (e) {
+                        console.error('[Mirror] Failed to resolve docs dir:', e);
+                        return;
+                    }
+                }
+
+                try {
+                    const dirExists = await exists(basePath);
+                    if (!dirExists) {
+                        await mkdir(basePath, { recursive: true });
+                    }
+
+                    // RENAME HANDLING: Check if title changed
+                    // Use the actual file basename (including 'Untitled' fallback)
+                    let fileBasename = safeTitle || 'Untitled';
+
+                    // TITLE CONFLICT DETECTION: Check if this filename belongs to a different note
+                    // AND the file actually exists on disk (handles external deletions)
+                    let hasConflict = false;
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key && key.startsWith('mirror-filename-') && !key.endsWith(activeNoteId)) {
+                            const otherFilename = localStorage.getItem(key);
+                            if (otherFilename === fileBasename) {
+                                // Also check if that file actually exists
+                                const otherFilePath = await join(basePath, `${otherFilename}.md`);
+                                if (await exists(otherFilePath)) {
+                                    hasConflict = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (hasConflict) {
+                        // Find the next available number suffix (1, 2, 3, etc.)
+                        let suffix = 1;
+                        let candidateName = `${fileBasename} ${suffix}`;
+
+                        // Check if this numbered filename exists on disk OR in localStorage
+                        while (true) {
+                            const candidatePath = await join(basePath, `${candidateName}.md`);
+                            const fileExists = await exists(candidatePath);
+
+                            // Also check localStorage for this candidate
+                            let lsConflict = false;
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const key = localStorage.key(i);
+                                if (key && key.startsWith('mirror-filename-') && !key.endsWith(activeNoteId)) {
+                                    if (localStorage.getItem(key) === candidateName) {
+                                        lsConflict = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!fileExists && !lsConflict) break;
+                            suffix++;
+                            candidateName = `${fileBasename} ${suffix}`;
+                        }
+
+                        fileBasename = candidateName;
+                        console.log('[Mirror] Title conflict detected! Using unique filename:', fileBasename);
+                    }
+
+                    const fileName = `${fileBasename}.md`;
+
+                    if (lastSavedTitleRef.current !== null && lastSavedTitleRef.current !== fileBasename) {
+                        const oldFileName = `${lastSavedTitleRef.current}.md`;
+                        const oldFullPath = await join(basePath, oldFileName);
+                        const newFullPath = await join(basePath, fileName);
+
+                        console.log('[Mirror] Detecting rename. Old:', oldFileName, 'New:', fileName);
+                        try {
+                            if (await exists(oldFullPath)) {
+                                // Use atomic rename to avoid trash clutter and improve performance
+                                await rename(oldFullPath, newFullPath);
+                                console.log('[Mirror] Renamed file:', oldFileName, '->', fileName);
+                            }
+                        } catch (e) {
+                            console.warn('[Mirror] Failed to rename file, falling back to write:', e);
+                        }
+                    }
+
+                    const fullPath = await join(basePath, fileName);
+                    const content = text.toString();
+
+                    await writeTextFile(fullPath, content);
+
+                    // Update last write time to prevent self-reload loop
+                    try {
+                        const metadata = await stat(fullPath);
+                        lastWriteTimeRef.current = metadata.mtime ? new Date(metadata.mtime).getTime() : Date.now();
+                        console.log('[Mirror] Saved and updated write time:', lastWriteTimeRef.current);
+                    } catch (e) {
+                        lastWriteTimeRef.current = Date.now();
+                    }
+
+                    console.log('[Mirror] Successfully saved to:', fullPath);
+
+                    // PERSISTENT FILE MAPPING: Update localStorage with filename and lastWriteTime
+                    localStorage.setItem(`mirror-filename-${activeNoteId}`, fileBasename);
+                    localStorage.setItem(`mirror-lastwrite-${activeNoteId}`, lastWriteTimeRef.current.toString());
+
+                    // Update in-memory ref too
+                    lastSavedTitleRef.current = fileBasename;
+
+                } catch (e) {
+                    console.error('[Mirror] Save failed with error:', e);
+                }
+            };
+
+            mirrorObserver = () => {
+                if (mirrorTimeout) clearTimeout(mirrorTimeout);
+                mirrorTimeout = setTimeout(handleMirrorSave, 1000);
+            };
+
+            text.observe(mirrorObserver);
+            console.log('[Mirror] Observer attached for note:', activeNoteId);
+
+            // Trigger immediate save to ensure file exists (even if empty/untitled)
+            handleMirrorSave();
+
+            // Observe title changes to trigger rename immediately
+            const handleTitleChange = () => {
+                if (mirrorTimeout) clearTimeout(mirrorTimeout);
+                mirrorTimeout = setTimeout(handleMirrorSave, 1000);
+            };
+            metaMap.observe(handleTitleChange);
+
+
+            // 6. TWO-WAY SYNC (Watch for external changes on focus)
+            const checkExternalChanges = async () => {
+                if (!settings.mirrorPath || !settings.mirrorEnabled) return;
+
+                const currentTitle = metaMap.get('title') as string || 'Untitled';
+                const safeTitle = currentTitle.replace(/[^a-z0-9\u00a0-\uffff\-_\. ]/gi, '_').trim();
+                const fileName = `${safeTitle || 'Untitled'}.md`;
+
+                try {
+                    let basePath = settings.mirrorPath;
+                    if (!basePath) {
+                        const docs = await documentDir();
+                        basePath = await join(docs, 'Onyx Notes');
+                    }
+                    const fullPath = await join(basePath, fileName);
+
+                    if (await exists(fullPath)) {
+                        const metadata = await stat(fullPath);
+                        const diskMtime = metadata.mtime ? new Date(metadata.mtime).getTime() : 0;
+
+                        // If disk file is newer than our last write, reload
+                        // Small buffer (100ms) to avoid filesystem timing jitter
+                        if (lastWriteTimeRef.current && diskMtime > (lastWriteTimeRef.current + 100)) {
+                            console.log('[Mirror] External change detected! Reloading from disk...');
+                            const newContent = await readTextFile(fullPath);
+
+                            // Update Yjs doc transactionally
+                            doc.transact(() => {
+                                const yText = doc.getText('codemirror');
+                                yText.delete(0, yText.length);
+                                yText.insert(0, newContent);
+                            });
+
+                            // Update our last write time so we don't reload again immediately
+                            lastWriteTimeRef.current = diskMtime;
+                            console.log('[Mirror] Reload complete.');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Mirror] Failed to check external changes:', e);
+                }
+            };
+
+            window.addEventListener('focus', checkExternalChanges);
+            // Also check periodically if window is visible? No, focus is standard efficient way.
+
+            // Clean up listener
+            return () => {
+                window.removeEventListener('focus', checkExternalChanges);
+                // ... other cleanup handled by parent return
+            };
+        }
 
         return () => {
-            view.destroy();
-            viewRef.current = null;
-        };
-    }, [activeNoteId, refreshTrigger, loadedId]); // Re-run when note changes or force refresh
-
-    // ============================================
-    // TITLE HANDLERS
-    // ============================================
-    const handleTitleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newTitle = e.target.value;
-        // Update UI
-        setTitle(newTitle);
-        // Update Ref
-        titleValueRef.current = newTitle;
-
-        // INSTANT SAVE FOR TITLE
-        // We bypass debounce because user wants instant Sidebar updates
-        // But we MUST check isLoadingRef to be safe
-        if (!isLoadingRef.current && noteIdRef.current) {
-            try {
-                // Fire and forget - don't await to keep UI responsive
-                saveToDatabase(true);
-            } catch (e) {
-                console.error("Instant title save error", e);
+            console.log("Cleaning up Yjs for Note:", activeNoteId);
+            if (viewRef.current) {
+                viewRef.current.destroy();
+                viewRef.current = null;
             }
+            if (providerRef.current) providerRef.current.destroy();
+
+            // Cleanup mirror observer
+            if (mirrorObserver) {
+                doc.getText('codemirror').unobserve(mirrorObserver);
+            }
+            if (mirrorTimeout) clearTimeout(mirrorTimeout);
+
+            doc.destroy();
+            persistence.destroy();
+        };
+    }, [activeNoteId, settings.mirrorEnabled, settings.mirrorPath]);
+
+    // Note: Mirror logic is now integrated into the main Yjs useEffect above
+
+
+    // Handle Title Change
+    const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newTitle = e.target.value;
+        setTitle(newTitle);
+
+        if (activeNoteId && yDocRef.current) {
+            // 1. Update Y.Doc meta (propagate to other editors of this note)
+            yDocRef.current.getMap('meta').set('title', newTitle);
+
+            // 2. Update File List (via Context)
+            updateFile(activeNoteId, { title: newTitle });
         }
     };
 
-    const handleTitleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            viewRef.current?.focus();
-        }
-    };
-
-    // ============================================
-    // ZOOM
-    // ============================================
+    // Zoom Handler
     useEffect(() => {
         const handleWheel = (e: WheelEvent) => {
             if (e.ctrlKey) {
@@ -864,36 +939,28 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
         return () => window.removeEventListener('wheel', handleWheel);
     }, []);
 
-    // ============================================
-    // RENDER
-    // ============================================
     if (!activeNoteId) {
         return (
-            <main className="flex-1 flex items-center justify-center text-zinc-600 text-lg bg-zinc-950">
+            <div className="flex-1 flex items-center justify-center text-zinc-600 select-none">
                 <div className="text-center">
-                    <div className="text-4xl mb-4 opacity-20">📝</div>
-                    <p>Select a note or create a new one</p>
-                    <p className="text-sm mt-2 text-zinc-700">Ctrl+P to search</p>
+                    <p className="text-lg font-medium mb-1">No Page Selected</p>
+                    <p className="text-sm">Select a page from the sidebar or create a new one.</p>
                 </div>
-            </main>
+            </div>
         );
     }
 
     return (
-        <main
-            className="flex-1 overflow-hidden bg-zinc-950 relative flex flex-col"
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%`, height: `${100 / zoom}%` }}
-        >
-
-
-            {/* Find Widget Overlay */}
-            {showFindWidget && (
-                <FindWidget
-                    view={viewRef.current}
-                    onClose={() => setShowFindWidget(false)}
-                    focusSignal={findFocusSignal}
-                    searchTick={searchTick} // Pass the tick!
-                />
+        <div className="flex flex-col h-full bg-zinc-950 relative group/editor">
+            {/* Find Widget */}
+            {showFindWidget && viewRef.current && (
+                <div className="absolute top-4 right-8 z-50">
+                    <FindWidget
+                        view={viewRef.current}
+                        onClose={() => setShowFindWidget(false)}
+                        focusSignal={findFocusSignal}
+                    />
+                </div>
             )}
 
             {/* Math Menu Overlay */}
@@ -907,7 +974,6 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
                         const view = viewRef.current;
                         if (!view) return;
 
-                        // Re-calculate replacement range (Backwards from cursor to '\')
                         const main = view.state.selection.main;
                         const line = view.state.doc.lineAt(main.from);
                         const lineText = line.text;
@@ -934,39 +1000,42 @@ export default function Editor({ activeNoteId, refreshTrigger = 0, onSave }: Edi
                 />
             )}
 
-            {/* Header / Title Area */}
-            <div className="p-4 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-between shrink-0 h-14 z-10 w-full">
-                {/* Title */}
-                <div className="flex-1 mr-4">
-                    <input
-                        ref={titleRef}
-                        data-title-input
-                        type="text"
-                        value={title}
-                        onChange={handleTitleChange}
-                        onKeyDown={handleTitleKeyDown}
-                        placeholder="Untitled"
-                        className="w-full bg-transparent text-zinc-100 text-2xl font-bold tracking-tight outline-none placeholder:text-zinc-700 font-display"
-                    />
-                </div>
+            {/* Title Input */}
+            <div className="px-12 pt-8 pb-4 shrink-0">
+                <input
+                    type="text"
+                    value={title}
+                    onChange={handleTitleChange}
+                    placeholder="Untitled"
+                    className="w-full bg-transparent text-4xl font-bold text-zinc-100 placeholder-zinc-700 outline-none border-none p-0 pb-2 leading-normal"
+                />
             </div>
 
-            {/* CodeMirror Editor */}
-            {/* EMERGENCY ROLLBACK: Disabled UnlockScreen */}
-            {/* {isLocked ? (
-                <UnlockScreen 
-                    onUnlock={handleUnlock}
-                    title={title} 
-                />
-            ) : ( */}
+            {/* Editor Container */}
             <div
                 ref={editorRef}
                 className="flex-1 w-full h-full overflow-hidden focus:outline-none"
                 style={{
-                    fontSize: `${zoom}px`,
+                    fontSize: `${zoom * (fontSize / 16)}rem`,
+                    fontFamily: finalFontFamily,
+                    lineHeight: lineHeight
                 }}
             />
-            {/* )} */}
-        </main>
+
+            {/* Status Bar */}
+            {/* Status Bar - Hidden in Demo Mode */}
+            {!import.meta.env.VITE_DEMO_MODE && (
+                <div className="h-6 bg-zinc-900 border-t border-zinc-800 flex items-center px-4 justify-between text-[10px] text-zinc-500 select-none">
+                    <div className="flex items-center gap-2">
+                        <span>{status === 'connected' ? 'Synced' : status}</span>
+                    </div>
+                    <div>
+                        {/* Word count or cursor position could go here */}
+                    </div>
+                </div>
+            )}
+
+
+        </div>
     );
 }
