@@ -1,0 +1,25 @@
+[package]
+name = "makepad-zune-jpeg"
+version = "0.5.12"
+authors = ["caleb <etemesicaleb@gmail.com>"]
+edition = "2021"
+repository = "https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg"
+license = "MIT OR Apache-2.0 OR Zlib"
+keywords = ["jpeg", "jpeg-decoder", "decoder"]
+categories = ["multimedia::images"]
+exclude = ["/benches/images/*", "/tests/*", "/.idea/*", "/.gradle/*", "/test-images/*", "fuzz/*"]
+description = "A fast, correct and safe jpeg decoder"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
+[features]
+x86 = []
+neon = []
+std = ["makepad-zune-core/std"]
+portable_simd = []
+log = ["makepad-zune-core/log"]
+default = ["x86", "neon", "std"]
+
+[dependencies]
+makepad-zune-core = { path = "../zune-core", version = "0.5.1" }
