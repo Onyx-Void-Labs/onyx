@@ -1,0 +1,32 @@
+[package]
+name = "onyx-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "onyx_void"
+path = "src/main.rs"
+
+[features]
+default = []
+full = ["onyx-math/typst-backend", "onyx-store/surrealdb-backend"]
+
+[dependencies]
+# Internal crates
+onyx-core   = { workspace = true }
+onyx-editor = { workspace = true }
+onyx-math   = { workspace = true }
+onyx-store  = { workspace = true }
+onyx-net    = { workspace = true }
+
+# Makepad (patched local path via crates.io override)
+makepad-widgets = "2.0.0"
+
+# Observability
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Global allocator
+mimalloc = "0.1"

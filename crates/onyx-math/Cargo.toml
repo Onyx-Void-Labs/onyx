@@ -1,0 +1,19 @@
+[package]
+name = "onyx-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+typst-backend = ["dep:typst", "dep:typst-render"]
+
+[dependencies]
+onyx-core = { workspace = true }
+tracing   = { workspace = true }
+
+# Typst for math rendering — gated behind feature flag.
+# Not linked until we implement the full World trait (Phase 1.5).
+typst        = { workspace = true, optional = true }
+typst-render = { workspace = true, optional = true }

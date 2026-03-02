@@ -1,0 +1,17 @@
+# Onyx Void — Cargo build configuration
+#
+# Android NDK: Set ANDROID_NDK_HOME env var, then uncomment the
+# linker lines below to cross-compile for aarch64-linux-android.
+
+[build]
+# Incremental compilation for dev speed
+incremental = true
+
+# ── Android NDK (uncomment after installing NDK) ─────────────────
+# [target.aarch64-linux-android]
+# linker = "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android33-clang.cmd"
+# ar     = "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar"
+
+# ── Windows optimizations ────────────────────────────────────────
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

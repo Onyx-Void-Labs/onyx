@@ -1,0 +1,29 @@
+[package]
+name = "onyx-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "onyx_relay"
+path = "src/main.rs"
+
+[dependencies]
+onyx-core = { workspace = true }
+
+# Iroh networking
+iroh        = { workspace = true }
+iroh-gossip = { workspace = true }
+
+# Async runtime (relay needs multi-thread for concurrent connections)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+
+# Observability
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow             = { workspace = true }
+
+[dev-dependencies]
+iroh-base = { workspace = true }
+rand      = { workspace = true }

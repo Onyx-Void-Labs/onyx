@@ -1,0 +1,7 @@
+[toolchain]
+channel = "stable"
+components = ["rust-src", "rust-analyzer", "clippy", "rustfmt"]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-linux-android",
+]

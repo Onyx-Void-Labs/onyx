@@ -1,6 +1,91 @@
-[package]
-name = "onyx"
-version = "0.1.0"
-edition = "2024"
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ONYX VOID — Exoskeleton for the Internet                      ║
+# ║  Phase 1: The Foundation (Local Core)                           ║
+# ╚══════════════════════════════════════════════════════════════════╝
 
-[dependencies]
+[workspace]
+resolver = "2"
+members = [
+    "crates/onyx-core",
+    "crates/onyx-editor",
+    "crates/onyx-math",
+    "crates/onyx-store",
+    "crates/onyx-net",
+    "crates/onyx-relay",
+    "crates/onyx-app",
+]
+
+# override makepad-widgets to our local patched copy
+[patch.crates-io]
+makepad-widgets = { path = "patches/makepad-widgets/widgets" }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Onyx Void"]
+rust-version = "1.75"
+
+# ─── Shared dependency versions (inherited by workspace members) ───
+
+[workspace.dependencies]
+# Internal crates
+onyx-core   = { path = "crates/onyx-core" }
+onyx-editor = { path = "crates/onyx-editor" }
+onyx-math   = { path = "crates/onyx-math" }
+onyx-store  = { path = "crates/onyx-store" }
+onyx-net    = { path = "crates/onyx-net" }
+
+# ── Visual Engine ──
+makepad-widgets = { git = "https://github.com/makepad/makepad", branch = "main" }
+
+# ── Text ──
+ropey = "1.6"
+
+# ── Math ──
+typst       = "0.12"
+typst-render = "0.12"
+
+# ── Data / Serialization ──
+rkyv  = { version = "0.8", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+
+# ── Storage ──
+surrealdb = { version = "2", default-features = false, features = ["kv-mem"] }
+loro      = "1"
+zstd      = "0.13"
+
+# ── Networking (Phase 2: Telepathic Link) ──
+iroh-base   = { version = "0.96", features = ["key"] }
+iroh        = { version = "0.96", default-features = false }
+iroh-gossip = "0.96"
+iroh-relay  = { version = "0.96", features = ["server"] }
+sha2        = "0.10"
+rand        = "0.9"
+futures-lite = "2"
+
+# ── Async ──
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+
+# ── Observability ──
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── Error handling ──
+thiserror = "2"
+anyhow    = "1"
+
+# ─── Build profiles ──────────────────────────────────────────────
+
+[profile.release]
+opt-level = "z"      # Optimize for minimal binary size
+lto = "fat"          # Full Link Time Optimization (cross-crate optimization)
+codegen-units = 1     # Allow max optimization across the whole program
+panic = "abort"      # Remove the overhead of stack unwinding
+strip = "symbols"    # Remove all debug symbols/names from the binary
+
+[profile.dev]
+opt-level = 1          # Faster Makepad shader compilation in debug
+
+[profile.dev.package."*"]
+opt-level = 2          # Optimize deps even in debug for smooth 144Hz

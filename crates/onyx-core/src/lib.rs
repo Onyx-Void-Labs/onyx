@@ -1,0 +1,14 @@
+// ─── Onyx Core ─────────────────────────────────────────────────────
+// Domain types, error handling, and shared primitives for Onyx Void.
+// Every other crate depends on this. Zero IO. Pure data & logic.
+// ────────────────────────────────────────────────────────────────────
+
+pub mod document;
+pub mod error;
+pub mod id;
+pub mod identity;
+pub mod protocol;
+
+pub use error::OnyxError;
+pub use id::OnyxId;
+pub use identity::VoidIdentity;
