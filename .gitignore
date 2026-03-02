@@ -18,3 +18,9 @@ Thumbs.db
 # Android build
 *.apk
 *.aab
+
+/target
+**/*.log
+.env
+*.elf
+patches/makepad-widgets/.git
