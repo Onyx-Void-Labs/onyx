@@ -28,8 +28,10 @@ makepad-widgets = "2.0.0"
 tokio = { workspace = true }
 
 # Iroh networking (used by net_bridge)
+iroh         = { workspace = true }
 iroh-gossip  = { workspace = true }
 zstd         = { workspace = true }
+anyhow       = { workspace = true }
 
 # Observability
 tracing            = { workspace = true }

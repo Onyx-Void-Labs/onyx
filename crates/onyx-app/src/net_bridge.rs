@@ -102,6 +102,66 @@ impl NetBridge {
 
 // ── Background network loop ─────────────────────────────────────
 
+/// Read buffered Deliver messages from the relay's PubSub response stream.
+/// This keeps the RecvStream alive and drains any data the relay pushes.
+async fn drain_relay_delivers(
+    mut recv: iroh::endpoint::RecvStream,
+    evt_tx: mpsc::Sender<NetEvent>,
+) -> anyhow::Result<()> {
+    use onyx_core::protocol::PubSubMsg;
+
+    info!("relay deliver reader started");
+
+    // Read in a loop — the relay may push multiple Deliver messages
+    // on this stream before it closes.
+    let mut buf = Vec::new();
+    loop {
+        let mut chunk = [0u8; 8192];
+        match recv.read(&mut chunk).await {
+            Ok(Some(n)) => {
+                buf.extend_from_slice(&chunk[..n]);
+
+                // Try to decode complete messages from the buffer
+                while buf.len() >= 37 {
+                    let payload_len =
+                        u32::from_be_bytes([buf[33], buf[34], buf[35], buf[36]]) as usize;
+                    let total = 37 + payload_len;
+                    if buf.len() < total {
+                        break; // incomplete message, wait for more data
+                    }
+                    match PubSubMsg::decode(&buf[..total]) {
+                        Ok(PubSubMsg::Deliver { payload, .. }) => {
+                            // Decompress and forward to UI
+                            match zstd::decode_all(payload.as_slice()) {
+                                Ok(raw) => {
+                                    let _ = evt_tx.send(NetEvent::DeltaReceived(raw));
+                                }
+                                Err(e) => {
+                                    warn!(%e, "failed to decompress relay-delivered delta");
+                                }
+                            }
+                        }
+                        Ok(_) => { /* ignore non-Deliver messages */ }
+                        Err(e) => {
+                            warn!(%e, "invalid message from relay");
+                        }
+                    }
+                    buf.drain(..total);
+                }
+            }
+            Ok(None) => {
+                info!("relay PubSub recv stream closed gracefully");
+                break;
+            }
+            Err(e) => {
+                warn!(%e, "relay PubSub recv stream error");
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn network_loop(
     cmd_rx: mpsc::Receiver<NetCommand>,
     evt_tx: mpsc::Sender<NetEvent>,
@@ -117,6 +177,10 @@ async fn network_loop(
     let mut gossip_sender: Option<iroh_gossip::api::GossipSender> = None;
     let mut mesh_rx: Option<tokio::sync::mpsc::Receiver<onyx_net::mesh::MeshEvent>> = None;
     let mut active_room_secret: Option<String> = None;
+    // Keep the PubSub relay connection alive for the entire session.
+    // If this is dropped, QUIC closes the connection and the relay
+    // sees a disconnect 12ms later.
+    let mut _relay_conn: Option<iroh::endpoint::Connection> = None;
 
     loop {
         // Check for incoming commands (non-blocking when we have an active mesh)
@@ -180,16 +244,27 @@ async fn network_loop(
                             match n.endpoint().connect(relay_id, ONYX_PUBSUB_ALPN).await {
                                 Ok(conn) => {
                                     match conn.open_bi().await {
-                                        Ok((mut send, _recv)) => {
+                                        Ok((mut send, recv)) => {
                                             let msg = PubSubMsg::Subscribe { topic: topic_hash };
                                             let _ = send.write_all(&msg.encode()).await;
                                             let _ = send.finish();
                                             info!("topic registered with relay");
+                                            // Keep recv stream alive so the relay
+                                            // can push buffered messages to us.
+                                            // Spawn a reader task that drains any
+                                            // Deliver messages from the relay.
+                                            let evt_tx2 = evt_tx.clone();
+                                            tokio::spawn(async move {
+                                                let _ = drain_relay_delivers(recv, evt_tx2).await;
+                                            });
                                         }
                                         Err(e) => {
                                             warn!(%e, "failed to open PubSub stream (continuing anyway)");
                                         }
                                     }
+                                    // Store the connection so it stays alive
+                                    // for the duration of the session.
+                                    _relay_conn = Some(conn);
                                 }
                                 Err(e) => {
                                     warn!(%e, "failed to connect to relay via PubSub (continuing anyway)");
@@ -245,6 +320,7 @@ async fn network_loop(
                     info!("disconnecting from mesh");
                     gossip_sender = None;
                     mesh_rx = None;
+                    _relay_conn = None;
                     if let Some(ref n) = node {
                         n.shutdown().await;
                     }

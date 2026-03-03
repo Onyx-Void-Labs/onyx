@@ -18,7 +18,7 @@ use iroh::protocol::Router;
 use iroh::Endpoint;
 use iroh_gossip::Gossip;
 use onyx_core::identity::VoidIdentity;
-use onyx_core::protocol::{ONYX_SYNC_ALPN, RELAY_VPS_IP, RELAY_VPS_PORT};
+use onyx_core::protocol::{ONYX_PUBSUB_ALPN, ONYX_SYNC_ALPN, RELAY_VPS_IP, RELAY_VPS_PORT};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -59,6 +59,7 @@ impl OnyxNode {
             .secret_key(secret_key)
             .alpns(vec![
                 ONYX_SYNC_ALPN.to_vec(),
+                ONYX_PUBSUB_ALPN.to_vec(),
                 iroh_gossip::ALPN.to_vec(),
             ])
             .bind()

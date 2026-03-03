@@ -93,12 +93,15 @@ impl PubSubReflector {
             "relay joining gossip topic as reflector"
         );
 
+        // Clone gossip handle for potential re-subscription
+        let gossip = self.gossip.clone();
+
         match self.gossip.subscribe(topic_id, vec![]).await {
             Ok(topic_handle) => {
                 // Mark as active AFTER successful subscription
                 self.active_topics.lock().await.insert(topic_hash);
 
-                let (_sender, mut receiver) = topic_handle.split();
+                let (_sender, receiver) = topic_handle.split();
                 let hall = Arc::clone(&self.hall);
 
                 // Spawn a long-lived task that keeps the gossip
@@ -113,8 +116,12 @@ impl PubSubReflector {
                     // Keep sender alive so the gossip subscription persists.
                     let _keep_alive = _sender;
 
+                    // Fuse the stream so we never poll after None
+                    let fused = receiver.fuse();
+                    tokio::pin!(fused);
+
                     loop {
-                        match receiver.next().await {
+                        match fused.next().await {
                             Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
                                 info!(
                                     from = %msg.delivered_from,
@@ -160,14 +167,67 @@ impl PubSubReflector {
                                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             }
                             None => {
+                                // Stream terminated — re-subscribe after a backoff
                                 warn!(
                                     topic = hex_short(&topic_hash),
-                                    "[reflector] gossip stream ended — retrying in 2s"
+                                    "[reflector] gossip stream ended — re-subscribing in 2s"
                                 );
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                                // Attempt to re-subscribe
+                                match gossip.subscribe(topic_id, vec![]).await {
+                                    Ok(new_handle) => {
+                                        let (new_sender, new_receiver) = new_handle.split();
+                                        // Replace the fused stream via a new pin
+                                        let new_fused = new_receiver.fuse();
+                                        // We can't reassign the pinned stream,
+                                        // so we recurse into a fresh inner loop.
+                                        // Drop old keepalive + store new one.
+                                        drop(_keep_alive);
+                                        info!(
+                                            topic = hex_short(&topic_hash),
+                                            "[reflector] re-subscribed to gossip topic"
+                                        );
+                                        // Continue in a fresh loop with the new stream
+                                        tokio::pin!(new_fused);
+                                        let _keep_alive_2 = new_sender;
+                                        loop {
+                                            match new_fused.next().await {
+                                                Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
+                                                    hall.publish(topic_hash, msg.delivered_from, msg.content.to_vec());
+                                                }
+                                                Some(Ok(iroh_gossip::api::Event::NeighborUp(peer))) => {
+                                                    info!(peer = %peer, topic = hex_short(&topic_hash), "[reflector] peer joined");
+                                                }
+                                                Some(Ok(iroh_gossip::api::Event::NeighborDown(peer))) => {
+                                                    warn!(peer = %peer, topic = hex_short(&topic_hash), "[reflector] peer left");
+                                                }
+                                                Some(Ok(iroh_gossip::api::Event::Lagged)) => {
+                                                    warn!(topic = hex_short(&topic_hash), "[reflector] lagged");
+                                                }
+                                                Some(Err(e)) => {
+                                                    warn!(%e, topic = hex_short(&topic_hash), "[reflector] error");
+                                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                                }
+                                                None => {
+                                                    warn!(topic = hex_short(&topic_hash), "[reflector] stream ended again");
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    break; // break inner loop, which breaks outer too
+                                                }
+                                            }
+                                        }
+                                        break; // exit outer loop after inner exits
+                                    }
+                                    Err(e) => {
+                                        warn!(%e, topic = hex_short(&topic_hash), "[reflector] re-subscribe failed");
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
+
+                    warn!(topic = hex_short(&topic_hash), "gossip reflector task exiting");
                 });
             }
             Err(e) => {
