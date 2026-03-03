@@ -49,6 +49,10 @@ const VAD_RING_FRAMES: usize = 10;
 /// VAD: Number of 20ms trailing frames to keep sending after voice stops (200ms).
 const VAD_TRAILING_FRAMES: u32 = 10;
 
+/// Keep-alive: send a silence frame every N silent frames (~1s = 50 × 20ms).
+/// This prevents the QUIC media connection from timing out when nobody is speaking.
+const KEEPALIVE_INTERVAL_FRAMES: u64 = 50;
+
 // ── Commands (UI → MediaEngine) ─────────────────────────────────
 
 /// Commands from the UI/App thread into the media engine.
@@ -298,6 +302,9 @@ fn media_loop(
     // Packet send counter for logging.
     let mut opus_packets_sent: u64 = 0;
 
+    // Keep-alive: count silent frames to know when to send a silence packet.
+    let mut silent_frame_counter: u64 = 0;
+
     // ── Main loop ────────────────────────────────────────────────
     loop {
         // ── 1. Process commands ──────────────────────────────────
@@ -363,7 +370,11 @@ fn media_loop(
                         None,
                     ) {
                         Ok(stream) => {
-                            let _ = stream.play();
+                            // Explicitly call play() — some backends start paused.
+                            match stream.play() {
+                                Ok(()) => info!("cpal input stream: play() succeeded"),
+                                Err(e) => error!("cpal input stream: play() FAILED: {e}"),
+                            }
                             _input_stream = Some(stream);
                             info!(
                                 sample_rate = input_native_rate,
@@ -413,7 +424,11 @@ fn media_loop(
                         None,
                     ) {
                         Ok(stream) => {
-                            let _ = stream.play();
+                            // Explicitly call play() — some backends start paused.
+                            match stream.play() {
+                                Ok(()) => info!("cpal output stream: play() succeeded"),
+                                Err(e) => error!("cpal output stream: play() FAILED: {e}"),
+                            }
                             _output_stream = Some(stream);
                             info!(
                                 sample_rate = output_native_rate,
@@ -433,6 +448,7 @@ fn media_loop(
                 vad_state = VadState::Silent;
                 vad_ring.clear();
                 opus_packets_sent = 0;
+                silent_frame_counter = 0;
 
                 capturing = true;
                 let _ = evt_tx.send(MediaEvent::CaptureStarted);
@@ -571,6 +587,7 @@ fn media_loop(
                                 "VAD: voice started — flushing ring buffer"
                             );
                             vad_state = VadState::Speaking;
+                            silent_frame_counter = 0;
 
                             // Encode and send the buffered frames first.
                             if let Some(ref mut enc) = encoder {
@@ -588,11 +605,9 @@ fn media_loop(
                                     {
                                         opus_buf.truncate(len);
                                         opus_packets_sent += 1;
-                                        trace!(
-                                            opus_bytes = len,
-                                            packet_num = opus_packets_sent,
-                                            source = "ring_flush",
-                                            "encoded buffered audio frame"
+                                        info!(
+                                            "sending opus packet size={}",
+                                            len
                                         );
                                         let _ = evt_tx.send(
                                             MediaEvent::AudioFrame(opus_buf),
@@ -607,7 +622,18 @@ fn media_loop(
                             if vad_ring.len() > VAD_RING_FRAMES {
                                 vad_ring.pop_front();
                             }
-                            false
+
+                            // ── Keep-alive: send a silence frame every ~1s ──
+                            // This prevents the QUIC media connection from
+                            // timing out when nobody is speaking.
+                            silent_frame_counter += 1;
+                            if silent_frame_counter >= KEEPALIVE_INTERVAL_FRAMES {
+                                silent_frame_counter = 0;
+                                trace!("VAD: sending keep-alive silence frame");
+                                true // send this frame as keep-alive
+                            } else {
+                                false
+                            }
                         }
                     }
                     VadState::Speaking => {
@@ -659,7 +685,11 @@ fn media_loop(
                             Ok(len) => {
                                 opus_buf.truncate(len);
                                 opus_packets_sent += 1;
-                                // Log every packet send for diagnostics.
+                                // Log every packet with its size for diagnostics.
+                                info!(
+                                    "sending opus packet size={}",
+                                    len
+                                );
                                 if opus_packets_sent <= 5
                                     || opus_packets_sent % 50 == 0
                                 {
@@ -669,12 +699,6 @@ fn media_loop(
                                         energy = format!("{energy:.4}"),
                                         vad = ?vad_state,
                                         "Opus packet sent"
-                                    );
-                                } else {
-                                    trace!(
-                                        opus_bytes = len,
-                                        packet_num = opus_packets_sent,
-                                        "encoded audio frame"
                                     );
                                 }
                                 let _ =

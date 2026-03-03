@@ -498,8 +498,10 @@ async fn main() -> anyhow::Result<()> {
     info!(relay_id = %identity.public_key(), "relay identity loaded (deterministic)");
 
     // ── Iroh Endpoint ──
-    let bind_addr =
-        std::net::SocketAddr::from(([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT));
+    // Force IPv4-only: clear default transports (which include IPv6)
+    // and bind explicitly to 0.0.0.0:11204.  This prevents the relay
+    // from advertising unreachable IPv6 addresses to clients
+    // (RackNerd VPS does not have working IPv6 connectivity).
     let endpoint: Endpoint = Endpoint::builder()
         .secret_key(identity.secret_key().clone())
         .alpns(vec![
@@ -507,9 +509,14 @@ async fn main() -> anyhow::Result<()> {
             ONYX_MEDIA_ALPN.to_vec(),
             iroh_gossip::ALPN.to_vec(),
         ])
-        .bind_addr(bind_addr)?
+        .clear_ip_transports()
+        .bind_addr(std::net::SocketAddr::from(
+            ([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT),
+        ))?
         .bind()
         .await?;
+
+    info!("IPv6 disabled — relay bound to IPv4 only (0.0.0.0:{})", onyx_core::protocol::RELAY_VPS_PORT);
 
     info!(endpoint_id = %endpoint.id(), "iroh endpoint bound");
 
