@@ -101,36 +101,59 @@ impl ShadowMesh {
         let sender = self.sender;
 
         tokio::spawn(async move {
-            while let Some(event) = self.receiver.next().await {
-                match event {
-                    Ok(iroh_gossip::api::Event::Received(msg)) => {
+            info!("mesh receiver task started — listening for gossip events");
+
+            // Keep the gossip loop alive until the MeshEvent channel
+            // is dropped (i.e. the app shuts down). Never exit on
+            // transient stream errors.
+            loop {
+                match self.receiver.next().await {
+                    Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
+                        info!(
+                            from = %msg.delivered_from,
+                            bytes = msg.content.len(),
+                            "[gossip] raw event: Received delta"
+                        );
                         let evt = MeshEvent::Delta(IncomingDelta {
                             from: msg.delivered_from,
                             data: msg.content.to_vec(),
                         });
                         if tx.send(evt).await.is_err() {
-                            debug!("mesh receiver closed, stopping gossip loop");
+                            debug!("mesh event channel closed, stopping gossip loop");
                             break;
                         }
                     }
-                    Ok(iroh_gossip::api::Event::NeighborUp(peer)) => {
-                        info!(peer = %peer, "peer joined the mesh (NeighborUp)");
-                        let _ = tx.send(MeshEvent::PeerJoined(peer.to_string())).await;
+                    Some(Ok(iroh_gossip::api::Event::NeighborUp(peer))) => {
+                        info!(peer = %peer, "[gossip] raw event: NeighborUp — peer joined");
+                        if tx.send(MeshEvent::PeerJoined(peer.to_string())).await.is_err() {
+                            break;
+                        }
                     }
-                    Ok(iroh_gossip::api::Event::NeighborDown(peer)) => {
-                        warn!(peer = %peer, "peer left the mesh (NeighborDown)");
-                        let _ = tx.send(MeshEvent::PeerLeft(peer.to_string())).await;
+                    Some(Ok(iroh_gossip::api::Event::NeighborDown(peer))) => {
+                        warn!(peer = %peer, "[gossip] raw event: NeighborDown — peer left");
+                        if tx.send(MeshEvent::PeerLeft(peer.to_string())).await.is_err() {
+                            break;
+                        }
                     }
-                    Ok(iroh_gossip::api::Event::Lagged) => {
-                        warn!("gossip receiver lagged — some messages may be lost");
+                    Some(Ok(iroh_gossip::api::Event::Lagged)) => {
+                        warn!("[gossip] raw event: Lagged — some messages may be lost");
                     }
-                    Err(e) => {
-                        error!(%e, "gossip receive error");
-                        break;
+                    Some(Err(e)) => {
+                        // Transient error — log but do NOT exit the loop.
+                        // The stream may recover on the next poll.
+                        warn!(%e, "[gossip] raw event: receive error (non-fatal, continuing)");
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                    None => {
+                        // Stream ended — likely the gossip subscription was
+                        // closed. Wait a bit and keep looping so the task
+                        // doesn't die; the caller may re-subscribe.
+                        warn!("[gossip] stream yielded None — waiting before retry");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
                 }
             }
-            debug!("mesh receiver task finished");
+            info!("mesh receiver task exiting (channel closed)");
         });
 
         (sender, rx)

@@ -107,6 +107,7 @@ async fn network_loop(
     evt_tx: mpsc::Sender<NetEvent>,
 ) {
     use onyx_core::identity::VoidIdentity;
+    use onyx_core::protocol::{self, PubSubMsg, ONYX_PUBSUB_ALPN};
     use onyx_net::{OnyxNode, ShadowMesh};
 
     info!("network bridge loop started");
@@ -169,8 +170,32 @@ async fn network_loop(
                             info!("OnyxNode spawned, waiting for relay connectivity...");
                             n.wait_online().await;
 
+                            // ── Register topic with relay ──
+                            // Sends a PubSub Subscribe so the relay joins
+                            // the gossip topic and can reflect messages.
+                            let relay_id = protocol::relay_endpoint_id();
+                            let topic_hash = protocol::topic_from_secret(&room_secret);
+                            info!(relay_id = %relay_id, "registering topic with relay via PubSub");
+                            match n.endpoint().connect(relay_id, ONYX_PUBSUB_ALPN).await {
+                                Ok(conn) => {
+                                    match conn.open_bi().await {
+                                        Ok((mut send, _recv)) => {
+                                            let msg = PubSubMsg::Subscribe { topic: topic_hash };
+                                            let _ = send.write_all(&msg.encode()).await;
+                                            let _ = send.finish();
+                                            info!("topic registered with relay");
+                                        }
+                                        Err(e) => {
+                                            warn!(%e, "failed to open PubSub stream (continuing anyway)");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(%e, "failed to connect to relay via PubSub (continuing anyway)");
+                                }
+                            }
+
                             // Bootstrap gossip through the well-known relay.
-                            let relay_id = onyx_core::protocol::relay_endpoint_id();
                             info!(relay_id = %relay_id, "bootstrapping gossip via relay");
 
                             match ShadowMesh::join(n.gossip(), &room_secret, vec![relay_id]).await {

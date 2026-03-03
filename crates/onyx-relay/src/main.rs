@@ -5,7 +5,9 @@
 //
 //   1. **Gossip Reflector**: Runs an Iroh endpoint that participates
 //      in gossip swarms. When devices can't directly connect, the
-//      relay forwards gossip messages between them.
+//      relay forwards gossip messages between them.  It actively
+//      subscribes to every topic a client registers via PubSub,
+//      making it a *transparent gossip reflector*.
 //
 //   2. **PubSub Buffer**: If a device is offline, the relay holds
 //      encrypted CRDT deltas in RAM (up to 30 days or memory limit).
@@ -22,13 +24,16 @@
 
 mod hub;
 
+use futures_lite::StreamExt;
 use hub::GiantHall;
 use iroh::protocol::Router;
 use iroh::Endpoint;
 use iroh_gossip::Gossip;
 use onyx_core::identity::VoidIdentity;
 use onyx_core::protocol::{PubSubMsg, ONYX_PUBSUB_ALPN};
+use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use tracing::{info, warn};
 
 /// Maximum RAM budget for the PubSub buffer (in bytes).
@@ -37,6 +42,239 @@ const MAX_MEMORY_BYTES: usize = 512 * 1024 * 1024;
 
 /// Maximum age of buffered messages (30 days in seconds).
 const MAX_AGE_SECS: u64 = 30 * 24 * 3600;
+
+// ─── PubSub Reflector (ProtocolHandler) ─────────────────────────
+
+/// A protocol handler that accepts PubSub client connections.
+///
+/// When a client sends a `Subscribe` message the reflector:
+///   1. Registers the topic in the Giant Hall.
+///   2. Subscribes to the matching gossip topic (if not already)
+///      so the relay becomes part of the broadcast tree.
+///   3. Delivers any buffered messages back to the client.
+struct PubSubReflector {
+    hall: Arc<GiantHall>,
+    gossip: Gossip,
+    /// Set of topic hashes the relay has already joined in gossip.
+    active_topics: TokioMutex<HashSet<[u8; 32]>>,
+}
+
+impl std::fmt::Debug for PubSubReflector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PubSubReflector")
+            .field("active_topics", &"<TokioMutex>")
+            .finish()
+    }
+}
+
+impl PubSubReflector {
+    fn new(hall: Arc<GiantHall>, gossip: Gossip) -> Self {
+        Self {
+            hall,
+            gossip,
+            active_topics: TokioMutex::new(HashSet::new()),
+        }
+    }
+
+    /// Ensure the relay is subscribed to the gossip topic.
+    /// Spawns a long-lived reflector task that keeps the subscription
+    /// alive and logs every event that passes through.
+    async fn ensure_gossip_topic(&self, topic_hash: [u8; 32]) {
+        {
+            let topics = self.active_topics.lock().await;
+            if topics.contains(&topic_hash) {
+                return;
+            }
+        }
+
+        let topic_id = iroh_gossip::TopicId::from_bytes(topic_hash);
+        info!(
+            topic = hex_short(&topic_hash),
+            "relay joining gossip topic as reflector"
+        );
+
+        match self.gossip.subscribe(topic_id, vec![]).await {
+            Ok(topic_handle) => {
+                // Mark as active AFTER successful subscription
+                self.active_topics.lock().await.insert(topic_hash);
+
+                let (_sender, mut receiver) = topic_handle.split();
+                let hall = Arc::clone(&self.hall);
+
+                // Spawn a long-lived task that keeps the gossip
+                // subscription alive. The relay automatically
+                // forwards messages through the broadcast tree.
+                tokio::spawn(async move {
+                    info!(
+                        topic = hex_short(&topic_hash),
+                        "gossip reflector task started"
+                    );
+
+                    // Keep sender alive so the gossip subscription persists.
+                    let _keep_alive = _sender;
+
+                    loop {
+                        match receiver.next().await {
+                            Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
+                                info!(
+                                    from = %msg.delivered_from,
+                                    bytes = msg.content.len(),
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] gossip message received — broadcasting to tree"
+                                );
+                                // Buffer in the hall for offline peers
+                                hall.publish(
+                                    topic_hash,
+                                    msg.delivered_from,
+                                    msg.content.to_vec(),
+                                );
+                                // The gossip protocol automatically re-broadcasts
+                                // to all neighbors in the tree — no manual send needed.
+                            }
+                            Some(Ok(iroh_gossip::api::Event::NeighborUp(peer))) => {
+                                info!(
+                                    peer = %peer,
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] peer joined gossip topic"
+                                );
+                            }
+                            Some(Ok(iroh_gossip::api::Event::NeighborDown(peer))) => {
+                                warn!(
+                                    peer = %peer,
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] peer left gossip topic"
+                                );
+                            }
+                            Some(Ok(iroh_gossip::api::Event::Lagged)) => {
+                                warn!(
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] lagged — some messages may be lost"
+                                );
+                            }
+                            Some(Err(e)) => {
+                                warn!(
+                                    %e,
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] gossip receive error (non-fatal)"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            }
+                            None => {
+                                warn!(
+                                    topic = hex_short(&topic_hash),
+                                    "[reflector] gossip stream ended — retrying in 2s"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            }
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                warn!(
+                    %e,
+                    topic = hex_short(&topic_hash),
+                    "failed to subscribe to gossip topic"
+                );
+            }
+        }
+    }
+
+    /// Handle a single PubSub client connection.
+    async fn handle_connection(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> anyhow::Result<()> {
+        let peer = conn.remote_id();
+
+        loop {
+            // Accept bi-directional streams from the client
+            let (mut send, mut recv) = match conn.accept_bi().await {
+                Ok(streams) => streams,
+                Err(_) => break,
+            };
+
+            let data = recv.read_to_end(1024 * 1024).await?;
+
+            let msg = match PubSubMsg::decode(&data) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!(%peer, %e, "invalid protocol message");
+                    continue;
+                }
+            };
+
+            match msg {
+                PubSubMsg::Subscribe { topic } => {
+                    info!(%peer, topic = hex_short(&topic), "subscribe");
+                    self.hall.subscribe(topic, peer);
+
+                    // Join the gossip topic so we participate in the
+                    // broadcast tree and can forward messages.
+                    self.ensure_gossip_topic(topic).await;
+
+                    // Deliver any buffered messages for this topic
+                    let buffered = self.hall.drain_for_peer(&topic, &peer);
+                    for payload in buffered {
+                        let reply = PubSubMsg::Deliver { topic, payload };
+                        let _ = send.write_all(&reply.encode()).await;
+                    }
+                    let _ = send.finish();
+                }
+                PubSubMsg::Publish { topic, payload } => {
+                    tracing::trace!(
+                        %peer,
+                        topic = hex_short(&topic),
+                        bytes = payload.len(),
+                        "publish"
+                    );
+                    self.hall.publish(topic, peer, payload);
+                }
+                PubSubMsg::RequestState {
+                    topic,
+                    version_info: _,
+                } => {
+                    info!(
+                        %peer,
+                        topic = hex_short(&topic),
+                        "state request (initial sync)"
+                    );
+                    let all_data = self.hall.get_all_for_topic(&topic);
+                    let reply = PubSubMsg::DeliverState {
+                        topic,
+                        snapshot: all_data,
+                    };
+                    let _ = send.write_all(&reply.encode()).await;
+                    let _ = send.finish();
+                }
+                _ => {
+                    warn!(%peer, "unexpected message type from client");
+                }
+            }
+        }
+
+        info!(%peer, "PubSub client disconnected");
+        Ok(())
+    }
+}
+
+impl iroh::protocol::ProtocolHandler for PubSubReflector {
+    async fn accept(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> Result<(), iroh::protocol::AcceptError> {
+        let peer = conn.remote_id();
+        info!(%peer, "PubSub client connected via reflector");
+
+        if let Err(e) = self.handle_connection(conn).await {
+            warn!(%peer, %e, "PubSub reflector connection error");
+        }
+
+        Ok(())
+    }
+}
+
+// ─── main ───────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,14 +292,12 @@ async fn main() -> anyhow::Result<()> {
     info!("╚══════════════════════════════════════════╝");
 
     // ── Identity ──
-    // Use deterministic relay identity so clients can bootstrap
-    // gossip through us without prior configuration.
     let identity = VoidIdentity::relay_identity();
     info!(relay_id = %identity.public_key(), "relay identity loaded (deterministic)");
 
     // ── Iroh Endpoint ──
-    // Bind to a fixed port so clients can reach us at a known address.
-    let bind_addr = std::net::SocketAddr::from(([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT));
+    let bind_addr =
+        std::net::SocketAddr::from(([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT));
     let endpoint: Endpoint = Endpoint::builder()
         .secret_key(identity.secret_key().clone())
         .alpns(vec![
@@ -72,12 +308,8 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    info!(
-        endpoint_id = %endpoint.id(),
-        "iroh endpoint bound"
-    );
+    info!(endpoint_id = %endpoint.id(), "iroh endpoint bound");
 
-    // Wait for relay connectivity
     endpoint.online().await;
     let addr = endpoint.addr();
     info!(?addr, "relay online and reachable");
@@ -85,46 +317,32 @@ async fn main() -> anyhow::Result<()> {
     // ── Gossip ──
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
-    // ── Router ──
-    let _router = Router::builder(endpoint.clone())
-        .accept(iroh_gossip::ALPN, gossip.clone())
-        .spawn();
-
     // ── PubSub Giant Hall ──
     let hall = Arc::new(GiantHall::new(MAX_MEMORY_BYTES, MAX_AGE_SECS));
 
-    // ── PubSub accept loop ──
-    let pubsub_endpoint = endpoint.clone();
-    let pubsub_hall = Arc::clone(&hall);
-    tokio::spawn(async move {
-        info!("PubSub accept loop started");
-        loop {
-            let incoming = pubsub_endpoint.accept().await;
-            let connecting = match incoming {
-                Some(c) => c,
-                None => {
-                    info!("endpoint closed, stopping accept loop");
-                    break;
-                }
-            };
+    // ── PubSub Reflector (registered as ProtocolHandler) ──
+    let reflector = Arc::new(PubSubReflector::new(Arc::clone(&hall), gossip.clone()));
 
-            let hall = Arc::clone(&pubsub_hall);
-            tokio::spawn(async move {
-                match connecting.await {
-                    Ok(conn) => {
-                        let peer = conn.remote_id();
-                        info!(%peer, "PubSub client connected");
-                        if let Err(e) = handle_pubsub_connection(conn, hall).await {
-                            warn!(%peer, %e, "PubSub connection error");
-                        }
-                    }
-                    Err(e) => {
-                        warn!(%e, "failed to accept connection");
-                    }
-                }
-            });
+    // ── Router ──
+    // Both gossip and PubSub are handled through the Router so there
+    // is no race on `endpoint.accept()`.
+    let _router = Router::builder(endpoint.clone())
+        .accept(iroh_gossip::ALPN, gossip.clone())
+        .accept(ONYX_PUBSUB_ALPN, reflector.clone())
+        .spawn();
+
+    info!("Router active — gossip + PubSub reflector registered");
+
+    // ── Pre-subscribe to topics from ONYX_TOPICS env var ──
+    // Format: comma-separated room secrets, e.g. ONYX_TOPICS=room1,room2
+    if let Ok(topics_str) = std::env::var("ONYX_TOPICS") {
+        let reflector_ref = Arc::clone(&reflector);
+        for secret in topics_str.split(',').filter(|s| !s.is_empty()) {
+            let topic_hash = onyx_core::protocol::topic_from_secret(secret.trim());
+            info!(room = secret.trim(), "pre-subscribing to topic from ONYX_TOPICS");
+            reflector_ref.ensure_gossip_topic(topic_hash).await;
         }
-    });
+    }
 
     // ── Memory sweep task ──
     let sweep_hall = Arc::clone(&hall);
@@ -151,85 +369,6 @@ async fn main() -> anyhow::Result<()> {
     endpoint.close().await;
     info!("relay stopped");
 
-    Ok(())
-}
-
-/// Handle a single PubSub client connection.
-async fn handle_pubsub_connection(
-    conn: iroh::endpoint::Connection,
-    hall: Arc<GiantHall>,
-) -> anyhow::Result<()> {
-    let peer = conn.remote_id();
-
-    loop {
-        // Accept bi-directional streams from the client
-        let (mut send, mut recv) = match conn.accept_bi().await {
-            Ok(streams) => streams,
-            Err(_) => {
-                // Connection closed
-                break;
-            }
-        };
-
-        // Read the full message (protocol messages are small)
-        let data = recv.read_to_end(1024 * 1024).await?; // 1MB max
-
-        let msg = match PubSubMsg::decode(&data) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!(%peer, %e, "invalid protocol message");
-                continue;
-            }
-        };
-
-        match msg {
-            PubSubMsg::Subscribe { topic } => {
-                info!(%peer, topic = hex_short(&topic), "subscribe");
-                hall.subscribe(topic, peer);
-
-                // Deliver any buffered messages for this topic
-                let buffered = hall.drain_for_peer(&topic, &peer);
-                for payload in buffered {
-                    let reply = PubSubMsg::Deliver {
-                        topic,
-                        payload,
-                    };
-                    let _ = send.write_all(&reply.encode()).await;
-                }
-                let _ = send.finish();
-            }
-            PubSubMsg::Publish { topic, payload } => {
-                tracing::trace!(
-                    %peer,
-                    topic = hex_short(&topic),
-                    bytes = payload.len(),
-                    "publish"
-                );
-                // Buffer the message and deliver to online subscribers
-                hall.publish(topic, peer, payload);
-            }
-            PubSubMsg::RequestState { topic, version_info: _ } => {
-                info!(
-                    %peer,
-                    topic = hex_short(&topic),
-                    "state request (initial sync)"
-                );
-                // Return all buffered messages as a combined snapshot
-                let all_data = hall.get_all_for_topic(&topic);
-                let reply = PubSubMsg::DeliverState {
-                    topic,
-                    snapshot: all_data,
-                };
-                let _ = send.write_all(&reply.encode()).await;
-                let _ = send.finish();
-            }
-            _ => {
-                warn!(%peer, "unexpected message type from client");
-            }
-        }
-    }
-
-    info!(%peer, "PubSub client disconnected");
     Ok(())
 }
 

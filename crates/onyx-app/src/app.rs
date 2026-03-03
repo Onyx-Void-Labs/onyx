@@ -155,43 +155,14 @@ script_mod! {
                                 draw_text.text_style.font_size: 13.0
                             }
 
-                            // GPU-rendered cursor — glowing bar shader
-                            // Covers the entire editor content area.
-                            // The shader uses cursor_x / cursor_y uniforms
-                            // to paint the glow bar at the right position.
+                            // Cursor indicator — thin purple bar.
+                            // Positioned via set_uniform; blink via set_visible.
                             cursor_overlay := View {
-                                abs_pos: vec2(0, 0)
-                                width: Fill
-                                height: Fill
+                                abs_pos: vec2(48, 80)
+                                width: 2
+                                height: 18
                                 show_bg: true
-                                draw_bg: {
-                                    instance cursor_x: 0.0
-                                    instance cursor_y: 0.0
-                                    instance opacity: 1.0
-                                    instance bar_height: 18.0
-
-                                    fn pixel(self) -> vec4 {
-                                        let pos = self.pos * self.rect_size
-
-                                        // Distance from cursor centre
-                                        let dx = abs(pos.x - self.cursor_x)
-                                        let dy = pos.y - self.cursor_y
-
-                                        // Vertical mask: only draw within one line
-                                        let in_line = smoothstep(-1.0, 0.0, dy)
-                                                    * smoothstep(self.bar_height + 1.0, self.bar_height, dy)
-
-                                        // Hard-edge bar (2px wide)
-                                        let bar = smoothstep(2.0, 0.0, dx) * in_line
-
-                                        // Gaussian glow halo
-                                        let sigma = 8.0
-                                        let glow = exp(-(dx * dx) / (2.0 * sigma * sigma)) * 0.25 * in_line
-
-                                        let alpha = clamp((bar + glow) * self.opacity, 0.0, 1.0)
-                                        return Pal.premul(vec4(0.482, 0.408, 0.933, alpha))
-                                    }
-                                }
+                                draw_bg.color: #x7B68EE
                             }
                         }
                     }
@@ -405,22 +376,15 @@ impl App {
             self.cursor_vel = 0.0;
         }
 
-        // ── GPU Cursor: update shader uniforms ──
-        // Approximate character metrics for the 13pt editor font.
-        let char_width: f64 = 7.8;
-        let line_height: f64 = 20.0;
-
-        let cursor_x = (self.cursor_anim_x as f64) * char_width;
-        let cursor_y = (line as f64) * line_height;
-
-        // Blink: set shader opacity to 0.0 when "off"
+        // ── Cursor blink ──
+        // Toggle the cursor bar visibility for a blink effect.
+        // Positioning requires a custom widget (future work);
+        // for now the bar stays at its DSL position (col 0).
         let blink = (self.cursor_time * 3.5).sin();
-        let opacity = if blink > 0.0 { 1.0f32 } else { 0.0f32 };
+        let visible = blink > 0.0;
 
         let overlay = self.ui.view(cx, ids!(cursor_overlay));
-        overlay.set_uniform(cx, live_id!(cursor_x), &[cursor_x as f32]);
-        overlay.set_uniform(cx, live_id!(cursor_y), &[cursor_y as f32]);
-        overlay.set_uniform(cx, live_id!(opacity), &[opacity]);
+        overlay.set_visible(cx, visible);
         overlay.redraw(cx);
 
         // Update the editor label with the plain text (no cursor char)
