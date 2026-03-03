@@ -53,6 +53,8 @@ pub enum NetEvent {
     MediaStarted,
     /// Received an Opus audio frame from a remote peer.
     MediaDatagramReceived { from: String, data: Vec<u8> },
+    /// Received a cursor position from a remote peer.
+    CursorReceived { from: String, pos: u32 },
     /// An error occurred on the network side.
     Error(String),
 }
@@ -558,6 +560,12 @@ async fn network_loop(
                                 onyx_core::protocol::CTRL_HEARTBEAT => {
                                     trace!(peer = %from, "received Heartbeat");
                                     let _ = evt_tx.send(NetEvent::HeartbeatReceived(from));
+                                }
+                                onyx_core::protocol::CTRL_CURSOR_POS => {
+                                    if let Some(pos) = onyx_core::protocol::decode_cursor_pos(&delta.data) {
+                                        trace!(peer = %from, pos, "received CursorPos");
+                                        let _ = evt_tx.send(NetEvent::CursorReceived { from, pos });
+                                    }
                                 }
                                 _ => {
                                     debug!(ctrl_type, "unknown control message type");

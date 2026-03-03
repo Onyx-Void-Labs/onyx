@@ -195,6 +195,49 @@ script_mod! {
                                 show_bg: true
                                 draw_bg.color: #x7B68EE
                             }
+
+                            // Remote cursors — up to 4 peers' cursors
+                            // rendered via the DrawRemoteCursor glow shader.
+                            remote_cursor_0 := View {
+                                abs_pos: vec2(-100, -100)
+                                width: 24
+                                height: 18
+                                visible: false
+                                RemoteCursorWidget {
+                                    width: Fill
+                                    height: Fill
+                                }
+                            }
+                            remote_cursor_1 := View {
+                                abs_pos: vec2(-100, -100)
+                                width: 24
+                                height: 18
+                                visible: false
+                                RemoteCursorWidget {
+                                    width: Fill
+                                    height: Fill
+                                }
+                            }
+                            remote_cursor_2 := View {
+                                abs_pos: vec2(-100, -100)
+                                width: 24
+                                height: 18
+                                visible: false
+                                RemoteCursorWidget {
+                                    width: Fill
+                                    height: Fill
+                                }
+                            }
+                            remote_cursor_3 := View {
+                                abs_pos: vec2(-100, -100)
+                                width: 24
+                                height: 18
+                                visible: false
+                                RemoteCursorWidget {
+                                    width: Fill
+                                    height: Fill
+                                }
+                            }
                         }
                     }
 
@@ -300,11 +343,23 @@ pub struct App {
     /// The media engine handle (spawned when voice is toggled ON).
     #[rust]
     media_engine: Option<MediaEngine>,
+    /// Our own NodeID string — cached to filter self-sent media datagrams.
+    #[rust]
+    our_node_id: String,
+    /// Remote peer cursor positions (peer_id → char offset).
+    #[rust]
+    remote_cursors: HashMap<String, u32>,
+    /// Counter for cursor broadcast debouncing (every ~500ms = 10 polls).
+    #[rust]
+    cursor_broadcast_counter: u32,
 }
 
 impl App {
     fn run(vm: &mut ScriptVm) -> Self {
         makepad_widgets::script_mod(vm);
+        // Register the remote cursor shader + widget BEFORE the app's own
+        // script_mod so the DSL can reference RemoteCursorWidget.
+        crate::remote_cursor::script_mod(vm);
         let mut app = App::from_script_mod(vm, self::script_mod);
         app.panel_open = true;
         app.last_display_hash = 0;
@@ -318,6 +373,9 @@ impl App {
         app.heartbeat_counter = 0;
         app.voice_active = false;
         app.media_engine = None;
+        app.our_node_id = String::new();
+        app.remote_cursors = HashMap::new();
+        app.cursor_broadcast_counter = 0;
         app
     }
 
@@ -478,6 +536,50 @@ impl App {
         overlay.set_visible(cx, visible);
         overlay.redraw(cx);
 
+        // ── Position remote peer cursors ──
+        // Map remote peer cursor character offsets → pixel coords and
+        // position the RemoteCursorWidget overlays.
+        let remote_cursor_ids = [
+            ids!(remote_cursor_0),
+            ids!(remote_cursor_1),
+            ids!(remote_cursor_2),
+            ids!(remote_cursor_3),
+        ];
+
+        // Collect peer positions (sorted for stable assignment).
+        let mut remote_peers: Vec<(&String, &u32)> = self
+            .remote_cursors
+            .iter()
+            .filter(|(id, _)| *id != &self.relay_node_id && *id != &self.our_node_id)
+            .collect();
+        remote_peers.sort_by_key(|(id, _)| (*id).clone());
+
+        for (i, rc_id) in remote_cursor_ids.iter().enumerate() {
+            let rc_view = self.ui.view(cx, *rc_id);
+            if let Some((_, &char_pos)) = remote_peers.get(i) {
+                // Compute line/col from character offset.
+                let buf_text = self.buffer.text();
+                let cpos = (char_pos as usize).min(buf_text.len());
+                let rline = buf_text[..cpos].matches('\n').count();
+                let rcol = cpos - buf_text[..cpos].rfind('\n').map(|x| x + 1).unwrap_or(0);
+
+                let rpx_x = pad_left + rcol as f32 * char_width - 12.0; // centre the 24px-wide widget
+                let rpx_y = pad_top + rline as f32 * line_height;
+
+                if let Some(mut inner) = rc_view.borrow_mut() {
+                    inner.walk.abs_pos = Some(Vec2d {
+                        x: rpx_x as f64,
+                        y: rpx_y as f64,
+                    });
+                }
+                rc_view.set_visible(cx, true);
+                rc_view.redraw(cx);
+            } else {
+                // No peer for this slot — hide it.
+                rc_view.set_visible(cx, false);
+            }
+        }
+
         // Update the editor label with the plain text (no cursor char)
         let text = self.buffer.text();
         let display = if text.is_empty() {
@@ -635,6 +737,16 @@ impl App {
                 net.send_control(hb);
             }
 
+            // ── Cursor position broadcast (every ~500ms = 10 polls) ──
+            self.cursor_broadcast_counter += 1;
+            if self.cursor_broadcast_counter >= 10 {
+                self.cursor_broadcast_counter = 0;
+                let cursor_msg = onyx_core::protocol::encode_cursor_control(
+                    self.cursor.pos as u32,
+                );
+                net.send_control(cursor_msg);
+            }
+
             // ── Heartbeat TTL expiry (15 seconds = 3 missed heartbeats) ──
             // Only disconnect peers on actual network failure (3 consecutive
             // missed heartbeats), NOT because the user is idle.
@@ -649,6 +761,7 @@ impl App {
                 tracing::warn!(peer = %peer_id, "peer expired (15s — 3 missed heartbeats)");
                 self.peer_last_seen.remove(&peer_id);
                 self.peers.retain(|p| p != &peer_id);
+                self.remote_cursors.remove(&peer_id);
                 self.update_peers_display(cx);
             }
         }
@@ -661,6 +774,7 @@ impl App {
             match evt {
                 NetEvent::Connected { our_id } => {
                     tracing::info!(id = %our_id, "connected to mesh");
+                    self.our_node_id = our_id;
                     self.connected = true;
                     self.update_peers_display(cx);
                 }
@@ -679,18 +793,26 @@ impl App {
                     tracing::info!(peer = %peer_id, "peer left");
                     self.peers.retain(|p| p != &peer_id);
                     self.peer_last_seen.remove(&peer_id);
+                    self.remote_cursors.remove(&peer_id);
                     self.update_peers_display(cx);
                 }
                 NetEvent::GoodbyeReceived(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer sent Goodbye — removing instantly");
                     self.peers.retain(|p| p != &peer_id);
                     self.peer_last_seen.remove(&peer_id);
+                    self.remote_cursors.remove(&peer_id);
                     self.update_peers_display(cx);
                 }
                 NetEvent::HeartbeatReceived(peer_id) => {
                     // Reset the peer's TTL
                     if self.peers.contains(&peer_id) {
                         self.peer_last_seen.insert(peer_id, Instant::now());
+                    }
+                }
+                NetEvent::CursorReceived { from, pos } => {
+                    // Store the remote peer's cursor position for rendering.
+                    if from != self.our_node_id && from != self.relay_node_id {
+                        self.remote_cursors.insert(from, pos);
                     }
                 }
                 NetEvent::MediaStarted => {
@@ -700,7 +822,16 @@ impl App {
                         .set_text(cx, "Voice: ON (live)");
                 }
                 NetEvent::MediaDatagramReceived { from, data } => {
+                    // Filter out our own datagrams (relay reflects them back).
+                    if from == self.our_node_id {
+                        continue;
+                    }
                     // Forward incoming Opus frames to the MediaEngine for decode + playback.
+                    tracing::info!(
+                        from = %from,
+                        bytes = data.len(),
+                        "received media datagram — forwarding to MediaEngine"
+                    );
                     if let Some(ref engine) = self.media_engine {
                         engine.receive_audio(from, data);
                     }
@@ -816,8 +947,11 @@ impl MatchEvent for App {
             self.connected = false;
             self.peers.clear();
             self.peer_last_seen.clear();
+            self.remote_cursors.clear();
             self.heartbeat_counter = 0;
+            self.cursor_broadcast_counter = 0;
             self.voice_active = false;
+            self.our_node_id.clear();
             // Clear the text buffer
             let len = self.buffer.len_chars();
             if len > 0 {

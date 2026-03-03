@@ -81,6 +81,9 @@ pub const CTRL_GOODBYE: u8 = 0x01;
 /// Heartbeat — peer is still alive (resets 15s TTL, 3 missed = disconnect).
 pub const CTRL_HEARTBEAT: u8 = 0x02;
 
+/// Cursor position — peer broadcasts their cursor offset.
+pub const CTRL_CURSOR_POS: u8 = 0x03;
+
 /// Media datagram — voice/audio frame (MoQ Phase 3).
 pub const CTRL_MEDIA: u8 = 0x10;
 
@@ -90,6 +93,24 @@ pub const ONYX_MEDIA_ALPN: &[u8] = b"onyx/media/1";
 /// Encode a gossip control message (no ZSTD wrapping).
 pub fn encode_control(ctrl_type: u8) -> Vec<u8> {
     vec![CTRL_MAGIC, ctrl_type]
+}
+
+/// Encode a cursor position control message.
+/// Wire format: [0xCC] [0x03] [4 bytes pos BE]
+pub fn encode_cursor_control(pos: u32) -> Vec<u8> {
+    let mut msg = vec![CTRL_MAGIC, CTRL_CURSOR_POS];
+    msg.extend_from_slice(&pos.to_be_bytes());
+    msg
+}
+
+/// Decode a cursor position from a control message.
+/// Returns `Some(pos)` if the message is a valid cursor control.
+pub fn decode_cursor_pos(data: &[u8]) -> Option<u32> {
+    if data.len() >= 6 && data[0] == CTRL_MAGIC && data[1] == CTRL_CURSOR_POS {
+        Some(u32::from_be_bytes([data[2], data[3], data[4], data[5]]))
+    } else {
+        None
+    }
 }
 
 /// Check if raw gossip bytes are a control message.

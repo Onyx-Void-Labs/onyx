@@ -27,36 +27,47 @@
 
 use std::sync::mpsc;
 use std::thread;
-use tracing::{info, warn, error, trace};
+use tracing::info;
+#[cfg(feature = "voice")]
+use tracing::{warn, error, trace};
 
+#[cfg(feature = "voice")]
 /// Opus always operates at 48 kHz internally.
 const OPUS_RATE: u32 = 48000;
 
+#[cfg(feature = "voice")]
 /// Opus frame size: 20ms at 48 kHz mono = 960 samples.
 const FRAME_SIZE: usize = 960;
 
+#[cfg(feature = "voice")]
 /// Maximum encoded Opus frame (bytes).  Opus rarely exceeds 500 B
 /// for mono voice at 48 kHz, but we keep headroom.
 const MAX_OPUS_BYTES: usize = 4000;
 
+#[cfg(feature = "voice")]
 /// VAD: RMS energy threshold for voice detection.
 /// Typical ambient noise is ~0.002–0.005 RMS; voice starts ~0.01+.
 const VAD_THRESHOLD: f32 = 0.008;
 
+#[cfg(feature = "voice")]
 /// VAD: Number of 20ms frames to keep in the rolling pre-buffer (200ms).
 const VAD_RING_FRAMES: usize = 10;
 
+#[cfg(feature = "voice")]
 /// VAD: Number of 20ms trailing frames to keep sending after voice stops (200ms).
 const VAD_TRAILING_FRAMES: u32 = 10;
 
-/// Keep-alive: send a silence frame every N silent frames (~1s = 50 × 20ms).
-/// This prevents the QUIC media connection from timing out when nobody is speaking.
-const KEEPALIVE_INTERVAL_FRAMES: u64 = 50;
+#[cfg(feature = "voice")]
+/// Keep-alive: send a silence frame every N silent frames (~5s = 250 × 20ms).
+/// This prevents the QUIC media connection from timing out during long silence.
+/// We use a very long interval so we don't leak bandwidth during muted periods.
+const KEEPALIVE_INTERVAL_FRAMES: u64 = 250;
 
 // ── Commands (UI → MediaEngine) ─────────────────────────────────
 
 /// Commands from the UI/App thread into the media engine.
 #[derive(Debug)]
+#[allow(dead_code)] // Fields read only in #[cfg(feature = "voice")] build
 pub enum MediaCommand {
     /// Start capturing microphone + playing back remote audio.
     StartCapture,
@@ -72,6 +83,7 @@ pub enum MediaCommand {
 
 /// Events emitted by the media engine back to the UI thread.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Variants constructed only in #[cfg(feature = "voice")] build
 pub enum MediaEvent {
     /// Audio capture started successfully.
     CaptureStarted,
@@ -140,11 +152,12 @@ impl MediaEngine {
     }
 }
 
-// ── Resampling ──────────────────────────────────────────────────
+// -- Resampling --
 
 /// Linear interpolation resampler.  Good enough for voice (Opus is
 /// lossy anyway). Converts `input` from `in_rate` Hz to `out_rate` Hz
 /// producing exactly `out_len` samples.
+#[cfg(feature = "voice")]
 fn resample(input: &[f32], in_rate: u32, out_rate: u32, out_len: usize) -> Vec<f32> {
     if in_rate == out_rate {
         return input.to_vec();
@@ -163,6 +176,7 @@ fn resample(input: &[f32], in_rate: u32, out_rate: u32, out_len: usize) -> Vec<f
 }
 
 /// Compute RMS (root-mean-square) energy of a PCM frame.
+#[cfg(feature = "voice")]
 fn rms_energy(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -308,310 +322,314 @@ fn media_loop(
     let mut silent_frame_counter: u64 = 0;
 
     // ── Main loop ────────────────────────────────────────────────
-    loop {
-        // ── 1. Process commands ──────────────────────────────────
-        match cmd_rx.try_recv() {
-            Ok(MediaCommand::StartCapture) => {
-                if capturing {
-                    continue;
-                }
-                info!("starting audio capture + playback");
-
-                // — Opus Encoder (always 48kHz, Voip for low latency) —
-                match OpusEncoder::new(
-                    SampleRate::Hz48000,
-                    Channels::Mono,
-                    Application::Voip,
-                ) {
-                    Ok(enc) => {
-                        info!("Opus encoder created (48kHz, mono, VOIP mode)");
-                        encoder = Some(enc);
+    // CRITICAL FIX: drain ALL pending commands per iteration instead
+    // of processing only one.  This prevents IncomingAudio frames
+    // from piling up in the channel and starving the playback buffer.
+    'outer: loop {
+        // ── 1. Drain ALL pending commands ────────────────────────
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(MediaCommand::StartCapture) => {
+                    if capturing {
+                        continue; // inner loop — drain next command
                     }
-                    Err(e) => {
-                        let msg = format!("Opus encoder creation failed: {e}");
-                        error!("{msg}");
-                        let _ = evt_tx.send(MediaEvent::Error(msg));
-                        continue;
-                    }
-                }
+                    info!("starting audio capture + playback");
 
-                // — cpal input stream (microphone) —
-                // Build the stream matching the device's native sample format
-                // to avoid silent stream drops.  Many devices (especially
-                // Windows WASAPI) prefer i16; others prefer f32.
-                if let Some(ref device) = input_device {
-                    let cfg = cpal::StreamConfig {
-                        channels: input_channels,
-                        sample_rate: cpal::SampleRate(input_native_rate),
-                        buffer_size: cpal::BufferSize::Default,
-                    };
-
-                    let build_result = match input_sample_format {
-                        cpal::SampleFormat::I16 => {
-                            // ── i16 native path ──
-                            // Convert i16 → f32 properly inside the callback
-                            // to prevent silent stream drops on i16-native devices.
-                            info!("building i16 input stream (native format)");
-                            let tx = pcm_tx.clone();
-                            let ch = input_channels;
-                            let native_frame = input_native_frame_size;
-                            let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
-
-                            device.build_input_stream(
-                                &cfg,
-                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                                    // Convert i16 samples to f32 [-1.0, 1.0].
-                                    // i16 range is [-32768, 32767]; dividing by
-                                    // 32768.0 maps to [-1.0, ~0.99997].
-                                    if ch > 1 {
-                                        for chunk in data.chunks(ch as usize) {
-                                            let mono: f32 = chunk
-                                                .iter()
-                                                .map(|&s| s as f32 / 32768.0)
-                                                .sum::<f32>()
-                                                / ch as f32;
-                                            acc.push(mono);
-                                        }
-                                    } else {
-                                        for &s in data {
-                                            acc.push(s as f32 / 32768.0);
-                                        }
-                                    }
-                                    while acc.len() >= native_frame {
-                                        let frame: Vec<f32> =
-                                            acc.drain(..native_frame).collect();
-                                        let _ = tx.send(frame);
-                                    }
-                                },
-                                |err| error!("cpal input error: {err}"),
-                                None,
-                            )
-                        }
-                        _ => {
-                            // ── f32 path (default / U16 / other) ──
-                            info!(
-                                format = ?input_sample_format,
-                                "building f32 input stream"
-                            );
-                            let tx = pcm_tx.clone();
-                            let ch = input_channels;
-                            let native_frame = input_native_frame_size;
-                            let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
-
-                            device.build_input_stream(
-                                &cfg,
-                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                                    // Downmix to mono if device is stereo/multichannel.
-                                    if ch > 1 {
-                                        for chunk in data.chunks(ch as usize) {
-                                            let mono: f32 =
-                                                chunk.iter().sum::<f32>() / ch as f32;
-                                            acc.push(mono);
-                                        }
-                                    } else {
-                                        acc.extend_from_slice(data);
-                                    }
-                                    while acc.len() >= native_frame {
-                                        let frame: Vec<f32> =
-                                            acc.drain(..native_frame).collect();
-                                        let _ = tx.send(frame);
-                                    }
-                                },
-                                |err| error!("cpal input error: {err}"),
-                                None,
-                            )
-                        }
-                    };
-
-                    match build_result {
-                        Ok(stream) => {
-                            // Explicitly call play() — some backends start paused.
-                            match stream.play() {
-                                Ok(()) => info!("cpal input stream: play() succeeded"),
-                                Err(e) => error!("cpal input stream: play() FAILED: {e}"),
-                            }
-                            _input_stream = Some(stream);
-                            info!(
-                                sample_rate = input_native_rate,
-                                channels = input_channels,
-                                frame_size = input_native_frame_size,
-                                sample_format = ?input_sample_format,
-                                "cpal input stream started (native config)"
-                            );
-                        }
-                        Err(e) => {
-                            let msg = format!("input stream open failed: {e}");
-                            error!("{msg}");
-                            let _ = evt_tx.send(MediaEvent::Error(msg));
-                        }
-                    }
-                }
-
-                // — cpal output stream (speaker) —
-                // Uses the NATIVE output rate/channels.
-                if let Some(ref device) = output_device {
-                    let cfg = cpal::StreamConfig {
-                        channels: output_channels,
-                        sample_rate: cpal::SampleRate(output_native_rate),
-                        buffer_size: cpal::BufferSize::Default,
-                    };
-                    let pb = Arc::clone(&playback_buf);
-                    let out_ch = output_channels;
-
-                    match device.build_output_stream(
-                        &cfg,
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            let mut buf = pb.lock().unwrap();
-                            if out_ch > 1 {
-                                // Duplicate mono samples to all output channels.
-                                for frame_samples in data.chunks_mut(out_ch as usize) {
-                                    let sample = buf.pop_front().unwrap_or(0.0);
-                                    for s in frame_samples.iter_mut() {
-                                        *s = sample;
-                                    }
-                                }
-                            } else {
-                                for sample in data.iter_mut() {
-                                    *sample = buf.pop_front().unwrap_or(0.0);
-                                }
-                            }
-                        },
-                        |err| error!("cpal output error: {err}"),
-                        None,
+                    // — Opus Encoder (always 48kHz, Voip for low latency) —
+                    match OpusEncoder::new(
+                        SampleRate::Hz48000,
+                        Channels::Mono,
+                        Application::Voip,
                     ) {
-                        Ok(stream) => {
-                            // Explicitly call play() — some backends start paused.
-                            match stream.play() {
-                                Ok(()) => info!("cpal output stream: play() succeeded"),
-                                Err(e) => error!("cpal output stream: play() FAILED: {e}"),
-                            }
-                            _output_stream = Some(stream);
-                            info!(
-                                sample_rate = output_native_rate,
-                                channels = output_channels,
-                                "cpal output stream started (native config)"
-                            );
+                        Ok(enc) => {
+                            info!("Opus encoder created (48kHz, mono, VOIP mode)");
+                            encoder = Some(enc);
                         }
                         Err(e) => {
-                            let msg = format!("output stream open failed: {e}");
+                            let msg = format!("Opus encoder creation failed: {e}");
                             error!("{msg}");
                             let _ = evt_tx.send(MediaEvent::Error(msg));
+                            continue; // inner loop — try next command
                         }
                     }
-                }
 
-                // Reset VAD state.
-                vad_state = VadState::Silent;
-                vad_ring.clear();
-                opus_packets_sent = 0;
-                silent_frame_counter = 0;
-
-                capturing = true;
-                let _ = evt_tx.send(MediaEvent::CaptureStarted);
-            }
-
-            Ok(MediaCommand::StopCapture) => {
-                if !capturing {
-                    continue;
-                }
-                info!(
-                    total_opus_packets = opus_packets_sent,
-                    "stopping audio capture + playback"
-                );
-                _input_stream = None; // drop → stops capture
-                _output_stream = None; // drop → stops playback
-                encoder = None;
-                decoders.clear();
-                if let Ok(mut buf) = playback_buf.lock() {
-                    buf.clear();
-                }
-                vad_state = VadState::Silent;
-                vad_ring.clear();
-                capturing = false;
-                let _ = evt_tx.send(MediaEvent::CaptureStopped);
-            }
-
-            Ok(MediaCommand::IncomingAudio { from, data }) => {
-                if data.is_empty() {
-                    continue;
-                }
-                trace!(from = %from, bytes = data.len(), "decoding incoming audio");
-
-                // Get or create a per-peer Opus decoder.
-                let decoder = decoders
-                    .entry(from.clone())
-                    .or_insert_with(|| {
-                        OpusDecoder::new(SampleRate::Hz48000, Channels::Mono)
-                            .expect("failed to create Opus decoder")
-                    });
-
-                // Decode Opus → i16 PCM at 48kHz.
-                let mut pcm = vec![0i16; FRAME_SIZE];
-                let packet = match OpusPacket::try_from(&data[..]) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(peer = %from, %e, "invalid Opus packet");
-                        continue;
-                    }
-                };
-                let output = match MutSignals::try_from(&mut pcm[..]) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        warn!(peer = %from, %e, "MutSignals creation failed");
-                        continue;
-                    }
-                };
-                match decoder.decode(Some(packet), output, false) {
-                    Ok(samples) => {
-                        // Convert i16 → f32.
-                        let pcm_f32: Vec<f32> = pcm[..samples]
-                            .iter()
-                            .map(|&s| s as f32 / 32768.0)
-                            .collect();
-
-                        // Resample 48kHz → native output rate if needed.
-                        let output_samples = if output_native_rate != OPUS_RATE {
-                            let out_len = (samples as u64
-                                * output_native_rate as u64
-                                / OPUS_RATE as u64)
-                                as usize;
-                            resample(&pcm_f32, OPUS_RATE, output_native_rate, out_len)
-                        } else {
-                            pcm_f32
+                    // — cpal input stream (microphone) —
+                    if let Some(ref device) = input_device {
+                        let cfg = cpal::StreamConfig {
+                            channels: input_channels,
+                            sample_rate: cpal::SampleRate(input_native_rate),
+                            buffer_size: cpal::BufferSize::Default,
                         };
 
-                        // Push into playback ring.
-                        if let Ok(mut buf) = playback_buf.lock() {
-                            for s in &output_samples {
-                                buf.push_back(*s);
+                        let build_result = match input_sample_format {
+                            cpal::SampleFormat::I16 => {
+                                info!("building i16 input stream (native format)");
+                                let tx = pcm_tx.clone();
+                                let ch = input_channels;
+                                let native_frame = input_native_frame_size;
+                                let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
+
+                                device.build_input_stream(
+                                    &cfg,
+                                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                        if ch > 1 {
+                                            for chunk in data.chunks(ch as usize) {
+                                                let mono: f32 = chunk
+                                                    .iter()
+                                                    .map(|&s| s as f32 / 32768.0)
+                                                    .sum::<f32>()
+                                                    / ch as f32;
+                                                acc.push(mono);
+                                            }
+                                        } else {
+                                            for &s in data {
+                                                acc.push(s as f32 / 32768.0);
+                                            }
+                                        }
+                                        while acc.len() >= native_frame {
+                                            let frame: Vec<f32> =
+                                                acc.drain(..native_frame).collect();
+                                            let _ = tx.send(frame);
+                                        }
+                                    },
+                                    |err| error!("cpal input error: {err}"),
+                                    None,
+                                )
                             }
-                            // Cap to ~200ms at native output rate.
-                            let max_buf = (output_native_rate as usize * 200) / 1000;
-                            while buf.len() > max_buf {
-                                buf.pop_front();
+                            _ => {
+                                info!(
+                                    format = ?input_sample_format,
+                                    "building f32 input stream"
+                                );
+                                let tx = pcm_tx.clone();
+                                let ch = input_channels;
+                                let native_frame = input_native_frame_size;
+                                let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
+
+                                device.build_input_stream(
+                                    &cfg,
+                                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                        if ch > 1 {
+                                            for chunk in data.chunks(ch as usize) {
+                                                let mono: f32 =
+                                                    chunk.iter().sum::<f32>() / ch as f32;
+                                                acc.push(mono);
+                                            }
+                                        } else {
+                                            acc.extend_from_slice(data);
+                                        }
+                                        while acc.len() >= native_frame {
+                                            let frame: Vec<f32> =
+                                                acc.drain(..native_frame).collect();
+                                            let _ = tx.send(frame);
+                                        }
+                                    },
+                                    |err| error!("cpal input error: {err}"),
+                                    None,
+                                )
+                            }
+                        };
+
+                        match build_result {
+                            Ok(stream) => {
+                                match stream.play() {
+                                    Ok(()) => info!("cpal input stream: play() succeeded"),
+                                    Err(e) => error!("cpal input stream: play() FAILED: {e}"),
+                                }
+                                _input_stream = Some(stream);
+                                info!(
+                                    sample_rate = input_native_rate,
+                                    channels = input_channels,
+                                    frame_size = input_native_frame_size,
+                                    sample_format = ?input_sample_format,
+                                    "cpal input stream started (native config)"
+                                );
+                            }
+                            Err(e) => {
+                                let msg = format!("input stream open failed: {e}");
+                                error!("{msg}");
+                                let _ = evt_tx.send(MediaEvent::Error(msg));
                             }
                         }
                     }
-                    Err(e) => {
-                        warn!(peer = %from, %e, "Opus decode error");
+
+                    // — cpal output stream (speaker) —
+                    if let Some(ref device) = output_device {
+                        let cfg = cpal::StreamConfig {
+                            channels: output_channels,
+                            sample_rate: cpal::SampleRate(output_native_rate),
+                            buffer_size: cpal::BufferSize::Default,
+                        };
+                        let pb = Arc::clone(&playback_buf);
+                        let out_ch = output_channels;
+
+                        match device.build_output_stream(
+                            &cfg,
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                let mut buf = pb.lock().unwrap();
+                                if out_ch > 1 {
+                                    for frame_samples in data.chunks_mut(out_ch as usize) {
+                                        let sample = buf.pop_front().unwrap_or(0.0);
+                                        for s in frame_samples.iter_mut() {
+                                            *s = sample;
+                                        }
+                                    }
+                                } else {
+                                    for sample in data.iter_mut() {
+                                        *sample = buf.pop_front().unwrap_or(0.0);
+                                    }
+                                }
+                            },
+                            |err| error!("cpal output error: {err}"),
+                            None,
+                        ) {
+                            Ok(stream) => {
+                                match stream.play() {
+                                    Ok(()) => info!("cpal output stream: play() succeeded"),
+                                    Err(e) => error!("cpal output stream: play() FAILED: {e}"),
+                                }
+                                _output_stream = Some(stream);
+                                info!(
+                                    sample_rate = output_native_rate,
+                                    channels = output_channels,
+                                    "cpal output stream started (native config)"
+                                );
+                            }
+                            Err(e) => {
+                                let msg = format!("output stream open failed: {e}");
+                                error!("{msg}");
+                                let _ = evt_tx.send(MediaEvent::Error(msg));
+                            }
+                        }
+                    }
+
+                    // Reset VAD state.
+                    vad_state = VadState::Silent;
+                    vad_ring.clear();
+                    opus_packets_sent = 0;
+                    silent_frame_counter = 0;
+
+                    capturing = true;
+                    let _ = evt_tx.send(MediaEvent::CaptureStarted);
+                }
+
+                Ok(MediaCommand::StopCapture) => {
+                    if !capturing {
+                        continue; // inner loop — drain next command
+                    }
+                    info!(
+                        total_opus_packets = opus_packets_sent,
+                        "stopping audio capture + playback"
+                    );
+                    _input_stream = None;
+                    _output_stream = None;
+                    encoder = None;
+                    decoders.clear();
+                    if let Ok(mut buf) = playback_buf.lock() {
+                        buf.clear();
+                    }
+                    vad_state = VadState::Silent;
+                    vad_ring.clear();
+                    capturing = false;
+                    let _ = evt_tx.send(MediaEvent::CaptureStopped);
+                }
+
+                Ok(MediaCommand::IncomingAudio { from, data }) => {
+                    if data.is_empty() {
+                        continue; // inner loop — drain next command
+                    }
+
+                    // INFO-level to help debug the playback pipeline.
+                    info!(
+                        from = %from,
+                        bytes = data.len(),
+                        "decoding incoming audio frame for playback"
+                    );
+
+                    // Get or create a per-peer Opus decoder.
+                    let decoder = decoders
+                        .entry(from.clone())
+                        .or_insert_with(|| {
+                            info!(peer = %from, "creating new Opus decoder for peer");
+                            OpusDecoder::new(SampleRate::Hz48000, Channels::Mono)
+                                .expect("failed to create Opus decoder")
+                        });
+
+                    // Decode Opus → i16 PCM at 48kHz.
+                    let mut pcm = vec![0i16; FRAME_SIZE];
+                    let packet = match OpusPacket::try_from(&data[..]) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(peer = %from, %e, "invalid Opus packet");
+                            continue;
+                        }
+                    };
+                    let output = match MutSignals::try_from(&mut pcm[..]) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            warn!(peer = %from, %e, "MutSignals creation failed");
+                            continue;
+                        }
+                    };
+                    match decoder.decode(Some(packet), output, false) {
+                        Ok(samples) => {
+                            // Convert i16 → f32.
+                            let pcm_f32: Vec<f32> = pcm[..samples]
+                                .iter()
+                                .map(|&s| s as f32 / 32768.0)
+                                .collect();
+
+                            // Resample 48kHz → native output rate if needed.
+                            let output_samples = if output_native_rate != OPUS_RATE {
+                                let out_len = (samples as u64
+                                    * output_native_rate as u64
+                                    / OPUS_RATE as u64)
+                                    as usize;
+                                resample(&pcm_f32, OPUS_RATE, output_native_rate, out_len)
+                            } else {
+                                pcm_f32
+                            };
+
+                            // Push into playback ring.
+                            if let Ok(mut buf) = playback_buf.lock() {
+                                let before = buf.len();
+                                for s in &output_samples {
+                                    buf.push_back(*s);
+                                }
+                                info!(
+                                    before_samples = before,
+                                    added_samples = output_samples.len(),
+                                    total_samples = buf.len(),
+                                    "pushed decoded audio to playback buffer"
+                                );
+                                // Cap to ~200ms at native output rate.
+                                let max_buf = (output_native_rate as usize * 200) / 1000;
+                                while buf.len() > max_buf {
+                                    buf.pop_front();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(peer = %from, %e, "Opus decode error");
+                        }
                     }
                 }
-            }
 
-            Ok(MediaCommand::Shutdown) => {
-                info!(
-                    total_opus_packets = opus_packets_sent,
-                    "media engine shutting down"
-                );
-                _input_stream = None;
-                _output_stream = None;
-                break;
-            }
+                Ok(MediaCommand::Shutdown) => {
+                    info!(
+                        total_opus_packets = opus_packets_sent,
+                        "media engine shutting down"
+                    );
+                    _input_stream = None;
+                    _output_stream = None;
+                    break 'outer;
+                }
 
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                info!("media command channel closed");
-                break;
+                Err(mpsc::TryRecvError::Empty) => break, // inner loop → process PCM
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    info!("media command channel closed");
+                    break 'outer;
+                }
             }
         }
 
@@ -627,7 +645,6 @@ fn media_loop(
 
                 // ── VAD: voice activity detection ──
                 let energy = rms_energy(&pcm_48k);
-
                 let voice_detected = energy > VAD_THRESHOLD;
 
                 // Advance VAD state machine.
@@ -635,8 +652,7 @@ fn media_loop(
                     VadState::Silent => {
                         if voice_detected {
                             // Voice just started — flush the ring buffer
-                            // (past 200ms) so no syllables are lost, then
-                            // send the current frame.
+                            // (past 200ms) so no syllables are lost.
                             info!(
                                 energy = format!("{energy:.4}"),
                                 ring_frames = vad_ring.len(),
@@ -661,10 +677,6 @@ fn media_loop(
                                     {
                                         opus_buf.truncate(len);
                                         opus_packets_sent += 1;
-                                        info!(
-                                            "sending opus packet size={}",
-                                            len
-                                        );
                                         let _ = evt_tx.send(
                                             MediaEvent::AudioFrame(opus_buf),
                                         );
@@ -673,22 +685,22 @@ fn media_loop(
                             }
                             true // also send current frame
                         } else {
-                            // Still silent — push into ring buffer.
+                            // ── SILENT: buffer in ring, do NOT send ──
+                            // This is the key fix: during silence, we
+                            // skip sending entirely to save bandwidth.
                             vad_ring.push_back(pcm_48k.clone());
                             if vad_ring.len() > VAD_RING_FRAMES {
                                 vad_ring.pop_front();
                             }
 
-                            // ── Keep-alive: send a silence frame every ~1s ──
-                            // This prevents the QUIC media connection from
-                            // timing out when nobody is speaking.
+                            // Rare keep-alive (~5s) to prevent QUIC timeout.
                             silent_frame_counter += 1;
                             if silent_frame_counter >= KEEPALIVE_INTERVAL_FRAMES {
                                 silent_frame_counter = 0;
-                                trace!("VAD: sending keep-alive silence frame");
-                                true // send this frame as keep-alive
+                                trace!("VAD: sending rare keep-alive silence frame");
+                                true
                             } else {
-                                false
+                                false // skip — don't send during silence
                             }
                         }
                     }
@@ -720,7 +732,7 @@ fn media_loop(
                             vad_state = VadState::Silent;
                             vad_ring.clear();
                             vad_ring.push_back(pcm_48k.clone());
-                            trace!("VAD: trailing ended — returning to silent");
+                            info!("VAD: trailing ended — returning to silent (no more packets)");
                             false
                         }
                     }
@@ -741,11 +753,7 @@ fn media_loop(
                             Ok(len) => {
                                 opus_buf.truncate(len);
                                 opus_packets_sent += 1;
-                                // Log every packet with its size for diagnostics.
-                                info!(
-                                    "sending opus packet size={}",
-                                    len
-                                );
+
                                 if opus_packets_sent <= 5
                                     || opus_packets_sent % 50 == 0
                                 {
