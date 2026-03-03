@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+name = "onyx_app"
+crate-type =["cdylib", "rlib"]
+
 [[bin]]
 name = "onyx_void"
 path = "src/main.rs"

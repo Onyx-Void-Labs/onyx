@@ -531,11 +531,47 @@ impl App {
                 }
                 NetEvent::DeltaReceived(raw_bytes) => {
                     tracing::debug!(bytes = raw_bytes.len(), "received delta");
-                    // Import into CRDT
-                    if let Err(e) = self.crdt.import_snapshot(&raw_bytes) {
-                        tracing::warn!(%e, "failed to import remote delta");
-                        continue;
+
+                    // ── Detect in-flight batch frame ──
+                    // Single delta:  raw Loro bytes (starts with 'l' = 0x6C)
+                    // Batch frame:   0xBB | u16 count | [u32 len | bytes]…
+                    if raw_bytes.first() == Some(&0xBB) && raw_bytes.len() >= 3 {
+                        let count =
+                            u16::from_be_bytes([raw_bytes[1], raw_bytes[2]]) as usize;
+                        tracing::debug!(count, "received batched delta packet");
+                        let mut offset = 3usize;
+                        for i in 0..count {
+                            if offset + 4 > raw_bytes.len() {
+                                tracing::warn!(idx = i, "truncated batch frame");
+                                break;
+                            }
+                            let len = u32::from_be_bytes([
+                                raw_bytes[offset],
+                                raw_bytes[offset + 1],
+                                raw_bytes[offset + 2],
+                                raw_bytes[offset + 3],
+                            ]) as usize;
+                            offset += 4;
+                            if offset + len > raw_bytes.len() {
+                                tracing::warn!(idx = i, "truncated delta in batch");
+                                break;
+                            }
+                            if let Err(e) = self
+                                .crdt
+                                .import_snapshot(&raw_bytes[offset..offset + len])
+                            {
+                                tracing::warn!(%e, idx = i, "failed to import batched delta");
+                            }
+                            offset += len;
+                        }
+                    } else {
+                        // Single delta (normal / legacy format)
+                        if let Err(e) = self.crdt.import_snapshot(&raw_bytes) {
+                            tracing::warn!(%e, "failed to import remote delta");
+                            continue;
+                        }
                     }
+
                     // Sync buffer from CRDT (full replacement for now)
                     if let Ok(new_text) = self.crdt.get_text() {
                         let old_len = self.buffer.len_chars();

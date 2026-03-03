@@ -182,9 +182,18 @@ async fn network_loop(
     // sees a disconnect 12ms later.
     let mut _relay_conn: Option<iroh::endpoint::Connection> = None;
 
+    // ── In-Flight Batching ──
+    // Stores a non-delta command that was pulled off the channel
+    // while draining queued SendDeltas. Processed on the next
+    // loop iteration so connect/disconnect are never lost.
+    let mut carryover_cmd: Option<NetCommand> = None;
+
     loop {
-        // Check for incoming commands (non-blocking when we have an active mesh)
-        let cmd = if gossip_sender.is_some() {
+        // Check for incoming commands (non-blocking when we have an active mesh).
+        // A carryover from a previous batch drain takes priority.
+        let cmd = if let Some(co) = carryover_cmd.take() {
+            Some(co)
+        } else if gossip_sender.is_some() {
             // Non-blocking check — we'll also poll deltas below
             match cmd_rx.try_recv() {
                 Ok(cmd) => Some(cmd),
@@ -301,10 +310,51 @@ async fn network_loop(
                         }
                     }
                 }
-                NetCommand::SendDelta(delta) => {
+                NetCommand::SendDelta(first_delta) => {
                     if let Some(ref sender) = gossip_sender {
-                        // Compress and broadcast
-                        match zstd::encode_all(delta.as_slice(), 1) {
+                        // ── In-Flight Batching (0ms artificial delay) ──
+                        // Drain any additional SendDelta commands that
+                        // queued up while the previous broadcast was
+                        // in-transit over the network.
+                        let mut deltas: Vec<Vec<u8>> = vec![first_delta];
+                        loop {
+                            match cmd_rx.try_recv() {
+                                Ok(NetCommand::SendDelta(d)) => deltas.push(d),
+                                Ok(other) => {
+                                    // Non-delta command — stash for next
+                                    // loop iteration so it isn't lost.
+                                    carryover_cmd = Some(other);
+                                    break;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+
+                        // Build the payload:
+                        //   1 delta  → raw bytes (no framing overhead)
+                        //   N deltas → batch frame: 0xBB | u16 count | [u32 len | bytes]…
+                        let payload = if deltas.len() == 1 {
+                            deltas.into_iter().next().unwrap()
+                        } else {
+                            let count = deltas.len();
+                            let mut frame = Vec::with_capacity(
+                                3 + deltas.iter().map(|d| 4 + d.len()).sum::<usize>(),
+                            );
+                            frame.push(0xBBu8); // batch magic
+                            frame.extend_from_slice(&(count as u16).to_be_bytes());
+                            for d in &deltas {
+                                frame.extend_from_slice(&(d.len() as u32).to_be_bytes());
+                                frame.extend_from_slice(d);
+                            }
+                            debug!(
+                                count,
+                                "in-flight batch: merged {count} deltas → 1 packet"
+                            );
+                            frame
+                        };
+
+                        // Compress and broadcast the (possibly batched) payload
+                        match zstd::encode_all(payload.as_slice(), 1) {
                             Ok(compressed) => {
                                 if let Err(e) = sender.broadcast(compressed.into()).await {
                                     warn!(%e, "broadcast failed");
