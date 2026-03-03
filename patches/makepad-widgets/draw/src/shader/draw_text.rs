@@ -134,6 +134,8 @@ script_mod! {
             if a > self.sdf_luma_bias * 0.5 {
                 a = clamp(a - bias, 0.0, 1.0);
             }
+            // Hard floor: kill sub-perceptual alpha (same as SDF path).
+            if a < 0.01 { a = 0.0; }
             return a
         }
 

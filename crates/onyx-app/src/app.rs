@@ -236,9 +236,15 @@ pub struct App {
     /// Animated cursor position (smoothed via spring interpolation).
     #[rust]
     cursor_anim_x: f32,
-    /// Cursor spring velocity.
+    /// Animated cursor Y (line) position, spring-smoothed.
+    #[rust]
+    cursor_anim_y: f32,
+    /// Cursor spring velocity (X axis).
     #[rust]
     cursor_vel: f32,
+    /// Cursor spring velocity (Y axis).
+    #[rust]
+    cursor_vel_y: f32,
     /// Accumulated time for cursor blink animation.
     #[rust]
     cursor_time: f64,
@@ -257,7 +263,9 @@ impl App {
         app.panel_open = true;
         app.last_display_hash = 0;
         app.cursor_anim_x = 0.0;
+        app.cursor_anim_y = 0.0;
         app.cursor_vel = 0.0;
+        app.cursor_vel_y = 0.0;
         app.cursor_time = 0.0;
         app
     }
@@ -348,38 +356,58 @@ impl App {
     /// satisfying physical feel to typing.
     fn tick_cursor_animation(&mut self, cx: &mut Cx) {
         const DT: f32 = 1.0 / 60.0;
-        // Spring parameters (critically damped)
+        // Spring parameters (critically damped: ζ ≈ 1.0)
         const STIFFNESS: f32 = 800.0;
         const DAMPING: f32 = 56.0; // 2 * sqrt(STIFFNESS)
 
         // Advance blink timer
         self.cursor_time += DT as f64;
 
-        // Target position = cursor column (in character units)
+        // Target position = cursor column and line (in character units)
         let buf_text = self.buffer.text();
         let pos = self.cursor.pos.min(buf_text.len());
         let line = buf_text[..pos].matches('\n').count();
         let col = pos - buf_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
         let target_x = col as f32;
+        let target_y = line as f32;
 
-        // Apply spring force
-        let displacement = target_x - self.cursor_anim_x;
-        let spring_force = STIFFNESS * displacement;
-        let damping_force = -DAMPING * self.cursor_vel;
-        let accel = spring_force + damping_force;
-        self.cursor_vel += accel * DT;
+        // Apply spring force (X axis)
+        let dx = target_x - self.cursor_anim_x;
+        let spring_x = STIFFNESS * dx;
+        let damp_x = -DAMPING * self.cursor_vel;
+        self.cursor_vel += (spring_x + damp_x) * DT;
         self.cursor_anim_x += self.cursor_vel * DT;
 
+        // Apply spring force (Y axis — same parameters for consistency)
+        let dy = target_y - self.cursor_anim_y;
+        let spring_y = STIFFNESS * dy;
+        let damp_y = -DAMPING * self.cursor_vel_y;
+        self.cursor_vel_y += (spring_y + damp_y) * DT;
+        self.cursor_anim_y += self.cursor_vel_y * DT;
+
         // Snap when close enough (avoid infinite oscillation)
-        if displacement.abs() < 0.01 && self.cursor_vel.abs() < 0.1 {
+        if dx.abs() < 0.01 && self.cursor_vel.abs() < 0.1 {
             self.cursor_anim_x = target_x;
             self.cursor_vel = 0.0;
         }
+        if dy.abs() < 0.01 && self.cursor_vel_y.abs() < 0.1 {
+            self.cursor_anim_y = target_y;
+            self.cursor_vel_y = 0.0;
+        }
+
+        // ── Position the cursor overlay ──
+        // Map animated column/line to pixel coords.
+        // These constants approximate the editor area padding + glyph metrics.
+        let char_width: f32 = 7.8;  // approximate monospace glyph width at font_size 13
+        let line_height: f32 = 20.0;
+        let pad_left: f32 = 48.0;
+        let pad_top: f32 = 80.0; // title bar(48) + editor padding(32)
+
+        let _px_x = pad_left + self.cursor_anim_x * char_width;
+        let _px_y = pad_top + self.cursor_anim_y * line_height;
 
         // ── Cursor blink ──
         // Toggle the cursor bar visibility for a blink effect.
-        // Positioning requires a custom widget (future work);
-        // for now the bar stays at its DSL position (col 0).
         let blink = (self.cursor_time * 3.5).sin();
         let visible = blink > 0.0;
 
@@ -443,6 +471,24 @@ impl App {
         }
     }
 
+    /// Broadcast a full CRDT snapshot to all peers.
+    ///
+    /// Called when a new peer joins so they receive all existing
+    /// content immediately, rather than seeing an empty screen
+    /// until the next keystroke.
+    fn broadcast_full_snapshot(&self) {
+        if let Some(ref net) = self.net {
+            let snapshot = self.crdt.export_snapshot();
+            if !snapshot.is_empty() {
+                tracing::info!(
+                    bytes = snapshot.len(),
+                    "sending full CRDT snapshot for new peer catch-up"
+                );
+                net.send_delta(snapshot);
+            }
+        }
+    }
+
     /// Capture the version vector *before* a local edit so we can
     /// export just the delta afterwards.
     fn capture_pre_edit_vv(&self) {
@@ -470,6 +516,13 @@ impl App {
                         self.peers.push(peer_id);
                     }
                     self.update_peers_display(cx);
+
+                    // ── Catch-Up Handshake ──
+                    // When a new peer joins, immediately broadcast our
+                    // full CRDT snapshot so they can sync up with all
+                    // existing content. Without this, a peer joining
+                    // after typing has occurred sees an empty screen.
+                    self.broadcast_full_snapshot();
                 }
                 NetEvent::PeerLeft(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer left");

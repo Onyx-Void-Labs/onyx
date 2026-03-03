@@ -97,6 +97,10 @@ impl SyncEngine {
                         debug!(peer = %peer, "sync engine: peer left");
                         continue;
                     }
+                    MeshEvent::StreamEnded => {
+                        warn!("sync engine: gossip stream ended");
+                        break;
+                    }
                 };
                 trace!(
                     from = %delta.from,

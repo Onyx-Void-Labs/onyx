@@ -1,26 +1,36 @@
-# Build artifacts
-/target/
-**/*.rs.bk
+# --- The Void GitIgnore ---
 
-# IDE
-.vscode/settings.json
+# Build Artifacts (Global)
+**/target/
+**/*.rs.bk
+**/*.o
+**/*.bc
+**/*.rmeta
+**/*.bin
+**/*.d
+**/*.pdb
+**/*.rlib
+**/*.exe
+**/*.so
+**/*.a
+**/*.dll
+
+# Makepad Specific Debris
+**/cargo_makepad/android_33_windows_x64/
+**/cargo_makepad/android_33_linux_x64/
+**/cargo_makepad/ndk/
+**/cargo_makepad/sdk/
+**/makepad-widgets/target/
+
+# Data & Secrets
+/data/
+.env
+*.elf
+
+# IDE & OS Junk
+.vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 Thumbs.db
 .DS_Store
-
-# SurrealDB local data
-/data/
-
-# Android build
-*.apk
-*.aab
-
-/target
-**/*.log
-.env
-*.elf
-patches/makepad-widgets/.git

@@ -18,7 +18,7 @@ use iroh_gossip::{Gossip, TopicId};
 use onyx_core::protocol::{topic_from_secret, TopicHash};
 
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// A joined gossip mesh for a single room/topic.
 ///
@@ -94,8 +94,13 @@ impl ShadowMesh {
     /// and forwards them to a channel for processing.
     ///
     /// Returns a receiver that yields mesh events (deltas + peer join/leave).
+    ///
+    /// The gossip stream is `.fuse()`d so that once it yields `None`
+    /// (i.e. the subscription is closed), we **never** poll it again
+    /// — which prevents the "Unfold must not be polled after it
+    /// returned Ready(None)" panic.
     pub fn spawn_receiver(
-        mut self,
+        self,
     ) -> (GossipSender, mpsc::Receiver<MeshEvent>) {
         let (tx, rx) = mpsc::channel(256);
         let sender = self.sender;
@@ -103,11 +108,13 @@ impl ShadowMesh {
         tokio::spawn(async move {
             info!("mesh receiver task started — listening for gossip events");
 
-            // Keep the gossip loop alive until the MeshEvent channel
-            // is dropped (i.e. the app shuts down). Never exit on
-            // transient stream errors.
+            // Fuse the stream: once it returns `None`, every subsequent
+            // poll will also return `None` instead of panicking.
+            let fused = self.receiver.fuse();
+            tokio::pin!(fused);
+
             loop {
-                match self.receiver.next().await {
+                match fused.next().await {
                     Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
                         info!(
                             from = %msg.delivered_from,
@@ -145,15 +152,21 @@ impl ShadowMesh {
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     }
                     None => {
-                        // Stream ended — likely the gossip subscription was
-                        // closed. Wait a bit and keep looping so the task
-                        // doesn't die; the caller may re-subscribe.
-                        warn!("[gossip] stream yielded None — waiting before retry");
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        // ── Stream is dead ──
+                        // The gossip subscription was closed. We MUST NOT
+                        // poll it again (the stream is now fused/terminal).
+                        // Notify the caller so it can trigger re-subscription.
+                        warn!("[gossip] stream ended (None) — signalling StreamEnded");
+                        let _ = tx.send(MeshEvent::StreamEnded).await;
+
+                        // Sleep to prevent a rapid-fire reconnect loop if
+                        // the VPS is temporarily unreachable.
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        break;
                     }
                 }
             }
-            info!("mesh receiver task exiting (channel closed)");
+            info!("mesh receiver task exiting");
         });
 
         (sender, rx)
@@ -179,6 +192,8 @@ pub enum MeshEvent {
     PeerJoined(String),
     /// A peer left the mesh (NeighborDown). Contains their NodeId string.
     PeerLeft(String),
+    /// The gossip stream terminated. The caller should re-subscribe.
+    StreamEnded,
 }
 
 /// An incoming CRDT delta from a peer.

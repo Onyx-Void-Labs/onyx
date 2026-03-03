@@ -116,6 +116,7 @@ async fn network_loop(
     let mut node: Option<OnyxNode> = None;
     let mut gossip_sender: Option<iroh_gossip::api::GossipSender> = None;
     let mut mesh_rx: Option<tokio::sync::mpsc::Receiver<onyx_net::mesh::MeshEvent>> = None;
+    let mut active_room_secret: Option<String> = None;
 
     loop {
         // Check for incoming commands (non-blocking when we have an active mesh)
@@ -203,6 +204,7 @@ async fn network_loop(
                                     let (sender, rx) = mesh.spawn_receiver();
                                     gossip_sender = Some(sender);
                                     mesh_rx = Some(rx);
+                                    active_room_secret = Some(room_secret.clone());
                                     node = Some(n);
 
                                     let _ = evt_tx.send(NetEvent::Connected {
@@ -251,7 +253,10 @@ async fn network_loop(
             }
         }
 
-        // Poll for incoming mesh events (non-blocking)
+        // Poll for incoming mesh events (non-blocking).
+        // We collect events and check for stream-end separately to
+        // avoid borrow conflicts on `mesh_rx`.
+        let mut stream_ended = false;
         if let Some(ref mut rx) = mesh_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
@@ -273,6 +278,38 @@ async fn network_loop(
                     onyx_net::mesh::MeshEvent::PeerLeft(peer_id) => {
                         info!(peer = %peer_id, "NeighborDown → forwarding to UI");
                         let _ = evt_tx.send(NetEvent::PeerLeft(peer_id));
+                    }
+                    onyx_net::mesh::MeshEvent::StreamEnded => {
+                        warn!("gossip stream ended — will attempt re-subscription");
+                        stream_ended = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Handle stream-ended outside the borrow of mesh_rx
+        if stream_ended {
+            gossip_sender = None;
+            mesh_rx = None;
+
+            // Auto re-subscribe if we have a node + room secret
+            if let (Some(ref n), Some(ref secret)) = (&node, &active_room_secret) {
+                let relay_id = protocol::relay_endpoint_id();
+                info!("re-subscribing to mesh after stream loss...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                match ShadowMesh::join(n.gossip(), secret, vec![relay_id]).await {
+                    Ok(mesh) => {
+                        let (sender, rx) = mesh.spawn_receiver();
+                        gossip_sender = Some(sender);
+                        mesh_rx = Some(rx);
+                        info!("re-subscribed to mesh successfully");
+                    }
+                    Err(e) => {
+                        warn!(%e, "failed to re-subscribe, will retry on next poll");
+                        let _ = evt_tx.send(NetEvent::Error(
+                            format!("Gossip stream lost, reconnect failed: {e}"),
+                        ));
                     }
                 }
             }

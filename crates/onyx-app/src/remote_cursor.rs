@@ -42,6 +42,15 @@ script_mod! {
             let pulse = sin(self.time * 3.14159) * 0.12 + 0.88
 
             let alpha = clamp((bar + glow) * pulse, 0.0, 1.0)
+
+            // ── Hard discard — kill the "invisible box" artifact ──
+            // When opacity is negligible, don't even attempt to draw
+            // the pixel. This prevents the R8 SDF logic from lifting
+            // a near-zero alpha into a visible block.
+            if alpha < 0.01 {
+                return vec4(0.0, 0.0, 0.0, 0.0)
+            }
+
             return Pal.premul(vec4(self.cursor_color.rgb, alpha))
         }
     }
