@@ -51,6 +51,7 @@ typst-render = "0.12"
 # ── Data / Serialization ──
 rkyv  = { version = "0.8", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # ── Storage ──
 surrealdb = { version = "2", default-features = false, features = ["kv-mem"] }
@@ -69,6 +70,17 @@ futures-lite = "2"
 # ── Audio / Voice (Phase 3: The Senses) ──
 cpal      = "0.15"
 audiopus  = "0.3.0-rc.0"
+
+# ── Neural Index (Semantic Memory) ──
+candle-core         = "0.8"
+candle-nn           = "0.8"
+candle-transformers = "0.8"
+tokenizers          = { version = "0.20", default-features = false, features = ["onig"] }
+hf-hub              = "0.3"
+
+# ── The Vault (Encryption at Rest) ──
+chacha20poly1305 = "0.10"
+argon2           = "0.5"
 
 # ── Async ──
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }

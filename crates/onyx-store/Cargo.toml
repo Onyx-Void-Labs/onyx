@@ -8,6 +8,8 @@ authors.workspace = true
 [features]
 default = []
 surrealdb-backend = ["dep:surrealdb", "dep:tokio"]
+neural = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:hf-hub", "dep:serde_json"]
+vault = ["dep:chacha20poly1305", "dep:argon2", "dep:rand"]
 
 [dependencies]
 onyx-core = { workspace = true }
@@ -20,3 +22,16 @@ tokio     = { workspace = true, optional = true }
 tracing   = { workspace = true }
 thiserror = { workspace = true }
 anyhow    = { workspace = true }
+
+# Neural Index (Semantic Memory) — optional
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+hf-hub              = { workspace = true, optional = true }
+serde_json          = { workspace = true, optional = true }
+
+# The Vault (Encryption at Rest) — optional
+chacha20poly1305 = { workspace = true, optional = true }
+argon2           = { workspace = true, optional = true }
+rand             = { workspace = true, optional = true }

@@ -604,16 +604,18 @@ impl App {
                 net.send_control(hb);
             }
 
-            // ── Heartbeat TTL expiry (10 seconds) ──
+            // ── Heartbeat TTL expiry (15 seconds = 3 missed heartbeats) ──
+            // Only disconnect peers on actual network failure (3 consecutive
+            // missed heartbeats), NOT because the user is idle.
             let now = Instant::now();
             let expired: Vec<String> = self
                 .peer_last_seen
                 .iter()
-                .filter(|(_, last)| now.duration_since(**last).as_secs() >= 10)
+                .filter(|(_, last)| now.duration_since(**last).as_secs() >= 15)
                 .map(|(id, _)| id.clone())
                 .collect();
             for peer_id in expired {
-                tracing::warn!(peer = %peer_id, "peer expired (10s heartbeat TTL)");
+                tracing::warn!(peer = %peer_id, "peer expired (15s — 3 missed heartbeats)");
                 self.peer_last_seen.remove(&peer_id);
                 self.peers.retain(|p| p != &peer_id);
                 self.update_peers_display(cx);

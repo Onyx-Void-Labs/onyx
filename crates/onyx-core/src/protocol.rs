@@ -78,7 +78,7 @@ pub const CTRL_MAGIC: u8 = 0xCC;
 /// Goodbye — peer is gracefully leaving the mesh.
 pub const CTRL_GOODBYE: u8 = 0x01;
 
-/// Heartbeat — peer is still alive (resets 10s TTL).
+/// Heartbeat — peer is still alive (resets 15s TTL, 3 missed = disconnect).
 pub const CTRL_HEARTBEAT: u8 = 0x02;
 
 /// Media datagram — voice/audio frame (MoQ Phase 3).

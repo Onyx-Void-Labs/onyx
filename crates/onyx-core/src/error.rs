@@ -34,6 +34,14 @@ pub enum OnyxError {
     #[error("identity error: {0}")]
     Identity(String),
 
+    // ── Neural Index (Semantic Memory) ──
+    #[error("neural index error: {0}")]
+    NeuralIndex(String),
+
+    // ── Vault (Encryption) ──
+    #[error("vault error: {0}")]
+    Vault(String),
+
     // ── Generic ──
     #[error(transparent)]
     Other(#[from] anyhow::Error),
