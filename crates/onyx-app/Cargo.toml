@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-full = ["onyx-math/typst-backend", "onyx-store/surrealdb-backend"]
+full = ["onyx-math/typst-backend", "onyx-store/surrealdb-backend", "voice"]
 voice = ["cpal", "audiopus"]
 
 [dependencies]

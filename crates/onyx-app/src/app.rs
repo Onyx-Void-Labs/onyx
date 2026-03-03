@@ -363,9 +363,14 @@ impl App {
             &format!("Void Active  Ln {} Col {}", line, col),
         );
 
-        // Sync status
+        // Sync status — reports TEXT mesh peers only (decoupled from voice state)
+        let visible_peer_count = self
+            .peers
+            .iter()
+            .filter(|p| *p != &self.relay_node_id)
+            .count();
         let sync_text = if self.connected {
-            format!("Iroh mesh  {} peers", self.peers.len())
+            format!("Iroh mesh  {} text peers", visible_peer_count)
         } else {
             "Loro in-memory".to_string()
         };
@@ -582,12 +587,31 @@ impl App {
                     }
                     MediaEvent::Error(msg) => {
                         tracing::error!("MediaEngine error: {msg}");
+                        // Graceful degradation: shut down the failed media
+                        // engine but do NOT touch mesh peers or connection
+                        // state — text sync is independent of voice.
+                        self.voice_active = false;
                         self.ui
                             .label(cx, ids!(voice_status))
                             .set_text(cx, &format!("Voice err: {msg}"));
+                        // Clean up the broken engine so the user can retry.
+                        // (We can't borrow `self.media_engine` mutably here
+                        //  because we're iterating its events, so flag for
+                        //  cleanup after the drain loop.)
                     }
                 }
             }
+        }
+
+        // Post-drain cleanup: if a MediaEvent::Error set voice_active = false,
+        // tear down the engine without disturbing the mesh peer state.
+        if !self.voice_active && self.media_engine.is_some() {
+            if let Some(ref engine) = self.media_engine {
+                engine.stop();
+                engine.shutdown();
+            }
+            self.media_engine = None;
+            tracing::info!("MediaEngine cleaned up after error — mesh peers unaffected");
         }
 
         let Some(ref net) = self.net else { return };

@@ -211,27 +211,29 @@ fn media_loop(
     let output_device = host.default_output_device();
 
     // Query the native input config (sample rate the hardware actually wants).
-    let (input_native_rate, input_channels) = if let Some(ref dev) = input_device {
+    let (input_native_rate, input_channels, input_sample_format) = if let Some(ref dev) = input_device {
         match dev.default_input_config() {
             Ok(cfg) => {
                 let rate = cfg.sample_rate().0;
                 let ch = cfg.channels();
+                let fmt = cfg.sample_format();
                 info!(
                     name = %dev.name().unwrap_or_default(),
                     sample_rate = rate,
                     channels = ch,
+                    sample_format = ?fmt,
                     "input device (native config)"
                 );
-                (rate, ch)
+                (rate, ch, fmt)
             }
             Err(e) => {
-                warn!(%e, "failed to query input config, falling back to 48kHz mono");
-                (OPUS_RATE, 1)
+                warn!(%e, "failed to query input config, falling back to 48kHz mono F32");
+                (OPUS_RATE, 1, cpal::SampleFormat::F32)
             }
         }
     } else {
         warn!("no input audio device available");
-        (OPUS_RATE, 1)
+        (OPUS_RATE, 1, cpal::SampleFormat::F32)
     };
 
     // Query the native output config.
@@ -334,41 +336,94 @@ fn media_loop(
                 }
 
                 // — cpal input stream (microphone) —
-                // Uses the NATIVE rate/channels the hardware prefers.
+                // Build the stream matching the device's native sample format
+                // to avoid silent stream drops.  Many devices (especially
+                // Windows WASAPI) prefer i16; others prefer f32.
                 if let Some(ref device) = input_device {
                     let cfg = cpal::StreamConfig {
                         channels: input_channels,
                         sample_rate: cpal::SampleRate(input_native_rate),
                         buffer_size: cpal::BufferSize::Default,
                     };
-                    let tx = pcm_tx.clone();
-                    let ch = input_channels;
-                    let native_frame = input_native_frame_size;
-                    let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
 
-                    match device.build_input_stream(
-                        &cfg,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            // Downmix to mono if device is stereo/multichannel.
-                            if ch > 1 {
-                                for chunk in data.chunks(ch as usize) {
-                                    let mono: f32 =
-                                        chunk.iter().sum::<f32>() / ch as f32;
-                                    acc.push(mono);
-                                }
-                            } else {
-                                acc.extend_from_slice(data);
-                            }
-                            // Emit complete frames at the native frame size.
-                            while acc.len() >= native_frame {
-                                let frame: Vec<f32> =
-                                    acc.drain(..native_frame).collect();
-                                let _ = tx.send(frame);
-                            }
-                        },
-                        |err| error!("cpal input error: {err}"),
-                        None,
-                    ) {
+                    let build_result = match input_sample_format {
+                        cpal::SampleFormat::I16 => {
+                            // ── i16 native path ──
+                            // Convert i16 → f32 properly inside the callback
+                            // to prevent silent stream drops on i16-native devices.
+                            info!("building i16 input stream (native format)");
+                            let tx = pcm_tx.clone();
+                            let ch = input_channels;
+                            let native_frame = input_native_frame_size;
+                            let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
+
+                            device.build_input_stream(
+                                &cfg,
+                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                    // Convert i16 samples to f32 [-1.0, 1.0].
+                                    // i16 range is [-32768, 32767]; dividing by
+                                    // 32768.0 maps to [-1.0, ~0.99997].
+                                    if ch > 1 {
+                                        for chunk in data.chunks(ch as usize) {
+                                            let mono: f32 = chunk
+                                                .iter()
+                                                .map(|&s| s as f32 / 32768.0)
+                                                .sum::<f32>()
+                                                / ch as f32;
+                                            acc.push(mono);
+                                        }
+                                    } else {
+                                        for &s in data {
+                                            acc.push(s as f32 / 32768.0);
+                                        }
+                                    }
+                                    while acc.len() >= native_frame {
+                                        let frame: Vec<f32> =
+                                            acc.drain(..native_frame).collect();
+                                        let _ = tx.send(frame);
+                                    }
+                                },
+                                |err| error!("cpal input error: {err}"),
+                                None,
+                            )
+                        }
+                        _ => {
+                            // ── f32 path (default / U16 / other) ──
+                            info!(
+                                format = ?input_sample_format,
+                                "building f32 input stream"
+                            );
+                            let tx = pcm_tx.clone();
+                            let ch = input_channels;
+                            let native_frame = input_native_frame_size;
+                            let mut acc: Vec<f32> = Vec::with_capacity(native_frame * 2);
+
+                            device.build_input_stream(
+                                &cfg,
+                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                    // Downmix to mono if device is stereo/multichannel.
+                                    if ch > 1 {
+                                        for chunk in data.chunks(ch as usize) {
+                                            let mono: f32 =
+                                                chunk.iter().sum::<f32>() / ch as f32;
+                                            acc.push(mono);
+                                        }
+                                    } else {
+                                        acc.extend_from_slice(data);
+                                    }
+                                    while acc.len() >= native_frame {
+                                        let frame: Vec<f32> =
+                                            acc.drain(..native_frame).collect();
+                                        let _ = tx.send(frame);
+                                    }
+                                },
+                                |err| error!("cpal input error: {err}"),
+                                None,
+                            )
+                        }
+                    };
+
+                    match build_result {
                         Ok(stream) => {
                             // Explicitly call play() — some backends start paused.
                             match stream.play() {
@@ -380,6 +435,7 @@ fn media_loop(
                                 sample_rate = input_native_rate,
                                 channels = input_channels,
                                 frame_size = input_native_frame_size,
+                                sample_format = ?input_sample_format,
                                 "cpal input stream started (native config)"
                             );
                         }
