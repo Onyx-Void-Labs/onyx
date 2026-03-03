@@ -16,6 +16,9 @@ onyx-core = { workspace = true }
 iroh        = { workspace = true }
 iroh-gossip = { workspace = true }
 
+# Wire format
+bytes = { workspace = true }
+
 # Async runtime (relay needs multi-thread for concurrent connections)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 futures-lite = { workspace = true }

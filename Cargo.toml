@@ -67,7 +67,8 @@ rand        = "0.9"
 futures-lite = "2"
 
 # ── Audio / Voice (Phase 3: The Senses) ──
-cpal = "0.15"
+cpal      = "0.15"
+audiopus  = "0.3.0-rc.0"
 
 # ── Async ──
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }

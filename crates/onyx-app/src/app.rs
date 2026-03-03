@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::net_bridge::{NetBridge, NetEvent};
+use crate::media_engine::{MediaEngine, MediaEvent};
 
 // --- DSL: The Void UI ---
 
@@ -296,6 +297,9 @@ pub struct App {
     /// Whether the MoQ voice engine is active.
     #[rust]
     voice_active: bool,
+    /// The media engine handle (spawned when voice is toggled ON).
+    #[rust]
+    media_engine: Option<MediaEngine>,
 }
 
 impl App {
@@ -313,6 +317,7 @@ impl App {
         app.peer_last_seen = HashMap::new();
         app.heartbeat_counter = 0;
         app.voice_active = false;
+        app.media_engine = None;
         app
     }
 
@@ -559,6 +564,32 @@ impl App {
 
     /// Process incoming network events.
     fn poll_network(&mut self, cx: &mut Cx) {
+        // ── Drain MediaEngine events → forward to NetBridge ──
+        if let Some(ref engine) = self.media_engine {
+            for evt in engine.drain_events() {
+                match evt {
+                    MediaEvent::AudioFrame(opus_frame) => {
+                        // Forward encoded audio to the network.
+                        if let Some(ref net) = self.net {
+                            net.send_media_datagram(opus_frame);
+                        }
+                    }
+                    MediaEvent::CaptureStarted => {
+                        tracing::info!("MediaEngine: capture started");
+                    }
+                    MediaEvent::CaptureStopped => {
+                        tracing::info!("MediaEngine: capture stopped");
+                    }
+                    MediaEvent::Error(msg) => {
+                        tracing::error!("MediaEngine error: {msg}");
+                        self.ui
+                            .label(cx, ids!(voice_status))
+                            .set_text(cx, &format!("Voice err: {msg}"));
+                    }
+                }
+            }
+        }
+
         let Some(ref net) = self.net else { return };
         let events = net.drain_events();
 
@@ -627,6 +658,18 @@ impl App {
                     // Reset the peer's TTL
                     if self.peers.contains(&peer_id) {
                         self.peer_last_seen.insert(peer_id, Instant::now());
+                    }
+                }
+                NetEvent::MediaStarted => {
+                    tracing::info!("media QUIC connection established with relay");
+                    self.ui
+                        .label(cx, ids!(voice_status))
+                        .set_text(cx, "Voice: ON (live)");
+                }
+                NetEvent::MediaDatagramReceived { from, data } => {
+                    // Forward incoming Opus frames to the MediaEngine for decode + playback.
+                    if let Some(ref engine) = self.media_engine {
+                        engine.receive_audio(from, data);
                     }
                 }
                 NetEvent::DeltaReceived(raw_bytes) => {
@@ -727,6 +770,12 @@ impl MatchEvent for App {
         // -- Disconnect button --
         if self.ui.button(cx, ids!(disconnect_button)).clicked(actions) {
             tracing::info!("Disconnect clicked");
+            // Shutdown media engine if active
+            if let Some(ref engine) = self.media_engine {
+                engine.stop();
+                engine.shutdown();
+            }
+            self.media_engine = None;
             if let Some(ref net) = self.net {
                 net.disconnect();
             }
@@ -751,14 +800,36 @@ impl MatchEvent for App {
             cx.redraw_all();
         }
 
-        // -- Voice toggle button (Phase 3 stub) --
+        // -- Voice toggle button (Phase 3) --
         if self.ui.button(cx, ids!(voice_button)).clicked(actions) {
             self.voice_active = !self.voice_active;
             let status = if self.voice_active {
-                tracing::info!("Voice chat ENABLED (MediaEngine starting)");
+                tracing::info!("Voice chat ENABLED — spawning MediaEngine");
+
+                // Spawn the media engine
+                let engine = MediaEngine::spawn();
+                engine.start();
+                self.media_engine = Some(engine);
+
+                // Tell NetBridge to open a media QUIC connection
+                if let Some(ref net) = self.net {
+                    net.start_media();
+                }
                 "Voice: ON (Opus/QUIC)"
             } else {
-                tracing::info!("Voice chat DISABLED");
+                tracing::info!("Voice chat DISABLED — shutting down MediaEngine");
+
+                // Shutdown media engine
+                if let Some(ref engine) = self.media_engine {
+                    engine.stop();
+                    engine.shutdown();
+                }
+                self.media_engine = None;
+
+                // Tell NetBridge to close media connection
+                if let Some(ref net) = self.net {
+                    net.stop_media();
+                }
                 "Voice: OFF"
             };
             self.ui

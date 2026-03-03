@@ -9,6 +9,7 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 mod app;
+mod media_engine;
 mod net_bridge;
 mod remote_cursor;
 

@@ -23,6 +23,12 @@ pub enum NetCommand {
     SendDelta(Vec<u8>),
     /// Broadcast a raw control message (no ZSTD compression).
     SendControl(Vec<u8>),
+    /// Open a QUIC media connection to the relay for voice datagrams.
+    StartMedia,
+    /// Close the media connection.
+    StopMedia,
+    /// Send an Opus frame as a QUIC unreliable datagram.
+    SendMediaDatagram(Vec<u8>),
     /// Leave the mesh and shut down.
     Disconnect,
 }
@@ -43,6 +49,10 @@ pub enum NetEvent {
     GoodbyeReceived(String),
     /// A peer sent a Heartbeat — reset their TTL.
     HeartbeatReceived(String),
+    /// Media QUIC connection established with the relay.
+    MediaStarted,
+    /// Received an Opus audio frame from a remote peer.
+    MediaDatagramReceived { from: String, data: Vec<u8> },
     /// An error occurred on the network side.
     Error(String),
 }
@@ -98,6 +108,21 @@ impl NetBridge {
     /// Disconnect from the mesh.
     pub fn disconnect(&self) {
         let _ = self.cmd_tx.send(NetCommand::Disconnect);
+    }
+
+    /// Start the media (voice) QUIC datagram connection.
+    pub fn start_media(&self) {
+        let _ = self.cmd_tx.send(NetCommand::StartMedia);
+    }
+
+    /// Stop the media connection.
+    pub fn stop_media(&self) {
+        let _ = self.cmd_tx.send(NetCommand::StopMedia);
+    }
+
+    /// Send an Opus-encoded frame as a QUIC unreliable datagram.
+    pub fn send_media_datagram(&self, opus_frame: Vec<u8>) {
+        let _ = self.cmd_tx.send(NetCommand::SendMediaDatagram(opus_frame));
     }
 
     /// Drain all pending events from the network thread.
@@ -178,7 +203,7 @@ async fn network_loop(
     evt_tx: mpsc::Sender<NetEvent>,
 ) {
     use onyx_core::identity::VoidIdentity;
-    use onyx_core::protocol::{self, PubSubMsg, ONYX_PUBSUB_ALPN};
+    use onyx_core::protocol::{self, PubSubMsg, ONYX_MEDIA_ALPN, ONYX_PUBSUB_ALPN};
     use onyx_net::{OnyxNode, ShadowMesh};
 
     info!("network bridge loop started");
@@ -192,6 +217,11 @@ async fn network_loop(
     // If this is dropped, QUIC closes the connection and the relay
     // sees a disconnect 12ms later.
     let mut _relay_conn: Option<iroh::endpoint::Connection> = None;
+
+    // ── Media (voice) datagram connection ──
+    // Separate QUIC connection to the relay using ONYX_MEDIA_ALPN.
+    // Datagrams flow unreliably — no head-of-line blocking.
+    let mut media_conn: Option<iroh::endpoint::Connection> = None;
 
     // ── In-Flight Batching ──
     // Stores a non-delta command that was pulled off the channel
@@ -385,6 +415,104 @@ async fn network_loop(
                         }
                     }
                 }
+
+                // ── Media datagram commands ──────────────────────
+
+                NetCommand::StartMedia => {
+                    if media_conn.is_some() {
+                        info!("media connection already active");
+                        let _ = evt_tx.send(NetEvent::MediaStarted);
+                        continue;
+                    }
+                    if let Some(ref n) = node {
+                        let relay_id = protocol::relay_endpoint_id();
+                        info!(%relay_id, "opening media QUIC connection to relay");
+
+                        match n.endpoint().connect(relay_id, ONYX_MEDIA_ALPN).await {
+                            Ok(conn) => {
+                                info!("media QUIC connection established");
+
+                                // Spawn a task to read incoming datagrams
+                                let conn2 = conn.clone();
+                                let evt_tx2 = evt_tx.clone();
+                                tokio::spawn(async move {
+                                    info!("media datagram reader started");
+                                    loop {
+                                        match conn2.read_datagram().await {
+                                            Ok(datagram) => {
+                                                let raw = datagram.to_vec();
+                                                // Wire format: [32B topic][32B sender][opus]
+                                                if raw.len() < 65 {
+                                                    continue; // too short
+                                                }
+                                                // Extract sender NodeId (bytes 32..64)
+                                                let sender_bytes = &raw[32..64];
+                                                let from = match <iroh::EndpointId as std::convert::TryFrom<&[u8]>>::try_from(sender_bytes) {
+                                                    Ok(key) => key.to_string(),
+                                                    Err(_) => {
+                                                        warn!("invalid sender key in media datagram");
+                                                        continue;
+                                                    }
+                                                };
+                                                let opus_data = raw[64..].to_vec();
+                                                let _ = evt_tx2.send(NetEvent::MediaDatagramReceived {
+                                                    from,
+                                                    data: opus_data,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                info!(%e, "media datagram reader stopped");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                });
+
+                                media_conn = Some(conn);
+                                let _ = evt_tx.send(NetEvent::MediaStarted);
+                            }
+                            Err(e) => {
+                                let msg = format!("failed to open media connection: {e}");
+                                warn!("{msg}");
+                                let _ = evt_tx.send(NetEvent::Error(msg));
+                            }
+                        }
+                    } else {
+                        let _ = evt_tx.send(NetEvent::Error(
+                            "cannot start media: not connected to mesh".into(),
+                        ));
+                    }
+                }
+
+                NetCommand::StopMedia => {
+                    if let Some(conn) = media_conn.take() {
+                        info!("closing media connection");
+                        conn.close(0u32.into(), b"voice stopped");
+                    }
+                }
+
+                NetCommand::SendMediaDatagram(opus_frame) => {
+                    if let (Some(ref conn), Some(ref secret), Some(ref n)) =
+                        (&media_conn, &active_room_secret, &node)
+                    {
+                        let topic = protocol::topic_from_secret(secret);
+                        let our_id = n.id();
+
+                        // Wire format: [32B topic][32B sender][opus]
+                        let mut datagram =
+                            Vec::with_capacity(64 + opus_frame.len());
+                        datagram.extend_from_slice(&topic);
+                        datagram.extend_from_slice(our_id.as_bytes());
+                        datagram.extend_from_slice(&opus_frame);
+
+                        if let Err(e) =
+                            conn.send_datagram(bytes::Bytes::from(datagram))
+                        {
+                            trace!(%e, "media datagram send failed");
+                        }
+                    }
+                }
+
                 NetCommand::Disconnect => {
                     info!("disconnecting from mesh — broadcasting Goodbye");
                     // Broadcast Goodbye before leaving so peers remove us instantly
@@ -399,6 +527,10 @@ async fn network_loop(
                     gossip_sender = None;
                     mesh_rx = None;
                     _relay_conn = None;
+                    // Close media connection if active
+                    if let Some(conn) = media_conn.take() {
+                        conn.close(0u32.into(), b"disconnect");
+                    }
                     if let Some(ref n) = node {
                         n.shutdown().await;
                     }

@@ -31,7 +31,7 @@ use iroh::Endpoint;
 use iroh_gossip::Gossip;
 use onyx_core::identity::VoidIdentity;
 use onyx_core::protocol::{PubSubMsg, ONYX_MEDIA_ALPN, ONYX_PUBSUB_ALPN};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{info, warn};
@@ -339,16 +339,21 @@ impl iroh::protocol::ProtocolHandler for PubSubReflector {
 //
 // When a peer sends a media datagram, the relay broadcasts it to
 // all other peers in the same room — WITHOUT decoding the Opus
-// payload. This is pure packet reflection at the QUIC layer.
+// payload.  This is pure packet reflection at the QUIC layer.
 //
 // Wire format per datagram:
-//   [32B topic_hash] [8B sender_id_prefix] [2B sequence] [N bytes opus frame]
+//   [32B topic_hash] [32B sender_node_id] [N bytes opus frame]
 //
-// The reflector uses QUIC Unreliable Datagrams (0-RTT) to avoid
+// The reflector uses QUIC Unreliable Datagrams to avoid
 // head-of-line blocking. Lost audio frames are simply skipped.
 
+/// Active media connections grouped by topic, shared across tasks.
+type MediaRooms = Arc<TokioMutex<
+    HashMap<[u8; 32], Vec<(iroh::EndpointId, iroh::endpoint::Connection)>>,
+>>;
+
 struct MediaReflector {
-    hall: Arc<GiantHall>,
+    rooms: MediaRooms,
 }
 
 impl std::fmt::Debug for MediaReflector {
@@ -358,8 +363,10 @@ impl std::fmt::Debug for MediaReflector {
 }
 
 impl MediaReflector {
-    fn new(hall: Arc<GiantHall>) -> Self {
-        Self { hall }
+    fn new() -> Self {
+        Self {
+            rooms: Arc::new(TokioMutex::new(HashMap::new())),
+        }
     }
 
     /// Handle a media connection from a single peer.
@@ -373,15 +380,14 @@ impl MediaReflector {
         let peer = conn.remote_id();
         info!(%peer, "media peer connected");
 
-        // Read datagrams in a loop and reflect to other subscribers.
-        // Datagrams are unreliable — if the connection drops, we
-        // simply stop reflecting.
+        let mut registered_topic: Option<[u8; 32]> = None;
+
         loop {
             match conn.read_datagram().await {
                 Ok(datagram) => {
                     let data = datagram.to_vec();
-                    if data.len() < 42 {
-                        // Minimum: 32B topic + 8B sender + 2B seq
+                    // Minimum: 32B topic + 32B sender + at least 1B opus payload
+                    if data.len() < 65 {
                         warn!(%peer, len = data.len(), "media datagram too short");
                         continue;
                     }
@@ -392,23 +398,62 @@ impl MediaReflector {
                     tracing::trace!(
                         %peer,
                         topic = hex_short(&topic),
-                        frame_bytes = data.len() - 42,
+                        frame_bytes = data.len() - 64,
                         "reflecting media datagram"
                     );
 
-                    // The hall knows who is subscribed to this topic.
-                    // We don't decode the audio — just reflect the raw
-                    // datagram to all other subscribers.
-                    // NOTE: Full reflection requires tracking active media
-                    // connections per topic. For the architectural groundwork,
-                    // we log and buffer the event.
-                    self.hall.publish(topic, peer, data);
+                    // Register this connection for the topic on first datagram.
+                    if registered_topic.is_none() {
+                        let mut rooms = self.rooms.lock().await;
+                        rooms
+                            .entry(topic)
+                            .or_insert_with(Vec::new)
+                            .push((peer, conn.clone()));
+                        registered_topic = Some(topic);
+                        info!(
+                            %peer,
+                            topic = hex_short(&topic),
+                            "registered for media topic"
+                        );
+                    }
+
+                    // Reflect to all OTHER connections on this topic.
+                    {
+                        let rooms = self.rooms.lock().await;
+                        if let Some(peers) = rooms.get(&topic) {
+                            let payload = bytes::Bytes::from(data);
+                            for (pid, pconn) in peers {
+                                if *pid == peer {
+                                    continue; // don't echo back to sender
+                                }
+                                if let Err(e) = pconn.send_datagram(payload.clone()) {
+                                    tracing::trace!(
+                                        peer = %pid,
+                                        %e,
+                                        "failed to reflect datagram (peer may have disconnected)"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     info!(%peer, %e, "media connection closed");
                     break;
                 }
             }
+        }
+
+        // Clean up: remove this connection from the room.
+        if let Some(topic) = registered_topic {
+            let mut rooms = self.rooms.lock().await;
+            if let Some(peers) = rooms.get_mut(&topic) {
+                peers.retain(|(id, _)| *id != peer);
+                if peers.is_empty() {
+                    rooms.remove(&topic);
+                }
+            }
+            info!(%peer, topic = hex_short(&topic), "removed from media topic");
         }
 
         Ok(())
@@ -482,7 +527,7 @@ async fn main() -> anyhow::Result<()> {
     let reflector = Arc::new(PubSubReflector::new(Arc::clone(&hall), gossip.clone()));
 
     // ── MoQ Media Reflector ──
-    let media_reflector = Arc::new(MediaReflector::new(Arc::clone(&hall)));
+    let media_reflector = Arc::new(MediaReflector::new());
 
     // ── Router ──
     // Both gossip and PubSub are handled through the Router so there
