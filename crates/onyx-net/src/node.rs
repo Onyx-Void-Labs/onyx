@@ -11,11 +11,16 @@
 // the application interacts with.
 // ────────────────────────────────────────────────────────────────────
 
+use iroh::address_lookup::memory::MemoryLookup;
+use iroh::endpoint::presets::N0;
+use iroh::endpoint_info::EndpointInfo;
 use iroh::protocol::Router;
 use iroh::Endpoint;
 use iroh_gossip::Gossip;
 use onyx_core::identity::VoidIdentity;
-use onyx_core::protocol::ONYX_SYNC_ALPN;
+use onyx_core::protocol::{ONYX_SYNC_ALPN, RELAY_VPS_IP, RELAY_VPS_PORT};
+use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
@@ -47,8 +52,10 @@ impl OnyxNode {
         // Convert our identity to iroh's SecretKey
         let secret_key = identity.secret_key().clone();
 
-        // Build the iroh endpoint with our persistent identity
+        // Build the iroh endpoint with the N0 preset for relay +
+        // address discovery, plus our persistent identity.
         let endpoint = Endpoint::builder()
+            .preset(N0)
             .secret_key(secret_key)
             .alpns(vec![
                 ONYX_SYNC_ALPN.to_vec(),
@@ -59,7 +66,24 @@ impl OnyxNode {
 
         info!(
             endpoint_id = %endpoint.id(),
-            "iroh endpoint bound"
+            "iroh endpoint bound (N0 preset)"
+        );
+
+        // ── Register the well-known relay (RackNerd VPS) ──
+        // This tells the endpoint how to reach the relay node
+        // so gossip can bootstrap through it.
+        let relay_id = onyx_core::protocol::relay_endpoint_id();
+        let relay_addrs: BTreeSet<SocketAddr> =
+            [SocketAddr::from((RELAY_VPS_IP, RELAY_VPS_PORT))].into_iter().collect();
+        let relay_info = EndpointInfo::new(relay_id)
+            .with_ip_addrs(relay_addrs);
+        let memory = MemoryLookup::new();
+        memory.set_endpoint_info(relay_info);
+        endpoint.address_lookup().add(memory);
+        info!(
+            relay_id = %relay_id,
+            relay_addr = %format!("{}:{}", std::net::Ipv4Addr::from(RELAY_VPS_IP), RELAY_VPS_PORT),
+            "registered relay bootstrap node"
         );
 
         // Spawn the gossip protocol

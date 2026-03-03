@@ -93,10 +93,10 @@ impl ShadowMesh {
     /// Spawn a background task that reads incoming gossip messages
     /// and forwards them to a channel for processing.
     ///
-    /// Returns a receiver that yields (peer_id, compressed_delta) tuples.
+    /// Returns a receiver that yields mesh events (deltas + peer join/leave).
     pub fn spawn_receiver(
         mut self,
-    ) -> (GossipSender, mpsc::Receiver<IncomingDelta>) {
+    ) -> (GossipSender, mpsc::Receiver<MeshEvent>) {
         let (tx, rx) = mpsc::channel(256);
         let sender = self.sender;
 
@@ -104,20 +104,22 @@ impl ShadowMesh {
             while let Some(event) = self.receiver.next().await {
                 match event {
                     Ok(iroh_gossip::api::Event::Received(msg)) => {
-                        let delta = IncomingDelta {
+                        let evt = MeshEvent::Delta(IncomingDelta {
                             from: msg.delivered_from,
                             data: msg.content.to_vec(),
-                        };
-                        if tx.send(delta).await.is_err() {
+                        });
+                        if tx.send(evt).await.is_err() {
                             debug!("mesh receiver closed, stopping gossip loop");
                             break;
                         }
                     }
                     Ok(iroh_gossip::api::Event::NeighborUp(peer)) => {
-                        info!(peer = %peer, "peer joined the mesh");
+                        info!(peer = %peer, "peer joined the mesh (NeighborUp)");
+                        let _ = tx.send(MeshEvent::PeerJoined(peer.to_string())).await;
                     }
                     Ok(iroh_gossip::api::Event::NeighborDown(peer)) => {
-                        warn!(peer = %peer, "peer left the mesh");
+                        warn!(peer = %peer, "peer left the mesh (NeighborDown)");
+                        let _ = tx.send(MeshEvent::PeerLeft(peer.to_string())).await;
                     }
                     Ok(iroh_gossip::api::Event::Lagged) => {
                         warn!("gossip receiver lagged — some messages may be lost");
@@ -143,6 +145,17 @@ impl ShadowMesh {
     pub fn topic_id(&self) -> TopicId {
         self.topic_id
     }
+}
+
+/// Events coming from the gossip mesh.
+#[derive(Debug, Clone)]
+pub enum MeshEvent {
+    /// Received a CRDT delta from a peer.
+    Delta(IncomingDelta),
+    /// A peer joined the mesh (NeighborUp). Contains their NodeId string.
+    PeerJoined(String),
+    /// A peer left the mesh (NeighborDown). Contains their NodeId string.
+    PeerLeft(String),
 }
 
 /// An incoming CRDT delta from a peer.

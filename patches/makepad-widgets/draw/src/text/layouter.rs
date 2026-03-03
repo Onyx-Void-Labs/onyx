@@ -140,7 +140,11 @@ impl Default for Settings {
                         max_outline_commands: 180,
                         max_estimated_segments: 1000,
                     },
-                    outline_rasterization_mode: rasterizer::OutlineRasterizationMode::Msdf,
+                    // R8 atlas has only one channel — MSDF needs at least 4
+                    // (B, G, R for multi-channel distance + A for SDF fallback).
+                    // Force SDF-only to prevent the MSDF shader path from
+                    // reading alpha = 0xFF and rendering solid blocks.
+                    outline_rasterization_mode: rasterizer::OutlineRasterizationMode::Sdf,
                     atlas_size: Size::new(4096, 4096),
                 },
             },

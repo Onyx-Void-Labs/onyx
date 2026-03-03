@@ -1,131 +1,229 @@
-// ─── Makepad Application Shell ─────────────────────────────────────
-// Root Makepad app. Owns the widget tree and the Tokio runtime
-// (for async DB operations).
+﻿// --- Makepad Application Shell ---
+// Root Makepad app. Owns the widget tree and bridges keyboard input
+// to the local EditorBuffer (Rope) + Loro CRDT.
 //
 // Architecture:
 //   OnyxApp
-//     └─ OnyxEditor (custom widget — defined inline for Phase 1)
-//           ├── EditorBuffer   (onyx-editor crate, Rope-backed)
-//           ├── Cursor          (onyx-editor crate)
-//           ├── MathRenderer   (onyx-math crate, stub)
-//           └── Store / CrdtDoc (onyx-store, spawned on Tokio)
-// ────────────────────────────────────────────────────────────────────
+//     +-- Widget Tree (script_mod DSL)
+//           |-- Side Panel       (room code, join button, peer list)
+//           |-- Main Note Area   (editor_label -- text display)
+//           +-- Status Bar       (live char count + sync status)
+//
+//   Keyboard -> EditorBuffer (onyx-editor) --+
+//                                            +-->  Label redraw
+//   Keyboard -> CrdtDoc (onyx-store/Loro) ---+
+//
+//   NetBridge -> Iroh Gossip <-> Remote CrdtDoc
+// ----
 
 use makepad_widgets::*;
+use onyx_editor::{Cursor, EditorBuffer};
+use onyx_store::CrdtDoc;
 
-// TODO: Font atlas memory optimization (1% win):
-//  • switch cosmic-text to SDF or alpha-only glyph cache
-//  • initial atlas 1024×1024, expand sparsely
-//  • the actual implementation must be in makepad-widgets. the AI snippet
-//    would look roughly like:
-//
-//      let atlas_desc = wgpu::TextureDescriptor {
-//          format: wgpu::TextureFormat::R8Unorm, // one byte per texel
-//          size: wgpu::Extent3d { width: 1024, height: 1024, depth_or_array_layers: 1 },
-//          ..Default::default()
-//      };
-//      // shader sample: vec4(color.r,0,0,1)
-//
-//    Changing `draw_text` shader to read `.r` channel is sufficient to cut
-//    font memory by ~75%.
-//
-// TODO: GPU power management for low-RAM mode:
-//  • prefer integrated/low-power adapter
-//  • set swap chain count to 2 (double buffering)
-//  • present mode to Fifo (vs Immediate)
-//  • apply downlevel_limits to device descriptor
-//
-//    Example wgpu configuration (to be placed inside Makepad's platform code):
-//
-//      let adapter_opts = wgpu::RequestAdapterOptions {
-//          power_preference: wgpu::PowerPreference::LowPower,
-//          ..Default::default()
-//      };
-//      let sc_desc = wgpu::SwapChainDescriptor {
-//          present_mode: wgpu::PresentMode::Fifo,
-//          usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-//          width: size.width,
-//          height: size.height,
-//          format: surface_format,
-//          // note: wgpu doesn't expose `max_back_buffer_count` directly; makepad
-//          // would need to call `device.create_swap_chain` with `1` or 2.
-//      };
-//      let limits = wgpu::Limits::downlevel_defaults();
-//      let desc = wgpu::DeviceDescriptor { limits, ..Default::default() };
-//
-//  These changes should trim ~16 MB from the back buffer and eliminate the
-//  enormous driver heap allocations on low-end systems.
+use crate::net_bridge::{NetBridge, NetEvent};
 
-// ─── DSL: The Void UI ────────────────────────────────────────────
+// --- DSL: The Void UI ---
 
-live_design! {
-    use link::theme::*;
-    use link::widgets::*;
+script_mod! {
+    use mod.prelude.widgets.*
 
-    // ── Color palette ──
-    VOID_BG      = #0A0A0F
-    VOID_SURFACE = #12121A
-    VOID_TEXT    = #E0E0E8
-    VOID_ACCENT  = #7B68EE  // Medium Slate Blue
-    VOID_DIM     = #4A4A5A
+    startup() do #(App::script_component(vm)) {
+        ui: Root {
+            main_window := Window {
+                window.inner_size: vec2(1280, 800)
+                pass.clear_color: vec4(0.039, 0.039, 0.059, 1.0)
+                body +: {
+                    flow: Down
+                    spacing: 0
 
-    // ── Root application ──
-    App = {{App}} {
-        ui: <Window> {
-            window: { inner_size: vec2(1280, 800) },
-            show_bg: true,
-            draw_bg: { color: (VOID_BG) }
+                    // -- Title bar --
+                    View {
+                        width: Fill
+                        height: 48
+                        show_bg: true
+                        draw_bg.color: #x12121A
+                        flow: Right
+                        padding: Inset{left: 20, top: 12, right: 20}
+                        spacing: 12
 
-            body = <View> {
-                flow: Down
-                padding: { left: 0, top: 0, right: 0, bottom: 0 }
-                spacing: 0
+                        // Panel toggle
+                        panel_toggle := Button {
+                            text: "<<"
+                            width: 32
+                            height: 28
+                        }
 
-                // ── Title bar ──
-                <View> {
-                    width: Fill
-                    height: 48
-                    show_bg: true
-                    draw_bg: { color: (VOID_SURFACE) }
-                    padding: { left: 20, top: 12 }
+                        Label {
+                            text: "ONYX VOID"
+                            draw_text.color: #x7B68EE
+                            draw_text.text_style.font_size: 14.0
+                        }
 
-                    <Label> {
-                        text: "ONYX VOID"
-                        draw_text: {
-                            color: (VOID_ACCENT)
-                            text_style: { font_size: 14.0 }
+                        View { width: Fill, height: 1 }
+
+                        Label {
+                            text: "Phase 2 -- Telepathic Link"
+                            draw_text.color: #x2A2A3A
+                            draw_text.text_style.font_size: 10.0
                         }
                     }
-                }
 
-                // ── Editor area ──
-                <View> {
-                    width: Fill
-                    height: Fill
-                    padding: { left: 40, top: 30, right: 40, bottom: 30 }
+                    // -- Content row: side panel + divider + editor --
+                    View {
+                        width: Fill
+                        height: Fill
+                        flow: Right
+                        spacing: 0
 
-                    editor_label = <Label> {
-                        text: "Welcome to the Void.\n\nThis is Phase 1 — The Foundation.\nThe editor widget will render here.\n\nPress any key to begin."
-                        draw_text: {
-                            color: (VOID_TEXT)
-                            text_style: { font_size: 13.0 }
+                        // -- Side Panel --
+                        side_panel := View {
+                            width: 220
+                            height: Fill
+                            show_bg: true
+                            draw_bg.color: #x0E0E14
+                            flow: Down
+                            spacing: 8
+                            padding: Inset{left: 16, top: 16, right: 16}
+
+                            Label {
+                                text: "DOCUMENTS"
+                                draw_text.color: #x4A4A5A
+                                draw_text.text_style.font_size: 10.0
+                            }
+
+                            Label {
+                                text: "untitled.void"
+                                draw_text.color: #x7B68EE
+                                draw_text.text_style.font_size: 12.0
+                            }
+
+                            View { width: Fill, height: 16 }
+
+                            Label {
+                                text: "ROOM"
+                                draw_text.color: #x4A4A5A
+                                draw_text.text_style.font_size: 10.0
+                            }
+
+                            room_input := TextInput {
+                                empty_text: "secret room code..."
+                                width: Fill
+                                height: 36
+                                draw_bg.color: #x1A1A24
+                                draw_text.color: #xC0C0D0
+                                draw_text.text_style.font_size: 11.0
+                            }
+
+                            join_button := Button {
+                                text: "Join Void"
+                                width: Fill
+                                height: 32
+                            }
+
+                            View { width: Fill, height: 16 }
+
+                            Label {
+                                text: "PEERS"
+                                draw_text.color: #x4A4A5A
+                                draw_text.text_style.font_size: 10.0
+                            }
+
+                            peers_label := Label {
+                                text: "Not connected"
+                                draw_text.color: #x3A3A4A
+                                draw_text.text_style.font_size: 11.0
+                            }
+                        }
+
+                        // -- Divider --
+                        View {
+                            width: 1
+                            height: Fill
+                            show_bg: true
+                            draw_bg.color: #x1A1A24
+                        }
+
+                        // -- Main Note Area --
+                        editor_area := View {
+                            width: Fill
+                            height: Fill
+                            padding: Inset{left: 48, top: 32, right: 48, bottom: 32}
+
+                            editor_label := Label {
+                                text: ""
+                                draw_text.color: #xE0E0E8
+                                draw_text.text_style.font_size: 13.0
+                            }
+
+                            // GPU-rendered cursor — glowing bar shader
+                            // Covers the entire editor content area.
+                            // The shader uses cursor_x / cursor_y uniforms
+                            // to paint the glow bar at the right position.
+                            cursor_overlay := View {
+                                abs_pos: vec2(0, 0)
+                                width: Fill
+                                height: Fill
+                                show_bg: true
+                                draw_bg: {
+                                    instance cursor_x: 0.0
+                                    instance cursor_y: 0.0
+                                    instance opacity: 1.0
+                                    instance bar_height: 18.0
+
+                                    fn pixel(self) -> vec4 {
+                                        let pos = self.pos * self.rect_size
+
+                                        // Distance from cursor centre
+                                        let dx = abs(pos.x - self.cursor_x)
+                                        let dy = pos.y - self.cursor_y
+
+                                        // Vertical mask: only draw within one line
+                                        let in_line = smoothstep(-1.0, 0.0, dy)
+                                                    * smoothstep(self.bar_height + 1.0, self.bar_height, dy)
+
+                                        // Hard-edge bar (2px wide)
+                                        let bar = smoothstep(2.0, 0.0, dx) * in_line
+
+                                        // Gaussian glow halo
+                                        let sigma = 8.0
+                                        let glow = exp(-(dx * dx) / (2.0 * sigma * sigma)) * 0.25 * in_line
+
+                                        let alpha = clamp((bar + glow) * self.opacity, 0.0, 1.0)
+                                        return Pal.premul(vec4(0.482, 0.408, 0.933, alpha))
+                                    }
+                                }
+                            }
                         }
                     }
-                }
 
-                // ── Status bar ──
-                <View> {
-                    width: Fill
-                    height: 28
-                    show_bg: true
-                    draw_bg: { color: (VOID_SURFACE) }
-                    padding: { left: 20, top: 6 }
+                    // -- Status bar --
+                    View {
+                        width: Fill
+                        height: 28
+                        show_bg: true
+                        draw_bg.color: #x12121A
+                        flow: Right
+                        padding: Inset{left: 20, top: 6, right: 20}
+                        spacing: 24
 
-                    <Label> {
-                        text: "Phase 2 · Telepathic Link · 144Hz · P2P Sync"
-                        draw_text: {
-                            color: (VOID_DIM)
-                            text_style: { font_size: 10.0 }
+                        status_label := Label {
+                            text: "Void Active"
+                            draw_text.color: #x4A4A5A
+                            draw_text.text_style.font_size: 10.0
+                        }
+
+                        status_chars := Label {
+                            text: "0 chars"
+                            draw_text.color: #x4A4A5A
+                            draw_text.text_style.font_size: 10.0
+                        }
+
+                        View { width: Fill, height: 1 }
+
+                        status_sync := Label {
+                            text: "Loro in-memory"
+                            draw_text.color: #x3A3A4A
+                            draw_text.text_style.font_size: 10.0
                         }
                     }
                 }
@@ -134,25 +232,361 @@ live_design! {
     }
 }
 
-// ─── App struct ──────────────────────────────────────────────────
+// --- App struct ---
 
 app_main!(App);
 
-#[derive(Live, LiveHook)]
+#[derive(Script, ScriptHook)]
 pub struct App {
     #[live]
     ui: WidgetRef,
+    #[rust]
+    buffer: EditorBuffer,
+    #[rust]
+    cursor: Cursor,
+    #[rust]
+    crdt: CrdtDoc,
+    #[rust]
+    net: Option<NetBridge>,
+    #[rust]
+    net_timer: Timer,
+    #[rust]
+    peers: Vec<String>,
+    #[rust]
+    connected: bool,
+    #[rust]
+    room_input_focused: bool,
+    #[rust]
+    panel_open: bool,
+    /// Tracks whether display text actually changed to avoid
+    /// re-uploading identical geometry to the GPU.
+    #[rust]
+    last_display_hash: u64,
+    /// Animated cursor position (smoothed via spring interpolation).
+    #[rust]
+    cursor_anim_x: f32,
+    /// Cursor spring velocity.
+    #[rust]
+    cursor_vel: f32,
+    /// Accumulated time for cursor blink animation.
+    #[rust]
+    cursor_time: f64,
+    /// Timer driving the cursor animation at ~60 fps.
+    #[rust]
+    cursor_timer: Timer,
+    /// Whether the cursor timer has been started.
+    #[rust]
+    cursor_timer_started: bool,
 }
 
-impl LiveRegister for App {
-    fn live_register(cx: &mut Cx) {
-        makepad_widgets::live_design(cx);
+impl App {
+    fn run(vm: &mut ScriptVm) -> Self {
+        makepad_widgets::script_mod(vm);
+        let mut app = App::from_script_mod(vm, self::script_mod);
+        app.panel_open = true;
+        app.last_display_hash = 0;
+        app.cursor_anim_x = 0.0;
+        app.cursor_vel = 0.0;
+        app.cursor_time = 0.0;
+        app
+    }
+
+    /// Push the buffer text into the editor label + update status bar.
+    /// Uses a content hash to skip redundant GPU re-uploads (dirty rect).
+    fn sync_display(&mut self, cx: &mut Cx) {
+        let text = self.buffer.text();
+        let display = if text.is_empty() {
+            "Begin typing...".to_string()
+        } else {
+            text.clone()
+        };
+
+        // ── Dirty-rect optimisation ──
+        // Only update the label (which triggers a full layout + GPU upload)
+        // when the display text actually changed.
+        let new_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            display.hash(&mut h);
+            h.finish()
+        };
+        if new_hash != self.last_display_hash {
+            self.last_display_hash = new_hash;
+            self.ui
+                .label(cx, ids!(editor_label))
+                .set_text(cx, &display);
+        }
+
+        // Status: char count
+        self.ui.label(cx, ids!(status_chars)).set_text(
+            cx,
+            &format!("{} chars", self.buffer.len_chars()),
+        );
+
+        // Status: line/col info
+        let buf_text = self.buffer.text();
+        let pos = self.cursor.pos.min(buf_text.len());
+        let line = buf_text[..pos].matches('\n').count() + 1;
+        let col = pos - buf_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0) + 1;
+        self.ui.label(cx, ids!(status_label)).set_text(
+            cx,
+            &format!("Void Active  Ln {} Col {}", line, col),
+        );
+
+        // Sync status
+        let sync_text = if self.connected {
+            format!("Iroh mesh  {} peers", self.peers.len())
+        } else {
+            "Loro in-memory".to_string()
+        };
+        self.ui
+            .label(cx, ids!(status_sync))
+            .set_text(cx, &sync_text);
+
+        // Update the visible cursor indicator in the status bar
+        self.update_cursor_display(cx);
+    }
+
+    // ── Cursor animation ────────────────────────────────────────
+
+    /// Compute the target X position (in characters) for the cursor
+    /// and update the status bar with a visual caret indicator.
+    fn update_cursor_display(&self, cx: &mut Cx) {
+        // Show cursor position indicator in the status bar.
+        // No block characters — just a clean pipe that works
+        // with every font atlas.
+        let buf_text = self.buffer.text();
+        let pos = self.cursor.pos.min(buf_text.len());
+        let line = buf_text[..pos].matches('\n').count() + 1;
+        let col = pos - buf_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0) + 1;
+
+        // Blink the pipe using a sine pulse
+        let blink = (self.cursor_time * 3.0).sin();
+        let caret = if blink > 0.0 { "|" } else { " " };
+
+        self.ui.label(cx, ids!(status_label)).set_text(
+            cx,
+            &format!("{caret} Ln {line} Col {col}"),
+        );
+    }
+
+    /// Spring-mass cursor animation tick (~60 fps).
+    ///
+    /// The cursor's visual X position "slides" to the target
+    /// position using a critically-damped spring, giving a
+    /// satisfying physical feel to typing.
+    fn tick_cursor_animation(&mut self, cx: &mut Cx) {
+        const DT: f32 = 1.0 / 60.0;
+        // Spring parameters (critically damped)
+        const STIFFNESS: f32 = 800.0;
+        const DAMPING: f32 = 56.0; // 2 * sqrt(STIFFNESS)
+
+        // Advance blink timer
+        self.cursor_time += DT as f64;
+
+        // Target position = cursor column (in character units)
+        let buf_text = self.buffer.text();
+        let pos = self.cursor.pos.min(buf_text.len());
+        let line = buf_text[..pos].matches('\n').count();
+        let col = pos - buf_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let target_x = col as f32;
+
+        // Apply spring force
+        let displacement = target_x - self.cursor_anim_x;
+        let spring_force = STIFFNESS * displacement;
+        let damping_force = -DAMPING * self.cursor_vel;
+        let accel = spring_force + damping_force;
+        self.cursor_vel += accel * DT;
+        self.cursor_anim_x += self.cursor_vel * DT;
+
+        // Snap when close enough (avoid infinite oscillation)
+        if displacement.abs() < 0.01 && self.cursor_vel.abs() < 0.1 {
+            self.cursor_anim_x = target_x;
+            self.cursor_vel = 0.0;
+        }
+
+        // ── GPU Cursor: update shader uniforms ──
+        // Approximate character metrics for the 13pt editor font.
+        let char_width: f64 = 7.8;
+        let line_height: f64 = 20.0;
+
+        let cursor_x = (self.cursor_anim_x as f64) * char_width;
+        let cursor_y = (line as f64) * line_height;
+
+        // Blink: set shader opacity to 0.0 when "off"
+        let blink = (self.cursor_time * 3.5).sin();
+        let opacity = if blink > 0.0 { 1.0f32 } else { 0.0f32 };
+
+        let overlay = self.ui.view(cx, ids!(cursor_overlay));
+        overlay.set_uniform(cx, live_id!(cursor_x), &[cursor_x as f32]);
+        overlay.set_uniform(cx, live_id!(cursor_y), &[cursor_y as f32]);
+        overlay.set_uniform(cx, live_id!(opacity), &[opacity]);
+        overlay.redraw(cx);
+
+        // Update the editor label with the plain text (no cursor char)
+        let text = self.buffer.text();
+        let display = if text.is_empty() {
+            "Begin typing...".to_string()
+        } else {
+            text.clone()
+        };
+
+        let new_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            display.hash(&mut h);
+            h.finish()
+        };
+        if new_hash != self.last_display_hash {
+            self.last_display_hash = new_hash;
+            self.ui
+                .label(cx, ids!(editor_label))
+                .set_text(cx, &display);
+        }
+
+        cx.redraw_all();
+    }
+
+    /// Update the peers label in the side panel.
+    fn update_peers_display(&self, cx: &mut Cx) {
+        let text = if !self.connected {
+            "Not connected".to_string()
+        } else if self.peers.is_empty() {
+            "Waiting for peers...".to_string()
+        } else {
+            let mut lines = vec!["local (you)".to_string()];
+            for p in &self.peers {
+                // Show first 8 chars of peer ID
+                let short = if p.len() > 8 { &p[..8] } else { p };
+                lines.push(format!("{short}..."));
+            }
+            lines.join("\n")
+        };
+        self.ui
+            .label(cx, ids!(peers_label))
+            .set_text(cx, &text);
+    }
+
+    /// Send the current CRDT delta to the network.
+    /// Uses incremental delta export when possible (tiny ~50 byte
+    /// updates vs multi-KB snapshots on every keystroke).
+    fn broadcast_crdt_delta(&self) {
+        if let Some(ref net) = self.net {
+            let payload = self.crdt.export_incremental_delta();
+            if !payload.is_empty() {
+                net.send_delta(payload);
+            }
+        }
+    }
+
+    /// Capture the version vector *before* a local edit so we can
+    /// export just the delta afterwards.
+    fn capture_pre_edit_vv(&self) {
+        self.crdt.capture_pre_edit();
+    }
+
+    /// Process incoming network events.
+    fn poll_network(&mut self, cx: &mut Cx) {
+        let Some(ref net) = self.net else { return };
+        let events = net.drain_events();
+        if events.is_empty() {
+            return;
+        }
+
+        for evt in events {
+            match evt {
+                NetEvent::Connected { our_id } => {
+                    tracing::info!(id = %our_id, "connected to mesh");
+                    self.connected = true;
+                    self.update_peers_display(cx);
+                }
+                NetEvent::PeerJoined(peer_id) => {
+                    tracing::info!(peer = %peer_id, "peer joined");
+                    if !self.peers.contains(&peer_id) {
+                        self.peers.push(peer_id);
+                    }
+                    self.update_peers_display(cx);
+                }
+                NetEvent::PeerLeft(peer_id) => {
+                    tracing::info!(peer = %peer_id, "peer left");
+                    self.peers.retain(|p| p != &peer_id);
+                    self.update_peers_display(cx);
+                }
+                NetEvent::DeltaReceived(raw_bytes) => {
+                    tracing::debug!(bytes = raw_bytes.len(), "received delta");
+                    // Import into CRDT
+                    if let Err(e) = self.crdt.import_snapshot(&raw_bytes) {
+                        tracing::warn!(%e, "failed to import remote delta");
+                        continue;
+                    }
+                    // Sync buffer from CRDT (full replacement for now)
+                    if let Ok(new_text) = self.crdt.get_text() {
+                        let old_len = self.buffer.len_chars();
+                        if old_len > 0 {
+                            self.buffer.delete(0, old_len);
+                        }
+                        if !new_text.is_empty() {
+                            self.buffer.insert(0, &new_text);
+                        }
+                        // Clamp cursor
+                        let max = self.buffer.len_chars();
+                        if self.cursor.pos > max {
+                            self.cursor.move_to(max);
+                        }
+                    }
+                    self.sync_display(cx);
+                }
+                NetEvent::Error(msg) => {
+                    tracing::error!("net error: {msg}");
+                    self.ui
+                        .label(cx, ids!(peers_label))
+                        .set_text(cx, &format!("Error: {msg}"));
+                }
+            }
+        }
+        cx.redraw_all();
     }
 }
 
 impl MatchEvent for App {
-    fn handle_actions(&mut self, _cx: &mut Cx, _actions: &Actions) {
-        // Phase 1: action handling will be wired here
+    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
+        // -- Join Void button --
+        if self.ui.button(cx, ids!(join_button)).clicked(actions) {
+            let room_code = self.ui.text_input(cx, ids!(room_input)).text();
+            if !room_code.is_empty() {
+                tracing::info!(room = %room_code, "Join Void clicked");
+                // Spawn the network bridge if not already running
+                if self.net.is_none() {
+                    self.net = Some(NetBridge::spawn());
+                    // Start polling timer (50ms interval)
+                    self.net_timer = cx.start_interval(0.05);
+                }
+                if let Some(ref net) = self.net {
+                    net.connect(room_code);
+                }
+                self.ui
+                    .label(cx, ids!(peers_label))
+                    .set_text(cx, "Connecting...");
+                cx.redraw_all();
+            }
+        }
+
+        // -- Panel toggle button --
+        if self.ui.button(cx, ids!(panel_toggle)).clicked(actions) {
+            self.panel_open = !self.panel_open;
+            self.ui.view(cx, ids!(side_panel)).set_visible(cx, self.panel_open);
+            cx.redraw_all();
+        }
+
+        // -- Track room input focus to avoid editor key conflicts --
+        let room_input = self.ui.text_input(cx, ids!(room_input));
+        for action in actions.filter_widget_actions_cast::<TextInputAction>(room_input.widget_uid()) {
+            match action {
+                TextInputAction::KeyFocus => self.room_input_focused = true,
+                TextInputAction::KeyFocusLost => self.room_input_focused = false,
+                _ => {}
+            }
+        }
     }
 }
 
@@ -160,5 +594,103 @@ impl AppMain for App {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
+
+        // -- Network polling timer --
+        if self.net_timer.is_event(event).is_some() {
+            self.poll_network(cx);
+        }
+
+        // -- Cursor animation timer (~60 fps) --
+        if self.cursor_timer.is_event(event).is_some() {
+            self.tick_cursor_animation(cx);
+        }
+
+        // Start cursor timer on first event if not already running
+        if !self.cursor_timer_started {
+            self.cursor_timer = cx.start_interval(1.0 / 60.0);
+            self.cursor_timer_started = true;
+        }
+
+        // Skip editor key handling when room input has focus
+        if self.room_input_focused {
+            return;
+        }
+
+        match event {
+            // -- Printable text input --
+            Event::TextInput(e) => {
+                if e.input.is_empty() {
+                    return;
+                }
+                self.capture_pre_edit_vv();
+                let pos = self.cursor.pos;
+                // Insert into the Rope buffer
+                self.buffer.insert(pos, &e.input);
+                // Mirror into the Loro CRDT
+                let _ = self.crdt.insert(pos, &e.input);
+                // Advance cursor
+                self.cursor.move_right(e.input.len(), self.buffer.len_chars());
+                self.sync_display(cx);
+                self.broadcast_crdt_delta();
+                cx.redraw_all();
+            }
+            // -- Special keys --
+            Event::KeyDown(ke) => {
+                let max = self.buffer.len_chars();
+                match ke.key_code {
+                    KeyCode::Backspace if self.cursor.pos > 0 => {
+                        self.capture_pre_edit_vv();
+                        let pos = self.cursor.pos - 1;
+                        self.buffer.delete(pos, pos + 1);
+                        let _ = self.crdt.delete(pos, 1);
+                        self.cursor.move_left(1);
+                        self.sync_display(cx);
+                        self.broadcast_crdt_delta();
+                        cx.redraw_all();
+                    }
+                    KeyCode::Delete if self.cursor.pos < max => {
+                        self.capture_pre_edit_vv();
+                        let pos = self.cursor.pos;
+                        self.buffer.delete(pos, pos + 1);
+                        let _ = self.crdt.delete(pos, 1);
+                        self.sync_display(cx);
+                        self.broadcast_crdt_delta();
+                        cx.redraw_all();
+                    }
+                    KeyCode::ReturnKey => {
+                        self.capture_pre_edit_vv();
+                        let pos = self.cursor.pos;
+                        self.buffer.insert(pos, "\n");
+                        let _ = self.crdt.insert(pos, "\n");
+                        self.cursor.move_right(1, self.buffer.len_chars());
+                        self.sync_display(cx);
+                        self.broadcast_crdt_delta();
+                        cx.redraw_all();
+                    }
+                    KeyCode::ArrowLeft => {
+                        self.cursor.move_left(1);
+                        self.sync_display(cx);
+                        cx.redraw_all();
+                    }
+                    KeyCode::ArrowRight => {
+                        self.cursor.move_right(1, max);
+                        self.sync_display(cx);
+                        cx.redraw_all();
+                    }
+                    KeyCode::Home => {
+                        self.cursor.move_to(0);
+                        self.sync_display(cx);
+                        cx.redraw_all();
+                    }
+                    KeyCode::End => {
+                        self.cursor.move_to(max);
+                        self.sync_display(cx);
+                        cx.redraw_all();
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
 }

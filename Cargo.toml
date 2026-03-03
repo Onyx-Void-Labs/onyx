@@ -18,6 +18,8 @@ members = [
 # override makepad-widgets to our local patched copy
 [patch.crates-io]
 makepad-widgets = { path = "patches/makepad-widgets/widgets" }
+makepad-platform = { path = "patches/makepad-widgets/platform" }
+makepad-draw = { path = "patches/makepad-widgets/draw" }
 
 [workspace.package]
 version = "0.1.0"

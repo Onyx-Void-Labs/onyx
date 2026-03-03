@@ -4947,6 +4947,7 @@ dependencies = [
 name = "onyx-app"
 version = "0.1.0"
 dependencies = [
+ "iroh-gossip",
  "makepad-widgets",
  "mimalloc",
  "onyx-core",
@@ -4954,8 +4955,10 @@ dependencies = [
  "onyx-math",
  "onyx-net",
  "onyx-store",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]

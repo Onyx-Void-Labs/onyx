@@ -42,6 +42,19 @@ impl VoidIdentity {
         }
     }
 
+    /// Create the well-known relay identity.
+    ///
+    /// Both the relay binary and clients derive the same identity
+    /// from a fixed seed so that clients can bootstrap gossip
+    /// through the relay without prior configuration.
+    pub fn relay_identity() -> Self {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(b"onyx-void-relay-bootstrap-v1");
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&hash);
+        Self::from_bytes(&key_bytes)
+    }
+
     // ── Accessors ────────────────────────────────────────────────
 
     /// The Ed25519 secret key (keep this safe!).
@@ -68,6 +81,15 @@ impl VoidIdentity {
     pub fn default_path() -> OnyxResult<PathBuf> {
         let home = dirs_path()?;
         Ok(home.join("identity.key"))
+    }
+
+    /// Identity file path for a named profile: `~/.onyx/<profile>/identity.key`
+    ///
+    /// Each profile gets its own sub-folder so multiple instances can
+    /// run on the same machine with different NodeIDs.
+    pub fn profile_path(profile: &str) -> OnyxResult<PathBuf> {
+        let home = dirs_path()?;
+        Ok(home.join(profile).join("identity.key"))
     }
 
     /// Load an identity from a file, or generate and save a new one.

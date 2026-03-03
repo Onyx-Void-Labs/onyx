@@ -489,34 +489,17 @@ impl MultiPlaneAllocator {
     }
 
     fn allocate_sdf_slot(&mut self, size: Size<usize>) -> Option<AtlasSlot> {
-        let mut best_plane = None;
-        let mut best_rank = (usize::MAX, usize::MAX, usize::MAX, usize::MAX, usize::MAX);
-        for offset in 0..4 {
-            let plane = (self.round_robin_cursor + offset) & 3;
-            let Some(score) = self.planes[plane].peek_best_fit(size) else {
-                continue;
-            };
-            // Keep single-channel occupancy balanced while still using best-fit packing.
-            let rank = (
-                self.plane_used_area[plane],
-                offset,
-                score.short,
-                score.long,
-                score.area,
-            );
-            if rank < best_rank {
-                best_rank = rank;
-                best_plane = Some(plane);
-            }
-        }
-        let plane = best_plane?;
+        // R8 atlas texture has only one channel, so all SDF glyphs must
+        // be packed into plane 0 (Red).  Multi-plane round-robin is
+        // disabled to avoid writing into channels that don't survive the
+        // u32→u8 conversion.
+        let plane = 0;
         let rect = self.planes[plane].allocate(size)?;
         let area = size.width.saturating_mul(size.height);
         self.plane_used_area[plane] = self.plane_used_area[plane].saturating_add(area);
-        self.round_robin_cursor = (plane + 1) & 3;
         Some(AtlasSlot {
             rect,
-            plane: AtlasPlane::from_index(plane),
+            plane: AtlasPlane::R,
         })
     }
 
@@ -560,6 +543,7 @@ impl MultiPlaneAllocator {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 struct PlacementScore {
     origin: Point<usize>,
     short: usize,

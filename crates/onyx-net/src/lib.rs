@@ -18,6 +18,6 @@ pub mod mesh;
 pub mod node;
 pub mod sync;
 
-pub use mesh::ShadowMesh;
+pub use mesh::{MeshEvent, ShadowMesh};
 pub use node::OnyxNode;
 pub use sync::SyncEngine;

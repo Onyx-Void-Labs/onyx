@@ -175,7 +175,7 @@ impl Fonts {
         };
         let pixels_u8: Vec<u8> = pixels_u32
             .into_iter()
-            .map(|px| (px & 0xff) as u8) // take blue channel (or replace with any)
+            .map(|px| ((px >> 16) & 0xff) as u8) // extract R channel (byte 2 of BGRA)
             .collect();
         self.atlas_texture.put_back_vec_u8(
             cx,

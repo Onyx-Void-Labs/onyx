@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
-use crate::mesh::IncomingDelta;
+use crate::mesh::MeshEvent;
 use iroh_gossip::api::GossipSender;
 
 /// Compression level for CRDT deltas.
@@ -51,7 +51,7 @@ impl SyncEngine {
     pub fn spawn(
         crdt: CrdtDoc,
         gossip_sender: GossipSender,
-        mut incoming_rx: mpsc::Receiver<IncomingDelta>,
+        mut incoming_rx: mpsc::Receiver<MeshEvent>,
     ) -> Self {
         let state = Arc::new(Mutex::new(SyncState {
             crdt,
@@ -86,7 +86,18 @@ impl SyncEngine {
         // ── Inbound task: decompress and merge incoming deltas ──
         let inbound_state = Arc::clone(&state);
         tokio::spawn(async move {
-            while let Some(delta) = incoming_rx.recv().await {
+            while let Some(event) = incoming_rx.recv().await {
+                let delta = match event {
+                    MeshEvent::Delta(d) => d,
+                    MeshEvent::PeerJoined(peer) => {
+                        debug!(peer = %peer, "sync engine: peer joined");
+                        continue;
+                    }
+                    MeshEvent::PeerLeft(peer) => {
+                        debug!(peer = %peer, "sync engine: peer left");
+                        continue;
+                    }
+                };
                 trace!(
                     from = %delta.from,
                     bytes = delta.data.len(),

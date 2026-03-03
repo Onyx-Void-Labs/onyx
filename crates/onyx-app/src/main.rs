@@ -8,8 +8,27 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 mod app;
+mod net_bridge;
+mod remote_cursor;
+
+/// Global profile name parsed from `--profile <NAME>` CLI arg.
+/// Each profile gets its own identity key so multiple instances
+/// can run on the same machine with different Iroh NodeIDs.
+pub static PROFILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
 
 fn main() {
+    // ── Parse --profile flag ──
+    let args: Vec<String> = std::env::args().collect();
+    let profile = args
+        .windows(2)
+        .find(|w| w[0] == "--profile")
+        .map(|w| w[1].clone());
+
+    if let Some(ref p) = profile {
+        eprintln!("[onyx] using profile: {p}");
+    }
+    PROFILE.set(profile).ok();
+
     // ── Tracing ──
     tracing_subscriber::fmt()
         .with_env_filter(

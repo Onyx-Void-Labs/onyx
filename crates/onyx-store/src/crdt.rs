@@ -12,13 +12,68 @@ use tracing::trace;
 /// A CRDT-backed document state.
 pub struct CrdtDoc {
     doc: LoroDoc,
+    /// Number of uncommitted ops since last commit/compact.
+    ops_since_commit: std::cell::Cell<u32>,
+    /// Saved version vector from before the last batch of edits.
+    /// Used for incremental delta export.
+    pre_edit_vv: std::cell::RefCell<Option<loro::VersionVector>>,
 }
+
+/// How many ops before we compact the Loro history.
+const COMPACT_THRESHOLD: u32 = 500;
 
 impl CrdtDoc {
     /// Create a new empty CRDT document.
     pub fn new() -> Self {
         Self {
             doc: LoroDoc::new(),
+            ops_since_commit: std::cell::Cell::new(0),
+            pre_edit_vv: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Commit pending operations and compact history if we've
+    /// accumulated enough ops to warrant it.
+    ///
+    /// Call this periodically (e.g. after every edit) to keep
+    /// memory usage bounded. Loro will merge small ops into
+    /// larger, more compact internal structures.
+    pub fn maybe_compact(&self) {
+        let count = self.ops_since_commit.get() + 1;
+        self.ops_since_commit.set(count);
+        if count >= COMPACT_THRESHOLD {
+            self.doc.commit();
+            trace!(ops = count, "loro commit (compaction)");
+            self.ops_since_commit.set(0);
+        }
+    }
+
+    /// Force a commit right now (e.g. before export).
+    pub fn force_commit(&self) {
+        self.doc.commit();
+        self.ops_since_commit.set(0);
+    }
+
+    /// Snapshot the current version vector *before* a local edit.
+    /// Call `export_incremental_delta()` after the edit to get
+    /// just the bytes that changed.
+    pub fn capture_pre_edit(&self) {
+        *self.pre_edit_vv.borrow_mut() = Some(self.doc.oplog_vv());
+    }
+
+    /// Export an incremental delta covering only the ops since the
+    /// last `capture_pre_edit()` call. Falls back to a full snapshot
+    /// if no pre-edit version was captured.
+    pub fn export_incremental_delta(&self) -> Vec<u8> {
+        self.doc.commit();
+        let vv = self.pre_edit_vv.borrow();
+        if let Some(ref vv) = *vv {
+            match self.export_updates_since(vv) {
+                Ok(delta) if !delta.is_empty() => delta,
+                _ => self.export_snapshot(),
+            }
+        } else {
+            self.export_snapshot()
         }
     }
 
@@ -34,6 +89,7 @@ impl CrdtDoc {
         text.insert(pos, s)
             .map_err(|e| OnyxError::Crdt(e.to_string()))?;
         trace!(pos, s, "crdt insert");
+        self.maybe_compact();
         Ok(())
     }
 
@@ -43,6 +99,7 @@ impl CrdtDoc {
         text.delete(pos, len)
             .map_err(|e| OnyxError::Crdt(e.to_string()))?;
         trace!(pos, len, "crdt delete");
+        self.maybe_compact();
         Ok(())
     }
 

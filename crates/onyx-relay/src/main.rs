@@ -54,17 +54,21 @@ async fn main() -> anyhow::Result<()> {
     info!("╚══════════════════════════════════════════╝");
 
     // ── Identity ──
-    // The relay gets its own persistent identity
-    let identity = VoidIdentity::load_or_create(None)?;
-    info!(relay_id = %identity.public_key(), "relay identity loaded");
+    // Use deterministic relay identity so clients can bootstrap
+    // gossip through us without prior configuration.
+    let identity = VoidIdentity::relay_identity();
+    info!(relay_id = %identity.public_key(), "relay identity loaded (deterministic)");
 
     // ── Iroh Endpoint ──
-    let endpoint = Endpoint::builder()
+    // Bind to a fixed port so clients can reach us at a known address.
+    let bind_addr = std::net::SocketAddr::from(([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT));
+    let endpoint: Endpoint = Endpoint::builder()
         .secret_key(identity.secret_key().clone())
         .alpns(vec![
             ONYX_PUBSUB_ALPN.to_vec(),
             iroh_gossip::ALPN.to_vec(),
         ])
+        .bind_addr(bind_addr)?
         .bind()
         .await?;
 

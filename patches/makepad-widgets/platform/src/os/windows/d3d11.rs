@@ -819,12 +819,24 @@ impl D3d11Cx {
     /// from the main event loop when idle, and call `D3d11Cx::new()` to get a
     /// fresh device when needed again.
     pub fn release_device(&mut self) {
-        // simply replace the device/context with new ones, letting the old
-        // COM objects drop and free driver resources.  This is a no-op stub
-        // here; a real implementation would call D3D11CreateDevice again.
+        // Drop the old COM objects so the driver can free its resources,
+        // then zero the backing memory to prevent a double-Release on the
+        // next Drop.  Using `ptr::drop_in_place` + `ptr::write_bytes`
+        // avoids the `invalid_value` lint that `std::mem::zeroed()` would
+        // trigger on COM interface types (which wrap `NonNull`).
         unsafe {
-            self.device = std::mem::zeroed();
-            self.context = std::mem::zeroed();
+            std::ptr::drop_in_place(&mut self.device);
+            std::ptr::write_bytes(
+                &mut self.device as *mut ID3D11Device as *mut u8,
+                0,
+                std::mem::size_of::<ID3D11Device>(),
+            );
+            std::ptr::drop_in_place(&mut self.context);
+            std::ptr::write_bytes(
+                &mut self.context as *mut ID3D11DeviceContext as *mut u8,
+                0,
+                std::mem::size_of::<ID3D11DeviceContext>(),
+            );
         }
     }
 }
@@ -1115,7 +1127,7 @@ impl CxTexture {
                     DXGI_FORMAT_R8G8_UNORM,
                     *width,
                     *height,
-                    1,
+                    2,
                     data.as_ref().unwrap().as_ptr() as *const _,
                 ),
                 TextureFormat::VecRf32 {

@@ -24,6 +24,13 @@ onyx-net    = { workspace = true }
 # Makepad (patched local path via crates.io override)
 makepad-widgets = "2.0.0"
 
+# Async runtime (for Iroh background thread)
+tokio = { workspace = true }
+
+# Iroh networking (used by net_bridge)
+iroh-gossip  = { workspace = true }
+zstd         = { workspace = true }
+
 # Observability
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

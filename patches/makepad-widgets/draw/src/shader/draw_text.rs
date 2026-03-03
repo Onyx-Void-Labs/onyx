@@ -92,15 +92,8 @@ script_mod! {
 
         sdf: fn(scale, p, color) {
             let sampled = self.grayscale_texture.sample_as_bgra(p);
-            let s = if self.atlas_plane < 0.5 {
-                sampled.r
-            } else if self.atlas_plane < 1.5 {
-                sampled.g
-            } else if self.atlas_plane < 2.5 {
-                sampled.b
-            } else {
-                sampled.a
-            };
+            // R8 atlas: only the .r channel carries SDF data.
+            let s = sampled.r;
             // Convert sampled SDF to coverage (0..1). scale is source texels per screen pixel.
             let safe_scale = max(scale, 0.0001);
             let luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
@@ -113,7 +106,15 @@ script_mod! {
             // dark text on light backgrounds usually appears softer than the inverse,
             // so we bias coverage slightly by text luminance.
             let bias = (0.5 - luma) * self.sdf_luma_bias;
-            a = clamp(a - bias, 0.0, 1.0);
+            // Guard: only apply bias when coverage is already meaningful.
+            // This prevents lifting near-zero SDF values into visible
+            // box-shaped artifacts around glyph quads (the R8 artifact).
+            if a > 0.02 {
+                a = clamp(a - bias, 0.0, 1.0);
+            }
+            // Hard floor: kill any sub-perceptual alpha that would show
+            // as faint rectangles on dark backgrounds.
+            if a < 0.01 { a = 0.0; }
             return a
         }
 

@@ -16,6 +16,22 @@ pub const ONYX_PUBSUB_ALPN: &[u8] = b"onyx/pubsub/1";
 /// ALPN for direct Onyx CRDT sync between peers.
 pub const ONYX_SYNC_ALPN: &[u8] = b"onyx/sync/1";
 
+// ── Relay Bootstrap ──────────────────────────────────────────────
+
+/// The RackNerd VPS IP address where the Onyx Relay runs.
+pub const RELAY_VPS_IP: [u8; 4] = [104, 168, 82, 148];
+
+/// The fixed QUIC port the relay listens on.
+pub const RELAY_VPS_PORT: u16 = 11204;
+
+/// Get the relay's well-known EndpointId (PublicKey).
+///
+/// Derived deterministically so both clients and relay agree
+/// without any out-of-band exchange.
+pub fn relay_endpoint_id() -> iroh_base::PublicKey {
+    crate::identity::VoidIdentity::relay_identity().public_key()
+}
+
 // ── Topic hashing ────────────────────────────────────────────────
 
 /// A 32-byte topic hash — SHA256 of the secret room key.
