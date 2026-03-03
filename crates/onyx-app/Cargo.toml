@@ -15,8 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-full = ["onyx-math/typst-backend", "onyx-store/surrealdb-backend", "voice"]
-voice = ["cpal", "audiopus"]
+full = ["onyx-math/typst-backend", "onyx-store/surrealdb-backend"]
 
 [dependencies]
 # Internal crates
@@ -39,8 +38,8 @@ zstd         = { workspace = true }
 anyhow       = { workspace = true }
 
 # Audio / Voice (Phase 3: The Senses)
-cpal         = { workspace = true, optional = true }
-audiopus     = { workspace = true, optional = true }
+cpal         = { workspace = true }
+audiopus     = { workspace = true }
 bytes        = { workspace = true }
 
 # Observability

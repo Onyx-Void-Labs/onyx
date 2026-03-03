@@ -27,37 +27,28 @@
 
 use std::sync::mpsc;
 use std::thread;
-use tracing::info;
-#[cfg(feature = "voice")]
-use tracing::{warn, error, trace};
+use tracing::{info, warn, error, trace};
 
-#[cfg(feature = "voice")]
 /// Opus always operates at 48 kHz internally.
 const OPUS_RATE: u32 = 48000;
 
-#[cfg(feature = "voice")]
 /// Opus frame size: 20ms at 48 kHz mono = 960 samples.
 const FRAME_SIZE: usize = 960;
 
-#[cfg(feature = "voice")]
 /// Maximum encoded Opus frame (bytes).  Opus rarely exceeds 500 B
 /// for mono voice at 48 kHz, but we keep headroom.
 const MAX_OPUS_BYTES: usize = 4000;
 
-#[cfg(feature = "voice")]
 /// VAD: RMS energy threshold for voice detection.
 /// Typical ambient noise is ~0.002–0.005 RMS; voice starts ~0.01+.
 const VAD_THRESHOLD: f32 = 0.008;
 
-#[cfg(feature = "voice")]
 /// VAD: Number of 20ms frames to keep in the rolling pre-buffer (200ms).
 const VAD_RING_FRAMES: usize = 10;
 
-#[cfg(feature = "voice")]
 /// VAD: Number of 20ms trailing frames to keep sending after voice stops (200ms).
 const VAD_TRAILING_FRAMES: u32 = 10;
 
-#[cfg(feature = "voice")]
 /// Keep-alive: send a silence frame every N silent frames (~5s = 250 × 20ms).
 /// This prevents the QUIC media connection from timing out during long silence.
 /// We use a very long interval so we don't leak bandwidth during muted periods.
@@ -67,7 +58,6 @@ const KEEPALIVE_INTERVAL_FRAMES: u64 = 250;
 
 /// Commands from the UI/App thread into the media engine.
 #[derive(Debug)]
-#[allow(dead_code)] // Fields read only in #[cfg(feature = "voice")] build
 pub enum MediaCommand {
     /// Start capturing microphone + playing back remote audio.
     StartCapture,
@@ -83,7 +73,6 @@ pub enum MediaCommand {
 
 /// Events emitted by the media engine back to the UI thread.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Variants constructed only in #[cfg(feature = "voice")] build
 pub enum MediaEvent {
     /// Audio capture started successfully.
     CaptureStarted,
@@ -157,7 +146,6 @@ impl MediaEngine {
 /// Linear interpolation resampler.  Good enough for voice (Opus is
 /// lossy anyway). Converts `input` from `in_rate` Hz to `out_rate` Hz
 /// producing exactly `out_len` samples.
-#[cfg(feature = "voice")]
 fn resample(input: &[f32], in_rate: u32, out_rate: u32, out_len: usize) -> Vec<f32> {
     if in_rate == out_rate {
         return input.to_vec();
@@ -176,7 +164,6 @@ fn resample(input: &[f32], in_rate: u32, out_rate: u32, out_len: usize) -> Vec<f
 }
 
 /// Compute RMS (root-mean-square) energy of a PCM frame.
-#[cfg(feature = "voice")]
 fn rms_energy(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -187,7 +174,6 @@ fn rms_energy(samples: &[f32]) -> f32 {
 
 // ── VAD state machine ───────────────────────────────────────────
 
-#[cfg(feature = "voice")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VadState {
     /// Below threshold — buffering into ring, not sending.
@@ -202,21 +188,19 @@ enum VadState {
 // Background media loop — voice feature ENABLED
 // ═══════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "voice")]
 fn media_loop(
     cmd_rx: mpsc::Receiver<MediaCommand>,
     evt_tx: mpsc::Sender<MediaEvent>,
 ) {
     use std::collections::HashMap;
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
 
     use audiopus::coder::{Decoder as OpusDecoder, Encoder as OpusEncoder};
     use audiopus::{Application, Channels, MutSignals, SampleRate};
     use audiopus::packet::Packet as OpusPacket;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    info!("media engine started (voice feature enabled)");
+    info!("media engine started");
 
     // ── Audio device discovery ───────────────────────────────────
     let host = cpal::default_host();
@@ -299,11 +283,15 @@ fn media_loop(
     // Per-peer Opus decoders (keyed by peer-id string).
     let mut decoders: HashMap<String, OpusDecoder> = HashMap::new();
 
-    // Playback ring: the cpal output callback pops from the front;
-    // decoded audio is pushed to the back.  Protected by a Mutex
-    // because cpal callbacks run on a real-time audio thread.
-    let playback_buf: Arc<Mutex<VecDeque<f32>>> =
-        Arc::new(Mutex::new(VecDeque::with_capacity(FRAME_SIZE * 10)));
+    // Playback channel: the cpal output callback owns the Receiver and
+    // drains decoded f32 PCM chunks into a local buffer.  The decode
+    // handler sends chunks via the SyncSender.  This approach avoids
+    // holding a Mutex on the real-time audio thread (which causes
+    // WASAPI to fill the output with silence on Windows).
+    //
+    // The channel is (re)created on each StartCapture so the output
+    // callback always owns a fresh Receiver.
+    let mut playback_tx: Option<mpsc::SyncSender<Vec<f32>>> = None;
 
     // Internal channel: cpal input callback → this loop.
     // Each message is one 20ms frame of MONO f32 PCM at the INPUT native rate.
@@ -460,23 +448,44 @@ fn media_loop(
                             sample_rate: cpal::SampleRate(output_native_rate),
                             buffer_size: cpal::BufferSize::Default,
                         };
-                        let pb = Arc::clone(&playback_buf);
+
+                        // Create a bounded channel for decoded PCM chunks.
+                        // 50 slots × ~960 samples ≈ 1 second of buffer.
+                        let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(50);
+                        playback_tx = Some(tx);
+
                         let out_ch = output_channels;
+
+                        // The Receiver is moved into the output callback.
+                        // A local VecDeque buffers partially-consumed chunks
+                        // so the callback never blocks on a Mutex.
+                        let mut local_buf: VecDeque<f32> = VecDeque::with_capacity(FRAME_SIZE * 10);
 
                         match device.build_output_stream(
                             &cfg,
                             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                                let mut buf = pb.lock().unwrap();
+                                // Drain all available decoded chunks into local buffer.
+                                while let Ok(chunk) = rx.try_recv() {
+                                    local_buf.extend(chunk);
+                                }
+
+                                // Cap local buffer to ~500ms to prevent unbounded growth.
+                                let max_local = (output_native_rate as usize * 500) / 1000;
+                                while local_buf.len() > max_local {
+                                    local_buf.pop_front();
+                                }
+
+                                // Fill the output buffer from the local VecDeque.
                                 if out_ch > 1 {
                                     for frame_samples in data.chunks_mut(out_ch as usize) {
-                                        let sample = buf.pop_front().unwrap_or(0.0);
+                                        let sample = local_buf.pop_front().unwrap_or(0.0);
                                         for s in frame_samples.iter_mut() {
                                             *s = sample;
                                         }
                                     }
                                 } else {
                                     for sample in data.iter_mut() {
-                                        *sample = buf.pop_front().unwrap_or(0.0);
+                                        *sample = local_buf.pop_front().unwrap_or(0.0);
                                     }
                                 }
                             },
@@ -525,9 +534,7 @@ fn media_loop(
                     _output_stream = None;
                     encoder = None;
                     decoders.clear();
-                    if let Ok(mut buf) = playback_buf.lock() {
-                        buf.clear();
-                    }
+                    playback_tx = None;  // drop the sender — receiver in callback sees disconnect
                     vad_state = VadState::Silent;
                     vad_ring.clear();
                     capturing = false;
@@ -590,22 +597,22 @@ fn media_loop(
                                 pcm_f32
                             };
 
-                            // Push into playback ring.
-                            if let Ok(mut buf) = playback_buf.lock() {
-                                let before = buf.len();
-                                for s in &output_samples {
-                                    buf.push_back(*s);
-                                }
-                                info!(
-                                    before_samples = before,
-                                    added_samples = output_samples.len(),
-                                    total_samples = buf.len(),
-                                    "pushed decoded audio to playback buffer"
-                                );
-                                // Cap to ~200ms at native output rate.
-                                let max_buf = (output_native_rate as usize * 200) / 1000;
-                                while buf.len() > max_buf {
-                                    buf.pop_front();
+                            // Send decoded chunk to the playback callback via channel.
+                            let sample_count = output_samples.len();
+                            if let Some(ref tx) = playback_tx {
+                                match tx.try_send(output_samples) {
+                                    Ok(()) => {
+                                        info!(
+                                            added_samples = sample_count,
+                                            "sent decoded audio to playback channel"
+                                        );
+                                    }
+                                    Err(mpsc::TrySendError::Full(_)) => {
+                                        trace!("playback channel full — dropping frame");
+                                    }
+                                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                                        warn!("playback channel disconnected");
+                                    }
                                 }
                             }
                         }
@@ -779,33 +786,6 @@ fn media_loop(
 
         // Brief sleep to avoid busy-spinning (audio arrives every 20ms).
         std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-
-    info!("media engine exited");
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Background media loop — voice feature DISABLED (stub)
-// ═══════════════════════════════════════════════════════════════════
-
-#[cfg(not(feature = "voice"))]
-fn media_loop(
-    cmd_rx: mpsc::Receiver<MediaCommand>,
-    evt_tx: mpsc::Sender<MediaEvent>,
-) {
-    info!("media engine started (voice feature DISABLED — stub only)");
-
-    loop {
-        match cmd_rx.recv() {
-            Ok(MediaCommand::StartCapture) => {
-                let _ = evt_tx.send(MediaEvent::Error(
-                    "voice feature not enabled at compile time".into(),
-                ));
-            }
-            Ok(MediaCommand::Shutdown) => break,
-            Ok(_) => {}
-            Err(_) => break,
-        }
     }
 
     info!("media engine exited");

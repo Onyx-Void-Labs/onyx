@@ -29,6 +29,7 @@ use crate::media_engine::{MediaEngine, MediaEvent};
 
 script_mod! {
     use mod.prelude.widgets.*
+    use mod.widgets.RemoteCursorWidget
 
     startup() do #(App::script_component(vm)) {
         ui: Root {

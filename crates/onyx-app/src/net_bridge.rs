@@ -487,9 +487,14 @@ async fn network_loop(
                 }
 
                 NetCommand::StopMedia => {
-                    if let Some(conn) = media_conn.take() {
-                        info!("closing media connection");
-                        conn.close(0u32.into(), b"voice stopped");
+                    if media_conn.is_some() {
+                        info!("stopping media connection (dropping without close frame)");
+                        // Drop the connection handle without sending a QUIC close frame.
+                        // conn.close() sends an APPLICATION_CLOSE that can cascade through
+                        // the Iroh endpoint's shared path management and starve heartbeats
+                        // on the gossip mesh.  Simply dropping allows QUIC's idle timeout
+                        // to clean up without side effects on other connections.
+                        media_conn = None;
                     }
                 }
 
@@ -529,10 +534,9 @@ async fn network_loop(
                     gossip_sender = None;
                     mesh_rx = None;
                     _relay_conn = None;
-                    // Close media connection if active
-                    if let Some(conn) = media_conn.take() {
-                        conn.close(0u32.into(), b"disconnect");
-                    }
+                    // Drop media connection if active (no close frame needed
+                    // since we're tearing everything down).
+                    media_conn = None;
                     if let Some(ref n) = node {
                         n.shutdown().await;
                     }
