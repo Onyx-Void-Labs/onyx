@@ -19,6 +19,8 @@
 use makepad_widgets::*;
 use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
+use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::net_bridge::{NetBridge, NetEvent};
 
@@ -62,7 +64,7 @@ script_mod! {
                         View { width: Fill, height: 1 }
 
                         Label {
-                            text: "Phase 2 -- Telepathic Link"
+                            text: "Phase 3 -- The Senses"
                             draw_text.color: #x2A2A3A
                             draw_text.text_style.font_size: 10.0
                         }
@@ -120,6 +122,13 @@ script_mod! {
                                 height: 32
                             }
 
+                            disconnect_button := Button {
+                                text: "Disconnect"
+                                width: Fill
+                                height: 32
+                                visible: false
+                            }
+
                             View { width: Fill, height: 16 }
 
                             Label {
@@ -130,6 +139,27 @@ script_mod! {
 
                             peers_label := Label {
                                 text: "Not connected"
+                                draw_text.color: #x3A3A4A
+                                draw_text.text_style.font_size: 11.0
+                            }
+
+                            View { width: Fill, height: 16 }
+
+                            Label {
+                                text: "VOICE"
+                                draw_text.color: #x4A4A5A
+                                draw_text.text_style.font_size: 10.0
+                            }
+
+                            voice_button := Button {
+                                text: "Toggle Voice"
+                                width: Fill
+                                height: 32
+                                visible: false
+                            }
+
+                            voice_status := Label {
+                                text: ""
                                 draw_text.color: #x3A3A4A
                                 draw_text.text_style.font_size: 11.0
                             }
@@ -254,6 +284,18 @@ pub struct App {
     /// Whether the cursor timer has been started.
     #[rust]
     cursor_timer_started: bool,
+    /// The relay’s NodeID string — cached so we can filter it from the peers list.
+    #[rust]
+    relay_node_id: String,
+    /// Last-seen timestamp for each peer (for heartbeat TTL expiry).
+    #[rust]
+    peer_last_seen: HashMap<String, Instant>,
+    /// Heartbeat broadcast counter (sends every ~5s at 50ms poll rate).
+    #[rust]
+    heartbeat_counter: u32,
+    /// Whether the MoQ voice engine is active.
+    #[rust]
+    voice_active: bool,
 }
 
 impl App {
@@ -267,6 +309,10 @@ impl App {
         app.cursor_vel = 0.0;
         app.cursor_vel_y = 0.0;
         app.cursor_time = 0.0;
+        app.relay_node_id = onyx_core::protocol::relay_node_id_string();
+        app.peer_last_seen = HashMap::new();
+        app.heartbeat_counter = 0;
+        app.voice_active = false;
         app
     }
 
@@ -440,14 +486,22 @@ impl App {
     }
 
     /// Update the peers label in the side panel.
+    /// Filters out the relay's NodeID so only real peers appear.
     fn update_peers_display(&self, cx: &mut Cx) {
+        // Filter out the relay node from the visible peer list
+        let visible_peers: Vec<&String> = self
+            .peers
+            .iter()
+            .filter(|p| *p != &self.relay_node_id)
+            .collect();
+
         let text = if !self.connected {
             "Not connected".to_string()
-        } else if self.peers.is_empty() {
+        } else if visible_peers.is_empty() {
             "Waiting for peers...".to_string()
         } else {
             let mut lines = vec!["local (you)".to_string()];
-            for p in &self.peers {
+            for p in &visible_peers {
                 // Show first 8 chars of peer ID
                 let short = if p.len() > 8 { &p[..8] } else { p };
                 lines.push(format!("{short}..."));
@@ -457,6 +511,14 @@ impl App {
         self.ui
             .label(cx, ids!(peers_label))
             .set_text(cx, &text);
+
+        // Show/hide disconnect and voice buttons based on connection state
+        self.ui
+            .button(cx, ids!(disconnect_button))
+            .set_visible(cx, self.connected);
+        self.ui
+            .button(cx, ids!(voice_button))
+            .set_visible(cx, self.connected);
     }
 
     /// Send the current CRDT delta to the network.
@@ -499,6 +561,34 @@ impl App {
     fn poll_network(&mut self, cx: &mut Cx) {
         let Some(ref net) = self.net else { return };
         let events = net.drain_events();
+
+        // ── Heartbeat broadcast (every ~5 seconds at 50ms poll rate) ──
+        if self.connected {
+            self.heartbeat_counter += 1;
+            if self.heartbeat_counter >= 100 {
+                self.heartbeat_counter = 0;
+                let hb = onyx_core::protocol::encode_control(
+                    onyx_core::protocol::CTRL_HEARTBEAT,
+                );
+                net.send_control(hb);
+            }
+
+            // ── Heartbeat TTL expiry (10 seconds) ──
+            let now = Instant::now();
+            let expired: Vec<String> = self
+                .peer_last_seen
+                .iter()
+                .filter(|(_, last)| now.duration_since(**last).as_secs() >= 10)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for peer_id in expired {
+                tracing::warn!(peer = %peer_id, "peer expired (10s heartbeat TTL)");
+                self.peer_last_seen.remove(&peer_id);
+                self.peers.retain(|p| p != &peer_id);
+                self.update_peers_display(cx);
+            }
+        }
+
         if events.is_empty() {
             return;
         }
@@ -513,21 +603,31 @@ impl App {
                 NetEvent::PeerJoined(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer joined");
                     if !self.peers.contains(&peer_id) {
-                        self.peers.push(peer_id);
+                        self.peers.push(peer_id.clone());
                     }
+                    self.peer_last_seen.insert(peer_id, Instant::now());
                     self.update_peers_display(cx);
 
                     // ── Catch-Up Handshake ──
-                    // When a new peer joins, immediately broadcast our
-                    // full CRDT snapshot so they can sync up with all
-                    // existing content. Without this, a peer joining
-                    // after typing has occurred sees an empty screen.
                     self.broadcast_full_snapshot();
                 }
                 NetEvent::PeerLeft(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer left");
                     self.peers.retain(|p| p != &peer_id);
+                    self.peer_last_seen.remove(&peer_id);
                     self.update_peers_display(cx);
+                }
+                NetEvent::GoodbyeReceived(peer_id) => {
+                    tracing::info!(peer = %peer_id, "peer sent Goodbye — removing instantly");
+                    self.peers.retain(|p| p != &peer_id);
+                    self.peer_last_seen.remove(&peer_id);
+                    self.update_peers_display(cx);
+                }
+                NetEvent::HeartbeatReceived(peer_id) => {
+                    // Reset the peer's TTL
+                    if self.peers.contains(&peer_id) {
+                        self.peer_last_seen.insert(peer_id, Instant::now());
+                    }
                 }
                 NetEvent::DeltaReceived(raw_bytes) => {
                     tracing::debug!(bytes = raw_bytes.len(), "received delta");
@@ -624,6 +724,49 @@ impl MatchEvent for App {
             }
         }
 
+        // -- Disconnect button --
+        if self.ui.button(cx, ids!(disconnect_button)).clicked(actions) {
+            tracing::info!("Disconnect clicked");
+            if let Some(ref net) = self.net {
+                net.disconnect();
+            }
+            // Clear local state
+            self.connected = false;
+            self.peers.clear();
+            self.peer_last_seen.clear();
+            self.heartbeat_counter = 0;
+            self.voice_active = false;
+            // Clear the text buffer
+            let len = self.buffer.len_chars();
+            if len > 0 {
+                self.buffer.delete(0, len);
+            }
+            self.crdt = CrdtDoc::default();
+            self.cursor.move_to(0);
+            self.sync_display(cx);
+            self.update_peers_display(cx);
+            self.ui
+                .label(cx, ids!(voice_status))
+                .set_text(cx, "");
+            cx.redraw_all();
+        }
+
+        // -- Voice toggle button (Phase 3 stub) --
+        if self.ui.button(cx, ids!(voice_button)).clicked(actions) {
+            self.voice_active = !self.voice_active;
+            let status = if self.voice_active {
+                tracing::info!("Voice chat ENABLED (MediaEngine starting)");
+                "Voice: ON (Opus/QUIC)"
+            } else {
+                tracing::info!("Voice chat DISABLED");
+                "Voice: OFF"
+            };
+            self.ui
+                .label(cx, ids!(voice_status))
+                .set_text(cx, status);
+            cx.redraw_all();
+        }
+
         // -- Panel toggle button --
         if self.ui.button(cx, ids!(panel_toggle)).clicked(actions) {
             self.panel_open = !self.panel_open;
@@ -667,6 +810,34 @@ impl AppMain for App {
         // Skip editor key handling when room input has focus
         if self.room_input_focused {
             return;
+        }
+
+        // ── Android / Mobile Keyboard ──
+        // When the user taps on the editor area, show the virtual
+        // keyboard (IME) so they can type on mobile devices.
+        {
+            let editor_area = self.ui.view(cx, ids!(editor_area)).area();
+            match event.hits(cx, editor_area) {
+                Hit::FingerDown(fd) => {
+                    cx.set_key_focus(editor_area);
+                    cx.show_text_ime(editor_area, fd.abs);
+                }
+                _ => {}
+            }
+        }
+
+        // ── Graceful shutdown on app close ──
+        match event {
+            Event::Shutdown => {
+                // Broadcast Goodbye so peers remove us instantly
+                if let Some(ref net) = self.net {
+                    let goodbye = onyx_core::protocol::encode_control(
+                        onyx_core::protocol::CTRL_GOODBYE,
+                    );
+                    net.send_control(goodbye);
+                }
+            }
+            _ => {}
         }
 
         match event {

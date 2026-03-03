@@ -98,21 +98,42 @@ impl VoidIdentity {
     /// ```ignore
     /// let id = VoidIdentity::load_or_create(None)?;
     /// ```
+    ///
+    /// On Android (or any platform where the filesystem is
+    /// restricted), this gracefully falls back to an ephemeral
+    /// in-memory identity instead of panicking.
     pub fn load_or_create(path: Option<&Path>) -> OnyxResult<Self> {
         let path = match path {
             Some(p) => p.to_path_buf(),
-            None => Self::default_path()?,
+            None => match Self::default_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    info!("cannot resolve identity path ({e}), using ephemeral key");
+                    return Ok(Self::generate());
+                }
+            },
         };
 
         if path.exists() {
             debug!(path = %path.display(), "loading existing identity");
-            Self::load(&path)
-        } else {
-            info!(path = %path.display(), "no identity found, generating new one");
-            let id = Self::generate();
-            id.save(&path)?;
-            Ok(id)
+            match Self::load(&path) {
+                Ok(id) => return Ok(id),
+                Err(e) => {
+                    info!(%e, "failed to load identity, generating ephemeral key");
+                    return Ok(Self::generate());
+                }
+            }
         }
+
+        info!(path = %path.display(), "no identity found, generating new one");
+        let id = Self::generate();
+        // Try to persist — if the filesystem is read-only or
+        // permission-denied (common on Android), just continue
+        // with the ephemeral key.
+        if let Err(e) = id.save(&path) {
+            info!(%e, "could not persist identity (using ephemeral session key)");
+        }
+        Ok(id)
     }
 
     /// Load from a key file (32 raw bytes).
@@ -185,20 +206,36 @@ impl std::fmt::Display for VoidIdentity {
 // ── Helpers ──────────────────────────────────────────────────────
 
 /// Resolve the `~/.onyx/` directory.
+///
+/// On Android, `$HOME` is usually not set and `~/.onyx/` is not
+/// writable. We fall back to `std::env::temp_dir()` which maps to
+/// the app-private cache directory provided by the JVM.
 fn dirs_path() -> OnyxResult<PathBuf> {
-    // Use platform-appropriate home directory
-    #[cfg(target_os = "windows")]
-    let base = std::env::var("USERPROFILE")
+    let base = platform_home()?;
+    Ok(base.join(".onyx"))
+}
+
+/// Platform-specific home / base directory for identity storage.
+#[cfg(target_os = "android")]
+fn platform_home() -> OnyxResult<PathBuf> {
+    // The Android NDK sets TMPDIR to the app's private cache dir.
+    // Failing that, /data/local/tmp is usually writable for debug builds.
+    Ok(std::env::temp_dir())
+}
+
+#[cfg(target_os = "windows")]
+fn platform_home() -> OnyxResult<PathBuf> {
+    std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
-        .map_err(|_| OnyxError::Identity("cannot determine home directory".into()))?;
+        .map_err(|_| OnyxError::Identity("cannot determine home directory".into()))
+}
 
-    #[cfg(not(target_os = "windows"))]
-    let base = std::env::var("HOME")
+#[cfg(not(any(target_os = "windows", target_os = "android")))]
+fn platform_home() -> OnyxResult<PathBuf> {
+    std::env::var("HOME")
         .map(PathBuf::from)
-        .map_err(|_| OnyxError::Identity("cannot determine home directory".into()))?;
-
-    Ok(base.join(".onyx"))
+        .map_err(|_| OnyxError::Identity("cannot determine home directory".into()))
 }
 
 // ── Tests ────────────────────────────────────────────────────────

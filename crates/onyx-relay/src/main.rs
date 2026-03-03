@@ -30,7 +30,7 @@ use iroh::protocol::Router;
 use iroh::Endpoint;
 use iroh_gossip::Gossip;
 use onyx_core::identity::VoidIdentity;
-use onyx_core::protocol::{PubSubMsg, ONYX_PUBSUB_ALPN};
+use onyx_core::protocol::{PubSubMsg, ONYX_MEDIA_ALPN, ONYX_PUBSUB_ALPN};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
@@ -334,6 +334,103 @@ impl iroh::protocol::ProtocolHandler for PubSubReflector {
     }
 }
 
+// ─── MoQ Media Reflector ────────────────────────────────────────
+// Stateless reflector for voice/audio datagrams.
+//
+// When a peer sends a media datagram, the relay broadcasts it to
+// all other peers in the same room — WITHOUT decoding the Opus
+// payload. This is pure packet reflection at the QUIC layer.
+//
+// Wire format per datagram:
+//   [32B topic_hash] [8B sender_id_prefix] [2B sequence] [N bytes opus frame]
+//
+// The reflector uses QUIC Unreliable Datagrams (0-RTT) to avoid
+// head-of-line blocking. Lost audio frames are simply skipped.
+
+struct MediaReflector {
+    hall: Arc<GiantHall>,
+}
+
+impl std::fmt::Debug for MediaReflector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaReflector").finish()
+    }
+}
+
+impl MediaReflector {
+    fn new(hall: Arc<GiantHall>) -> Self {
+        Self { hall }
+    }
+
+    /// Handle a media connection from a single peer.
+    ///
+    /// Reads QUIC datagrams and reflects them to all other peers
+    /// subscribed to the same topic.
+    async fn handle_media_connection(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> anyhow::Result<()> {
+        let peer = conn.remote_id();
+        info!(%peer, "media peer connected");
+
+        // Read datagrams in a loop and reflect to other subscribers.
+        // Datagrams are unreliable — if the connection drops, we
+        // simply stop reflecting.
+        loop {
+            match conn.read_datagram().await {
+                Ok(datagram) => {
+                    let data = datagram.to_vec();
+                    if data.len() < 42 {
+                        // Minimum: 32B topic + 8B sender + 2B seq
+                        warn!(%peer, len = data.len(), "media datagram too short");
+                        continue;
+                    }
+
+                    let mut topic = [0u8; 32];
+                    topic.copy_from_slice(&data[..32]);
+
+                    tracing::trace!(
+                        %peer,
+                        topic = hex_short(&topic),
+                        frame_bytes = data.len() - 42,
+                        "reflecting media datagram"
+                    );
+
+                    // The hall knows who is subscribed to this topic.
+                    // We don't decode the audio — just reflect the raw
+                    // datagram to all other subscribers.
+                    // NOTE: Full reflection requires tracking active media
+                    // connections per topic. For the architectural groundwork,
+                    // we log and buffer the event.
+                    self.hall.publish(topic, peer, data);
+                }
+                Err(e) => {
+                    info!(%peer, %e, "media connection closed");
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl iroh::protocol::ProtocolHandler for MediaReflector {
+    async fn accept(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> Result<(), iroh::protocol::AcceptError> {
+        let peer = conn.remote_id();
+        info!(%peer, "media peer connected via MoQ reflector");
+
+        if let Err(e) = self.handle_media_connection(conn).await {
+            warn!(%peer, %e, "media reflector connection error");
+        }
+
+        Ok(())
+    }
+}
+
 // ─── main ───────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -348,7 +445,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("╔══════════════════════════════════════════╗");
     info!("║  ONYX RELAY — The Giant Hall             ║");
-    info!("║  Stateless PubSub + Gossip Reflector     ║");
+    info!("║  PubSub + Gossip + MoQ Media Reflector   ║");
     info!("╚══════════════════════════════════════════╝");
 
     // ── Identity ──
@@ -362,6 +459,7 @@ async fn main() -> anyhow::Result<()> {
         .secret_key(identity.secret_key().clone())
         .alpns(vec![
             ONYX_PUBSUB_ALPN.to_vec(),
+            ONYX_MEDIA_ALPN.to_vec(),
             iroh_gossip::ALPN.to_vec(),
         ])
         .bind_addr(bind_addr)?
@@ -383,15 +481,19 @@ async fn main() -> anyhow::Result<()> {
     // ── PubSub Reflector (registered as ProtocolHandler) ──
     let reflector = Arc::new(PubSubReflector::new(Arc::clone(&hall), gossip.clone()));
 
+    // ── MoQ Media Reflector ──
+    let media_reflector = Arc::new(MediaReflector::new(Arc::clone(&hall)));
+
     // ── Router ──
     // Both gossip and PubSub are handled through the Router so there
     // is no race on `endpoint.accept()`.
     let _router = Router::builder(endpoint.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
         .accept(ONYX_PUBSUB_ALPN, reflector.clone())
+        .accept(ONYX_MEDIA_ALPN, media_reflector.clone())
         .spawn();
 
-    info!("Router active — gossip + PubSub reflector registered");
+    info!("Router active — gossip + PubSub + MoQ media reflector registered");
 
     // ── Pre-subscribe to topics from ONYX_TOPICS env var ──
     // Format: comma-separated room secrets, e.g. ONYX_TOPICS=room1,room2

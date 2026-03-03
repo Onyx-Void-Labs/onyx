@@ -11,7 +11,7 @@
 
 use std::sync::mpsc;
 use std::thread;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 // ── Commands (UI → Network) ──────────────────────────────────────
 
@@ -21,6 +21,8 @@ pub enum NetCommand {
     Connect(String),
     /// Broadcast a CRDT delta to all peers.
     SendDelta(Vec<u8>),
+    /// Broadcast a raw control message (no ZSTD compression).
+    SendControl(Vec<u8>),
     /// Leave the mesh and shut down.
     Disconnect,
 }
@@ -37,6 +39,10 @@ pub enum NetEvent {
     PeerLeft(String),
     /// Received a CRDT delta from a peer (already decompressed).
     DeltaReceived(Vec<u8>),
+    /// A peer sent a Goodbye — remove them immediately.
+    GoodbyeReceived(String),
+    /// A peer sent a Heartbeat — reset their TTL.
+    HeartbeatReceived(String),
     /// An error occurred on the network side.
     Error(String),
 }
@@ -82,6 +88,11 @@ impl NetBridge {
     /// Broadcast a CRDT delta to peers.
     pub fn send_delta(&self, delta: Vec<u8>) {
         let _ = self.cmd_tx.send(NetCommand::SendDelta(delta));
+    }
+
+    /// Broadcast a raw control message (Goodbye, Heartbeat, etc.).
+    pub fn send_control(&self, data: Vec<u8>) {
+        let _ = self.cmd_tx.send(NetCommand::SendControl(data));
     }
 
     /// Disconnect from the mesh.
@@ -366,8 +377,25 @@ async fn network_loop(
                         }
                     }
                 }
+                NetCommand::SendControl(raw) => {
+                    // Broadcast raw control message (no compression)
+                    if let Some(ref sender) = gossip_sender {
+                        if let Err(e) = sender.broadcast(raw.into()).await {
+                            warn!(%e, "control broadcast failed");
+                        }
+                    }
+                }
                 NetCommand::Disconnect => {
-                    info!("disconnecting from mesh");
+                    info!("disconnecting from mesh — broadcasting Goodbye");
+                    // Broadcast Goodbye before leaving so peers remove us instantly
+                    if let Some(ref sender) = gossip_sender {
+                        let goodbye = onyx_core::protocol::encode_control(
+                            onyx_core::protocol::CTRL_GOODBYE,
+                        );
+                        let _ = sender.broadcast(goodbye.into()).await;
+                        // Brief delay to ensure the message propagates
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    }
                     gossip_sender = None;
                     mesh_rx = None;
                     _relay_conn = None;
@@ -387,6 +415,25 @@ async fn network_loop(
             while let Ok(event) = rx.try_recv() {
                 match event {
                     onyx_net::mesh::MeshEvent::Delta(delta) => {
+                        // Check for control messages (0xCC prefix) BEFORE decompression
+                        if let Some(ctrl_type) = onyx_core::protocol::decode_control(&delta.data) {
+                            let from = delta.from.to_string();
+                            match ctrl_type {
+                                onyx_core::protocol::CTRL_GOODBYE => {
+                                    info!(peer = %from, "received Goodbye control message");
+                                    let _ = evt_tx.send(NetEvent::GoodbyeReceived(from));
+                                }
+                                onyx_core::protocol::CTRL_HEARTBEAT => {
+                                    trace!(peer = %from, "received Heartbeat");
+                                    let _ = evt_tx.send(NetEvent::HeartbeatReceived(from));
+                                }
+                                _ => {
+                                    debug!(ctrl_type, "unknown control message type");
+                                }
+                            }
+                            continue;
+                        }
+
                         // Decompress CRDT delta
                         match zstd::decode_all(delta.data.as_slice()) {
                             Ok(raw) => {

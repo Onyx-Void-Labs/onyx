@@ -32,6 +32,11 @@ pub fn relay_endpoint_id() -> iroh_base::PublicKey {
     crate::identity::VoidIdentity::relay_identity().public_key()
 }
 
+/// Get the relay's EndpointId as a string for UI filtering.
+pub fn relay_node_id_string() -> String {
+    relay_endpoint_id().to_string()
+}
+
 // ── Topic hashing ────────────────────────────────────────────────
 
 /// A 32-byte topic hash — SHA256 of the secret room key.
@@ -61,6 +66,41 @@ pub const TAG_PUBLISH: u8 = 0x03;
 pub const TAG_DELIVER: u8 = 0x04;
 pub const TAG_REQUEST_STATE: u8 = 0x05;
 pub const TAG_DELIVER_STATE: u8 = 0x06;
+
+// ── Control message tags (gossip channel) ────────────────────────
+// These are sent as raw gossip broadcasts (no ZSTD compression).
+// The 0xCC prefix distinguishes them from CRDT deltas (0x28 ZSTD magic)
+// and batch frames (0xBB prefix).
+
+/// Magic prefix for gossip control messages.
+pub const CTRL_MAGIC: u8 = 0xCC;
+
+/// Goodbye — peer is gracefully leaving the mesh.
+pub const CTRL_GOODBYE: u8 = 0x01;
+
+/// Heartbeat — peer is still alive (resets 10s TTL).
+pub const CTRL_HEARTBEAT: u8 = 0x02;
+
+/// Media datagram — voice/audio frame (MoQ Phase 3).
+pub const CTRL_MEDIA: u8 = 0x10;
+
+/// ALPN for Onyx Media-over-QUIC datagrams.
+pub const ONYX_MEDIA_ALPN: &[u8] = b"onyx/media/1";
+
+/// Encode a gossip control message (no ZSTD wrapping).
+pub fn encode_control(ctrl_type: u8) -> Vec<u8> {
+    vec![CTRL_MAGIC, ctrl_type]
+}
+
+/// Check if raw gossip bytes are a control message.
+/// Returns `Some(ctrl_type)` if so.
+pub fn decode_control(data: &[u8]) -> Option<u8> {
+    if data.len() >= 2 && data[0] == CTRL_MAGIC {
+        Some(data[1])
+    } else {
+        None
+    }
+}
 
 // ── Protocol message ─────────────────────────────────────────────
 

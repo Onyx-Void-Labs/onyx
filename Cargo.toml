@@ -66,8 +66,14 @@ sha2        = "0.10"
 rand        = "0.9"
 futures-lite = "2"
 
+# ── Audio / Voice (Phase 3: The Senses) ──
+cpal = "0.15"
+
 # ── Async ──
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+
+# ── Serialization ──
+bytes = "1"
 
 # ── Observability ──
 tracing            = "0.1"

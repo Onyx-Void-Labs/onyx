@@ -7,12 +7,18 @@
 // that `app_main!()` auto-generates in `app.rs`.
 // ────────────────────────────────────────────────────────────────────
 
+// mimalloc uses TLS with the IE (Initial Exec) access model which
+// causes `dlopen` to fail on Android with:
+//   "TLS symbol (null) ... using IE access model"
+// Android already ships scudo, so we simply skip the custom allocator.
+#[cfg(not(target_os = "android"))]
 use mimalloc::MiMalloc;
-
+#[cfg(not(target_os = "android"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 mod app;
+mod media_engine;
 mod net_bridge;
 mod remote_cursor;
 
