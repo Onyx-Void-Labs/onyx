@@ -98,10 +98,16 @@ fn rust_build(
     let cwd = std::env::current_dir().unwrap();
     let target_dir = cargo_target_dir(&cwd);
     let target_dir_str = target_dir.to_string_lossy().to_string();
-    let (_ndk_version, ndk_prebuilt_root) =
+    let (ndk_version, ndk_prebuilt_root) =
         resolve_ndk_prebuilt_root(sdk_dir, host_os, urls.ndk_version_full)?;
+    // Compute the NDK home directory (needed by the `cmake` crate and other
+    // native build systems that look for ANDROID_NDK_HOME).
+    let ndk_home = sdk_dir.join("ndk").join(&ndk_version);
+    let ndk_home_str = ndk_home.to_string_lossy().to_string();
     for android_target in android_targets {
         let clang_filename = format!("{}{}-clang", android_target.clang(), urls.sdk_version);
+        // CXX counterpart for cmake and other C++ build systems
+        let clangpp_filename = format!("{}{}-clang++", android_target.clang(), urls.sdk_version);
 
         let bin_name = |bin_filename: &str, windows_extension: &str| match host_os {
             HostOs::WindowsX64 => format!("{bin_filename}.{windows_extension}"),
@@ -109,6 +115,7 @@ fn rust_build(
             _ => panic!(),
         };
         let full_clang_path = ndk_prebuilt_root.join("bin").join(bin_name(&clang_filename, "cmd"));
+        let full_clangpp_path = ndk_prebuilt_root.join("bin").join(bin_name(&clangpp_filename, "cmd"));
         let full_llvm_ar_path = ndk_prebuilt_root.join("bin").join(bin_name("llvm-ar", "exe"));
         let full_llvm_ranlib_path = ndk_prebuilt_root
             .join("bin")
@@ -157,17 +164,31 @@ fn rust_build(
                 // or are defined by the `android-build` crate: <https://crates.io/crates/android-build>.
                 ("ANDROID_HOME", sdk_dir.to_str().unwrap()),
                 ("ANDROID_SDK_ROOT", sdk_dir.to_str().unwrap()),
+                // NDK home — needed by the `cmake` Rust crate (and raw cmake) to locate
+                // the Android toolchain file at $ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake.
+                ("ANDROID_NDK_HOME", &ndk_home_str),
+                ("ANDROID_NDK", &ndk_home_str),
+                ("NDK_HOME", &ndk_home_str),
                 ("ANDROID_BUILD_TOOLS_VERSION", urls.build_tools_version),
                 ("ANDROID_PLATFORM", urls.platform),
                 ("ANDROID_SDK_VERSION", urls.sdk_version.to_string().as_str()),
                 ("ANDROID_API_LEVEL", urls.sdk_version.to_string().as_str()), // for legacy/clarity purposes
                 ("ANDROID_SDK_EXTENSION", urls.sdk_extension),
                 ("JAVA_HOME", sdk_dir.join("openjdk").to_str().unwrap()),
-                // We set these three env vars to allow native library C/C++ builds to succeed with no additional app-side config.
+                // Force Ninja as the CMake generator for Android cross-compilation.
+                // Without this, .cargo/config.toml's CMAKE_GENERATOR fallback
+                // (e.g. "Visual Studio 17 2022") would be picked up and crash
+                // because MSVC generators cannot target aarch64-linux-android.
+                ("CMAKE_GENERATOR", "Ninja"),
+                // We set these env vars to allow native library C/C++ builds to succeed with no additional app-side config.
                 // The naming conventions of these env variable keys are established by the `cc` Rust crate.
                 (
                     &format!("CC_{toolchain}"),
                     full_clang_path.to_str().unwrap(),
+                ),
+                (
+                    &format!("CXX_{toolchain}"),
+                    full_clangpp_path.to_str().unwrap(),
                 ),
                 (
                     &format!("AR_{toolchain}"),

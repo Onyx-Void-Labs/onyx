@@ -188,9 +188,11 @@ script_mod! {
                             }
 
                             // Cursor indicator — thin purple bar.
-                            // Positioned via set_uniform; blink via set_visible.
+                            // Positioned dynamically by tick_cursor_animation;
+                            // initial abs_pos is a rough default that accounts for
+                            // side panel (220) + divider (1) + editor padding (48).
                             cursor_overlay := View {
-                                abs_pos: vec2(48, 80)
+                                abs_pos: vec2(269, 80)
                                 width: 2
                                 height: 18
                                 show_bg: true
@@ -512,11 +514,17 @@ impl App {
 
         // ── Position the cursor overlay ──
         // Map animated column/line to pixel coords.
-        // These constants approximate the editor area padding + glyph metrics.
+        // These constants approximate glyph metrics at font_size 13.
         let char_width: f32 = 7.8;  // approximate monospace glyph width at font_size 13
         let line_height: f32 = 20.0;
-        let pad_left: f32 = 48.0;
-        let pad_top: f32 = 80.0; // title bar(48) + editor padding(32)
+
+        // Derive the editor text origin from the editor_area's actual
+        // screen position.  `abs_pos` in Makepad is window-absolute, so
+        // we must account for the side panel, divider, title bar, AND
+        // the editor area's own padding (left:48, top:32).
+        let editor_rect = self.ui.view(cx, ids!(editor_area)).area().rect(cx);
+        let pad_left: f32 = editor_rect.pos.x as f32 + 48.0; // editor view X + left padding
+        let pad_top: f32 = editor_rect.pos.y as f32 + 32.0;  // editor view Y + top padding
 
         let px_x = pad_left + self.cursor_anim_x * char_width;
         let px_y = pad_top + self.cursor_anim_y * line_height;

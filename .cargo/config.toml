@@ -12,13 +12,15 @@ incremental = true
 # linker = "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android33-clang.cmd"
 # ar     = "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar"
 
-# ── CMake generator override ──────────────────────────────────────
-# The `cmake` crate auto-detects "Visual Studio 18 2026" on newer
-# toolchains, but most local CMake installs only ship generators up
-# to VS 17 2022.  Force VS 17 so audiopus_sys (and any other cmake
-# dependency) can configure successfully on Windows.
+# ── CMake generator fallback (Windows only) ───────────────────────
+# The `cmake` crate auto-detects the VS generator, but some CMake
+# installs don't ship a generator for the newest VS version.
+# `force = false` means: use this value ONLY if CMAKE_GENERATOR is
+# not already set in the calling environment.  This lets
+# `cargo makepad android run` (which now sets CMAKE_GENERATOR=Ninja)
+# override the VS default without conflict.
 [env]
-CMAKE_GENERATOR = "Visual Studio 17 2022"
+CMAKE_GENERATOR = { value = "Visual Studio 17 2022", force = false }
 
 # ── Windows optimizations ────────────────────────────────────────
 [target.x86_64-pc-windows-msvc]
