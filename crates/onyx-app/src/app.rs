@@ -459,8 +459,8 @@ impl App {
         let pad_left: f32 = 48.0;
         let pad_top: f32 = 80.0; // title bar(48) + editor padding(32)
 
-        let _px_x = pad_left + self.cursor_anim_x * char_width;
-        let _px_y = pad_top + self.cursor_anim_y * line_height;
+        let px_x = pad_left + self.cursor_anim_x * char_width;
+        let px_y = pad_top + self.cursor_anim_y * line_height;
 
         // ── Cursor blink ──
         // Toggle the cursor bar visibility for a blink effect.
@@ -468,6 +468,13 @@ impl App {
         let visible = blink > 0.0;
 
         let overlay = self.ui.view(cx, ids!(cursor_overlay));
+        // Reposition the cursor overlay to follow the animated position
+        if let Some(mut inner) = overlay.borrow_mut() {
+            inner.walk.abs_pos = Some(Vec2d {
+                x: px_x as f64,
+                y: px_y as f64,
+            });
+        }
         overlay.set_visible(cx, visible);
         overlay.redraw(cx);
 
@@ -940,6 +947,37 @@ impl AppMain for App {
         match event {
             // -- Printable text input --
             Event::TextInput(e) => {
+                // ── Android IME full-state sync ──
+                // On Android, the primary keyboard path sends ImeTextStateChanged
+                // which populates `full_state_sync` with the entire editor text +
+                // selection, while `input` is empty.  Handle this path so that
+                // typing in the chat editor actually works on Android.
+                if let Some(ref full_state) = e.full_state_sync {
+                    let new_text = &full_state.text;
+                    let text_changed = self.buffer.text() != *new_text;
+                    if text_changed {
+                        self.capture_pre_edit_vv();
+                        // Replace entire buffer with the authoritative IME state
+                        self.buffer.set_text(new_text);
+                        // Sync CRDT to the new full text: delete everything, re-insert
+                        let old_crdt_text = self.crdt.get_text().unwrap_or_default();
+                        let old_len = old_crdt_text.chars().count();
+                        if old_len > 0 {
+                            let _ = self.crdt.delete(0, old_len);
+                        }
+                        if !new_text.is_empty() {
+                            let _ = self.crdt.insert(0, new_text);
+                        }
+                        self.broadcast_crdt_delta();
+                    }
+                    // Update cursor from selection end (CharOffset.0 is already a char index)
+                    let char_pos = full_state.selection.end.0.min(self.buffer.len_chars());
+                    self.cursor.move_to(char_pos);
+                    self.sync_display(cx);
+                    cx.redraw_all();
+                    return;
+                }
+
                 if e.input.is_empty() {
                     return;
                 }
