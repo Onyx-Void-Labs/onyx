@@ -290,8 +290,8 @@ script_mod! {
                                 align: Align{x: 0.5, y: 1.0}
 
                                 aero_hud := AeroHud {
-                                    width: Fit
-                                    height: 48
+                                    width: 400.0
+                                    height: 60.0
                                     margin: Inset{bottom: 20}
                                 }
                             }

@@ -302,6 +302,10 @@ impl Widget for CosmosView {
 
         // Draw each node
         for nd in &self.draw_data {
+            // Skip nodes with NaN positions to prevent layout crashes
+            if nd.x.is_nan() || nd.y.is_nan() {
+                continue;
+            }
             let (sx, sy) = self.world_to_screen(nd.x, nd.y);
             let screen_radius = nd.radius as f64 * self.cam_zoom;
 

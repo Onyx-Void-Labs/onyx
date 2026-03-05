@@ -78,6 +78,11 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             let dx = nodes[j].spatial.pos[0] - nodes[i].spatial.pos[0];
             let dy = nodes[j].spatial.pos[1] - nodes[i].spatial.pos[1];
             let dist_sq = (dx * dx + dy * dy).max(MIN_DIST_SQ);
+            let dist = dist_sq.sqrt().max(0.1); // Clamp to avoid zero/NaN
+            // If dx or dy is NaN, skip this pair
+            if dx.is_nan() || dy.is_nan() || dist.is_nan() {
+                continue;
+            }
             let dist = dist_sq.sqrt();
 
             // ── Gravity (attractive, mass-proportional) ──
@@ -88,6 +93,10 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             let grav_mag = (G * mi * mj / dist_sq).min(MAX_GRAVITY_FORCE);
             let gx = grav_mag * (dx / dist);
             let gy = grav_mag * (dy / dist);
+            // If gx or gy is NaN, skip force application
+            if gx.is_nan() || gy.is_nan() {
+                continue;
+            }
 
             // Newton's 3rd law: equal and opposite
             accel[i][0] += gx / mi.max(1.0);
@@ -99,7 +108,7 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             let ri = node_radius(&nodes[i]);
             let rj = node_radius(&nodes[j]);
             let min_dist = ri + rj;
-            if dist < min_dist {
+            if dist < min_dist && !dist.is_nan() {
                 let overlap = min_dist - dist;
                 let rep_mag = REPULSION_STRENGTH * overlap / dist;
                 let rx = rep_mag * (dx / dist);
