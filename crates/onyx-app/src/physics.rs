@@ -78,12 +78,11 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             let dx = nodes[j].spatial.pos[0] - nodes[i].spatial.pos[0];
             let dy = nodes[j].spatial.pos[1] - nodes[i].spatial.pos[1];
             let dist_sq = (dx * dx + dy * dy).max(MIN_DIST_SQ);
-            let dist = dist_sq.sqrt().max(0.1); // Clamp to avoid zero/NaN
-            // If dx or dy is NaN, skip this pair
+            let dist = dist_sq.sqrt().max(0.1);
+            // If any component is NaN, skip this pair entirely
             if dx.is_nan() || dy.is_nan() || dist.is_nan() {
                 continue;
             }
-            let dist = dist_sq.sqrt();
 
             // ── Gravity (attractive, mass-proportional) ──
             // Only Planets exert meaningful gravity; Asteroids are light.
@@ -158,6 +157,12 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         // ── 3. Heat decay ──
         node.spatial.heat *= 1.0 - HEAT_DECAY * dt;
         node.spatial.heat = node.spatial.heat.max(0.0);
+
+        // ── 4. NaN quarantine — forcefully sanitize ──
+        if node.spatial.pos[0].is_nan() { node.spatial.pos[0] = 0.0; }
+        if node.spatial.pos[1].is_nan() { node.spatial.pos[1] = 0.0; }
+        if node.spatial.velocity[0].is_nan() { node.spatial.velocity[0] = 0.0; }
+        if node.spatial.velocity[1].is_nan() { node.spatial.velocity[1] = 0.0; }
     }
 }
 
