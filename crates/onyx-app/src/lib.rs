@@ -25,8 +25,11 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 mod app;
 mod aero_hud;
+mod cosmos;
+mod cosmos_view;
 mod media_engine;
 mod net_bridge;
+mod physics;
 mod remote_cursor;
 
 /// Global profile name parsed from `--profile <NAME>` CLI arg.

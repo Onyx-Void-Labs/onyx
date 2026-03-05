@@ -21,6 +21,8 @@ use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
 
+use crate::cosmos::Cosmos;
+use crate::cosmos_view::{CosmosViewAction, CosmosViewWidgetRefExt, NodeDrawData};
 use crate::net_bridge::{NetBridge, NetEvent};
 use crate::media_engine::{MediaEngine, MediaEvent};
 
@@ -57,6 +59,7 @@ script_mod! {
     use mod.prelude.widgets.*
     use mod.widgets.RemoteCursorWidget
     use mod.widgets.AeroHud
+    use mod.widgets.CosmosView
 
     startup() do #(App::script_component(vm)) {
         ui: Root {
@@ -93,7 +96,7 @@ script_mod! {
                         View { width: Fill, height: 1 }
 
                         Label {
-                            text: "Phase 3 -- The Senses"
+                            text: "Phase 4 -- Stellar Physics"
                             draw_text.color: #x2A2A3A
                             draw_text.text_style.font_size: 10.0
                         }
@@ -202,7 +205,14 @@ script_mod! {
                             draw_bg.color: #x1A1A24
                         }
 
-                        // -- Main Note Area --
+                        // -- Cosmos Canvas (Spatial Universe) --
+                        cosmos_canvas := CosmosView {
+                            width: Fill
+                            height: Fill
+                            draw_bg.color: #x06060C
+                        }
+
+                        // -- Main Note Area (hidden when cosmos is active) --
                         editor_area := View {
                             width: Fill
                             height: Fill
@@ -385,6 +395,15 @@ pub struct App {
     /// Cosmos camera state for spatial navigation.
     #[rust]
     camera: CameraState,
+    /// The spatial universe — owns all VoidNodes and drives physics.
+    #[rust]
+    cosmos: Cosmos,
+    /// Whether the cosmos canvas is the active view (vs. editor).
+    #[rust]
+    cosmos_active: bool,
+    /// Timer driving the physics simulation at ~60 fps.
+    #[rust]
+    cosmos_timer: Timer,
 }
 
 impl App {
@@ -395,6 +414,8 @@ impl App {
         crate::remote_cursor::script_mod(vm);
         // Register the Aero-HUD widget for the Singularity Engine UI.
         crate::aero_hud::script_mod(vm);
+        // Register the CosmosView spatial canvas widget.
+        crate::cosmos_view::script_mod(vm);
         let mut app = App::from_script_mod(vm, self::script_mod);
         app.panel_open = true;
         app.last_display_hash = 0;
@@ -410,7 +431,55 @@ impl App {
         app.remote_cursors = HashMap::new();
         app.cursor_broadcast_counter = 0;
         app.camera = CameraState::default();
+
+        // ── Cosmos initialisation ──
+        let mut cosmos = Cosmos::new();
+        // Spawn a few demo nodes so the canvas isn't empty on first launch.
+        use onyx_core::void_node::NodeType;
+        cosmos.spawn_node(NodeType::Planet);
+        cosmos.spawn_node(NodeType::Planet);
+        cosmos.spawn_node(NodeType::Asteroid);
+        cosmos.spawn_node(NodeType::Asteroid);
+        cosmos.spawn_node(NodeType::Asteroid);
+        cosmos.spawn_node(NodeType::Satellite);
+        app.cosmos = cosmos;
+        app.cosmos_active = true; // start in cosmos view
         app
+    }
+
+    /// Tick the cosmos physics and feed draw data to the CosmosView widget.
+    fn tick_cosmos(&mut self, cx: &mut Cx) {
+        if !self.cosmos_active {
+            return;
+        }
+
+        let dt = 1.0 / 60.0_f32; // fixed timestep at 60 fps
+        self.cosmos.tick(dt);
+
+        // Build draw data from current cosmos state
+        let draw_data: Vec<NodeDrawData> = self.cosmos.nodes.iter().enumerate().map(|(i, node)| {
+            NodeDrawData {
+                x: node.spatial.pos[0],
+                y: node.spatial.pos[1],
+                radius: crate::physics::node_radius(node),
+                heat: node.spatial.heat,
+                node_type: node.node_type,
+                selected: self.cosmos.selected == Some(i),
+                label: self.cosmos.node_label(i),
+            }
+        }).collect();
+
+        // Feed draw data to the CosmosView widget
+        let cosmos_view = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+        cosmos_view.set_draw_data(draw_data);
+        cosmos_view.set_camera(self.camera.x, self.camera.y, self.camera.z);
+
+        // Update status bar with cosmos info
+        self.ui
+            .label(cx, ids!(status_label))
+            .set_text(cx, &format!("Cosmos — {} nodes", self.cosmos.len()));
+
+        cx.redraw_all();
     }
 
     /// Push the buffer text into the editor label + update status bar.
@@ -1013,6 +1082,53 @@ impl MatchEvent for App {
             cx.redraw_all();
         }
 
+        // ── Aero-HUD controls ──────────────────────────────────────
+
+        // Spawn Planet
+        if self.ui.button(cx, ids!(hud_spawn_planet)).clicked(actions) {
+            use onyx_core::void_node::NodeType;
+            self.cosmos.spawn_node(NodeType::Planet);
+            tracing::info!("spawned Planet — {} nodes total", self.cosmos.len());
+            cx.redraw_all();
+        }
+
+        // Spawn Asteroid
+        if self.ui.button(cx, ids!(hud_spawn_asteroid)).clicked(actions) {
+            use onyx_core::void_node::NodeType;
+            self.cosmos.spawn_node(NodeType::Asteroid);
+            tracing::info!("spawned Asteroid — {} nodes total", self.cosmos.len());
+            cx.redraw_all();
+        }
+
+        // Spawn Satellite
+        if self.ui.button(cx, ids!(hud_spawn_satellite)).clicked(actions) {
+            use onyx_core::void_node::NodeType;
+            self.cosmos.spawn_node(NodeType::Satellite);
+            tracing::info!("spawned Satellite — {} nodes total", self.cosmos.len());
+            cx.redraw_all();
+        }
+
+        // View toggle: cosmos ↔ editor
+        if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
+            self.cosmos_active = !self.cosmos_active;
+            self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
+            self.ui.cosmos_view(cx, ids!(cosmos_canvas)).set_visible(cx, self.cosmos_active);
+
+            // Update toggle button label
+            let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
+            self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
+            cx.redraw_all();
+        }
+
+        // Delete selected node
+        if self.ui.button(cx, ids!(hud_delete)).clicked(actions) {
+            if let Some(idx) = self.cosmos.selected {
+                tracing::info!("deleting node {idx}");
+                self.cosmos.remove_node(idx);
+                cx.redraw_all();
+            }
+        }
+
         // -- Track room input focus to avoid editor key conflicts --
         let room_input = self.ui.text_input(cx, ids!(room_input));
         for action in actions.filter_widget_actions_cast::<TextInputAction>(room_input.widget_uid()) {
@@ -1020,6 +1136,39 @@ impl MatchEvent for App {
                 TextInputAction::KeyFocus => self.room_input_focused = true,
                 TextInputAction::KeyFocusLost => self.room_input_focused = false,
                 _ => {}
+            }
+        }
+
+        // -- CosmosView actions --
+        if self.cosmos_active {
+            let cosmos_canvas = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+            for action in actions.filter_widget_actions_cast::<CosmosViewAction>(cosmos_canvas.widget_uid()) {
+                match action {
+                    CosmosViewAction::NodeClicked(idx) => {
+                        self.cosmos.selected = Some(idx);
+                    }
+                    CosmosViewAction::Deselect => {
+                        self.cosmos.selected = None;
+                    }
+                    CosmosViewAction::NodeDragStart(idx) => {
+                        self.cosmos.dragged = Some(idx);
+                        self.cosmos.selected = Some(idx);
+                    }
+                    CosmosViewAction::NodeDragging { x, y } => {
+                        self.cosmos.drag_to(x, y);
+                    }
+                    CosmosViewAction::NodeDragEnd => {
+                        self.cosmos.dragged = None;
+                    }
+                    CosmosViewAction::CameraPanned { x, y } => {
+                        self.camera.x = x;
+                        self.camera.y = y;
+                    }
+                    CosmosViewAction::CameraZoomed(z) => {
+                        self.camera.z = z;
+                    }
+                    CosmosViewAction::None => {}
+                }
             }
         }
     }
@@ -1038,12 +1187,18 @@ impl AppMain for App {
         // -- Cursor animation timer (~60 fps) --
         if self.cursor_timer.is_event(event).is_some() {
             self.tick_cursor_animation(cx);
+            // Piggyback cosmos physics on the same 60fps timer
+            self.tick_cosmos(cx);
         }
 
         // Start cursor timer on first event if not already running
         if !self.cursor_timer_started {
             self.cursor_timer = cx.start_interval(1.0 / 60.0);
             self.cursor_timer_started = true;
+
+            // Toggle initial view visibility
+            self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
+            self.ui.cosmos_view(cx, ids!(cosmos_canvas)).set_visible(cx, self.cosmos_active);
         }
 
         // Skip editor key handling when room input has focus
