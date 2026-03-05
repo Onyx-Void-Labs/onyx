@@ -25,13 +25,17 @@ const G: f32 = 800.0;
 const MAX_GRAVITY_FORCE: f32 = 200.0;
 
 /// Short-range repulsion strength (prevents node overlap).
-const REPULSION_STRENGTH: f32 = 5000.0;
+const REPULSION_STRENGTH: f32 = 3000.0;
+
+/// Soft repulsion zone — inverse-square repulsion kicks in below this distance.
+const SOFT_REPULSION_DIST: f32 = 60.0;
 
 /// Minimum distance^2 to prevent division by zero.
 const MIN_DIST_SQ: f32 = 400.0;
 
-/// Velocity damping factor per frame (0.98 = 2% loss per tick).
-const DAMPING: f32 = 0.96;
+/// Velocity damping factor per frame (0.92 = "space friction").
+/// Lower = more viscous, more majestic orbital glide.
+const DAMPING: f32 = 0.92;
 
 /// Heat decay rate per second.  heat *= (1.0 - HEAT_DECAY * dt).
 const HEAT_DECAY: f32 = 0.05;
@@ -43,7 +47,8 @@ const OORT_HEAT_THRESHOLD: f32 = 0.15;
 const OORT_DRIFT_FORCE: f32 = 8.0;
 
 /// Maximum velocity magnitude (speed limit).
-const MAX_SPEED: f32 = 400.0;
+/// Capped low to prevent nodes flinging off-screen.
+const MAX_SPEED: f32 = 10.0;
 
 /// Visual radius scale: radius = RADIUS_BASE + sqrt(mass) * RADIUS_SCALE.
 const RADIUS_BASE: f32 = 12.0;
@@ -103,13 +108,14 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             accel[j][0] -= gx / mj.max(1.0);
             accel[j][1] -= gy / mj.max(1.0);
 
-            // ── Short-range repulsion (overlap prevention) ──
-            let ri = node_radius(&nodes[i]);
-            let rj = node_radius(&nodes[j]);
-            let min_dist = ri + rj;
-            if dist < min_dist && !dist.is_nan() {
-                let overlap = min_dist - dist;
-                let rep_mag = REPULSION_STRENGTH * overlap / dist;
+            // ── Soft inverse-square repulsion (smooth push when close) ──
+            // Active below SOFT_REPULSION_DIST — prevents overlap without
+            // violent jitter.  Uses inverse-square falloff for a gentle
+            // pressure gradient instead of a hard spring.
+            if dist < SOFT_REPULSION_DIST && !dist.is_nan() {
+                // Soft repulsion: strength ∝ 1/dist² (clamped to avoid explosion)
+                let safe_dist = dist.max(5.0);
+                let rep_mag = REPULSION_STRENGTH / (safe_dist * safe_dist);
                 let rx = rep_mag * (dx / dist);
                 let ry = rep_mag * (dy / dist);
                 accel[i][0] -= rx / mi.max(1.0);

@@ -936,6 +936,29 @@ impl MatchEvent for App {
                     CosmosViewAction::NodeClicked(idx) => {
                         self.cosmos.selected = Some(idx);
                     }
+                    CosmosViewAction::NodeDoubleClicked(idx) => {
+                        // ── "The Dive" — transition into the editor for this node ──
+                        self.cosmos.selected = Some(idx);
+                        self.cosmos_active = false;
+
+                        // Hide cosmos, show editor
+                        self.ui.view(cx, ids!(editor_area)).set_visible(cx, true);
+                        let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
+                        cv.set_visible(cx, false);
+                        self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, "⟁ Cosmos");
+
+                        // TODO: Load this specific VoidNode's Loro text into the editor.
+                        // When Loro per-node binding is wired:
+                        //   let node = &self.cosmos.nodes[idx];
+                        //   let doc_id = node.id;
+                        //   self.crdt = CrdtDoc::open_or_create(doc_id);
+                        //   let text = self.crdt.get_text().unwrap_or_default();
+                        //   self.buffer.set_text(&text);
+                        //   self.cursor.move_to(0);
+
+                        self.sync_display(cx);
+                        cx.redraw_all();
+                    }
                     CosmosViewAction::Deselect => {
                         self.cosmos.selected = None;
                     }

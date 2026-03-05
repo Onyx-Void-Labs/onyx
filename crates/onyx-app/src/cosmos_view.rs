@@ -41,6 +41,8 @@ pub enum CosmosViewAction {
     Deselect,
     /// User clicked on a node.
     NodeClicked(usize),
+    /// User double-clicked on a node — "dive" into it.
+    NodeDoubleClicked(usize),
     /// User started dragging a node.
     NodeDragStart(usize),
     /// User is dragging — world-space coordinates.
@@ -60,40 +62,111 @@ pub enum CosmosViewAction {
 script_mod! {
     use mod.prelude.widgets_internal.*
 
-    // DrawNodeBody: a circle shader with glow (extends DrawQuad)
+    // DrawNodeBody: SDF circle shader with atmospheric effects (extends DrawQuad)
     set_type_default() do #(DrawNodeBody::script_shader(vm)){
         ..mod.draw.DrawQuad
 
         node_color: #x7B68EE
         heat: 1.0
         selected: 0.0
+        node_type_id: 0.0
+        zoom_level: 1.0
 
         pixel: fn() {
             let uv = self.pos * 2.0 - 1.0
             let dist = length(uv)
 
-            // Circle body (anti-aliased edge)
-            let body = 1.0 - smoothstep(0.75, 0.85, dist)
+            // ── Early discard: anything beyond the bounding circle ──
+            // Forces GPU Early-Z rejection — saves massive fill-rate.
+            if dist > 1.05 {
+                return vec4(0.0, 0.0, 0.0, 0.0)
+            }
 
-            // Glow halo (heat-driven intensity)
-            let glow_intensity = self.heat * 0.4 + 0.1
-            let glow = exp(-(dist - 0.7) * (dist - 0.7) * 8.0) * glow_intensity
+            // ── SDF anti-aliased circle (perfectly smooth edges) ──
+            let edge_width = 0.02 + 0.5 / max(self.zoom_level, 0.1)
+            let body = 1.0 - smoothstep(0.85 - edge_width, 0.85, dist)
 
-            // Selection ring
-            let ring_dist = abs(dist - 0.9)
-            let ring = smoothstep(0.06, 0.02, ring_dist) * self.selected
+            // ── LOD: simplified path for tiny on-screen nodes ──
+            if self.zoom_level < 0.3 {
+                // Ultra-simplified: just a colored circle, no glow
+                let alpha = body
+                if alpha < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
+                let r = self.node_color.r * 0.8
+                let g = self.node_color.g * 0.8
+                let b = self.node_color.b * 0.8
+                return Pal.premul(vec4(r, g, b, alpha))
+            }
 
-            let alpha = clamp(body + glow + ring, 0.0, 1.0)
+            // ── Fresnel rim-lighting (atmospheric glow) ──
+            let fresnel = pow(smoothstep(0.45, 0.90, dist), 2.5)
+            let rim_strength = fresnel * (0.5 + self.heat * 0.5)
 
+            // ── Atmospheric halo (soft outer glow) ──
+            let glow_intensity = self.heat * 0.35 + 0.08
+            let glow = exp(-(dist - 0.75) * (dist - 0.75) * 10.0) * glow_intensity
+
+            // ── Node-type specific effects ──
+            let type_mod_r = 0.0
+            let type_mod_g = 0.0
+            let type_mod_b = 0.0
+            let type_alpha_mod = 0.0
+
+            // Planet (0): gas-giant fresnel atmosphere
+            if self.node_type_id < 0.5 {
+                type_mod_r = rim_strength * 0.6
+                type_mod_g = rim_strength * 0.3
+                type_mod_b = rim_strength * 0.9
+                type_alpha_mod = glow * 1.5
+            }
+
+            // Asteroid (1): darker, sharper, slightly translucent
+            if self.node_type_id > 0.5 && self.node_type_id < 1.5 {
+                let body2 = 1.0 - smoothstep(0.75, 0.78, dist)
+                let body_val = body2 * 0.75
+                let alpha2 = clamp(body_val + glow * 0.3, 0.0, 0.9)
+                if alpha2 < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
+                let r = self.node_color.r * 0.55
+                let g = self.node_color.g * 0.55
+                let b = self.node_color.b * 0.60
+                return Pal.premul(vec4(r, g, b, alpha2))
+            }
+
+            // Satellite (2): bright tiny glowing star
+            if self.node_type_id > 1.5 && self.node_type_id < 2.5 {
+                let star_core = 1.0 - smoothstep(0.0, 0.5, dist)
+                let star_flare = exp(-dist * dist * 4.0) * 1.2
+                let star_alpha = clamp(star_core + star_flare + glow * 2.0, 0.0, 1.0)
+                if star_alpha < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
+                let brightness = 0.9 + self.heat * 0.1
+                let r = self.node_color.r * brightness + star_flare * 0.4
+                let g = self.node_color.g * brightness + star_flare * 0.3
+                let b = self.node_color.b * brightness + star_flare * 0.2
+                return Pal.premul(vec4(r, g, b, star_alpha))
+            }
+
+            // DysonSphere (3): golden shell with inner ring
+            if self.node_type_id > 2.5 {
+                let shell_ring = smoothstep(0.03, 0.01, abs(dist - 0.7))
+                type_mod_r = rim_strength * 0.9 + shell_ring * 0.4
+                type_mod_g = rim_strength * 0.7 + shell_ring * 0.3
+                type_mod_b = rim_strength * 0.1
+                type_alpha_mod = glow * 1.2 + shell_ring * 0.5
+            }
+
+            // ── Selection ring ──
+            let ring_dist = abs(dist - 0.92)
+            let ring = smoothstep(0.05, 0.015, ring_dist) * self.selected
+
+            let alpha = clamp(body + glow + ring + type_alpha_mod, 0.0, 1.0)
             if alpha < 0.005 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
-            // Color: base node_color, brightened by heat
-            let brightness = 0.6 + self.heat * 0.4
-            let r = self.node_color.r * brightness + ring * 0.3
-            let g = self.node_color.g * brightness + ring * 0.3
-            let b = self.node_color.b * brightness + ring * 0.3
+            // ── Final colour: base tint + atmospheric modulation ──
+            let brightness = 0.55 + self.heat * 0.45
+            let r = self.node_color.r * brightness + type_mod_r + ring * 0.3
+            let g = self.node_color.g * brightness + type_mod_g + ring * 0.3
+            let b = self.node_color.b * brightness + type_mod_b + ring * 0.3
 
             return Pal.premul(vec4(r, g, b, alpha))
         }
@@ -124,6 +197,10 @@ pub struct DrawNodeBody {
     heat: f32,
     #[live]
     selected: f32,
+    #[live]
+    node_type_id: f32,
+    #[live]
+    zoom_level: f32,
 }
 
 // ── Colour palette for node types ───────────────────────────────
@@ -135,6 +212,18 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
         NodeType::Asteroid    => Vec4 { x: 0.55, y: 0.65, z: 0.75, w: 1.0 }, // Blue-grey
         NodeType::Satellite   => Vec4 { x: 0.93, y: 0.60, z: 0.30, w: 1.0 }, // Amber
         NodeType::DysonSphere => Vec4 { x: 0.93, y: 0.80, z: 0.20, w: 1.0 }, // Gold
+    }
+}
+
+/// Map NodeType to a float ID for the shader.
+/// Planet=0, Asteroid=1, Satellite=2, DysonSphere=3.
+fn node_type_to_id(nt: onyx_core::void_node::NodeType) -> f32 {
+    use onyx_core::void_node::NodeType;
+    match nt {
+        NodeType::Planet      => 0.0,
+        NodeType::Asteroid    => 1.0,
+        NodeType::Satellite   => 2.0,
+        NodeType::DysonSphere => 3.0,
     }
 }
 
@@ -179,6 +268,9 @@ pub struct CosmosView {
     pan_start: Option<(f64, f64, f64, f64)>, // (mouse_x, mouse_y, cam_x, cam_y)
     #[rust]
     widget_rect: Rect,
+    /// Last click time + node index for double-click detection.
+    #[rust]
+    last_click: Option<(f64, usize)>,
 }
 
 impl CosmosView {
@@ -235,8 +327,22 @@ impl Widget for CosmosView {
                 }
 
                 if let Some(idx) = hit_idx {
-                    cx.widget_action(uid, CosmosViewAction::NodeClicked(idx));
-                    cx.widget_action(uid, CosmosViewAction::NodeDragStart(idx));
+                    // Double-click detection (within 400ms on same node)
+                    let now = fd.time;
+                    let is_double = if let Some((prev_time, prev_idx)) = self.last_click {
+                        prev_idx == idx && (now - prev_time) < 0.4
+                    } else {
+                        false
+                    };
+
+                    if is_double {
+                        cx.widget_action(uid, CosmosViewAction::NodeDoubleClicked(idx));
+                        self.last_click = None;
+                    } else {
+                        self.last_click = Some((now, idx));
+                        cx.widget_action(uid, CosmosViewAction::NodeClicked(idx));
+                        cx.widget_action(uid, CosmosViewAction::NodeDragStart(idx));
+                    }
                 } else {
                     // Start camera pan
                     self.pan_start = Some((fd.abs.x, fd.abs.y, self.cam_x, self.cam_y));
@@ -331,6 +437,8 @@ impl Widget for CosmosView {
             self.draw_node.node_color = node_type_color(nd.node_type);
             self.draw_node.heat = nd.heat;
             self.draw_node.selected = if nd.selected { 1.0 } else { 0.0 };
+            self.draw_node.node_type_id = node_type_to_id(nd.node_type);
+            self.draw_node.zoom_level = self.cam_zoom as f32;
 
             // Draw the node body (quad sized to encompass circle + glow)
             let node_rect = Rect {
