@@ -84,8 +84,8 @@ script_mod! {
                         aero_hud := AeroHud {
                             width: 400.0
                             height: 60.0
-                            align: {x: 0.5, y: 1.0}
-                            margin: {bottom: 40.0, top: 0.0, left: 0.0, right: 0.0}
+                            align: Align{x: 0.5, y: 1.0}
+                            margin: Inset{bottom: 40.0}
                         }
                     }
                 }
@@ -241,7 +241,7 @@ impl App {
         }).collect();
 
         // Feed draw data to the CosmosView widget
-        let cosmos_view = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+        let cosmos_view = self.ui.cosmos_view(cx, ids!(cosmos_view));
         cosmos_view.set_draw_data(draw_data);
         cosmos_view.set_camera(self.camera.x, self.camera.y, self.camera.z);
 
@@ -883,7 +883,7 @@ impl MatchEvent for App {
         if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
             self.cosmos_active = !self.cosmos_active;
             self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
-            let cv = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+            let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
             cv.set_visible(cx, self.cosmos_active);
 
             // Update toggle button label
@@ -918,8 +918,8 @@ impl MatchEvent for App {
 
         // -- CosmosView actions --
         if self.cosmos_active {
-            let cosmos_canvas = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
-            for action in actions.filter_widget_actions_cast::<CosmosViewAction>(cosmos_canvas.widget_uid()) {
+            let cosmos_view_ref = self.ui.cosmos_view(cx, ids!(cosmos_view));
+            for action in actions.filter_widget_actions_cast::<CosmosViewAction>(cosmos_view_ref.widget_uid()) {
                 match action {
                     CosmosViewAction::NodeClicked(idx) => {
                         self.cosmos.selected = Some(idx);
@@ -982,7 +982,7 @@ impl AppMain for App {
 
             // Toggle initial view visibility — cosmos starts visible
             self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
-            let cv = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+            let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
             cv.set_visible(cx, self.cosmos_active);
                 // Start cosmos timer for physics loop
                 self.cosmos_timer = cx.start_interval(0.016); // ~60fps
