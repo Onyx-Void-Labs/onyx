@@ -205,86 +205,97 @@ script_mod! {
                             draw_bg.color: #x1A1A24
                         }
 
-                        // -- Cosmos Canvas (Spatial Universe) --
-                        cosmos_canvas := CosmosView {
+                        // -- Right-side content: Overlay for cosmos + editor + HUD --
+                        View {
+                            flow: Overlay
                             width: Fill
                             height: Fill
-                            draw_bg.color: #x06060C
-                        }
 
-                        // -- Main Note Area (hidden when cosmos is active) --
-                        editor_area := View {
-                            width: Fill
-                            height: Fill
-                            padding: Inset{left: 48, top: 32, right: 48, bottom: 32}
-
-                            editor_label := Label {
-                                text: ""
-                                draw_text.color: #xE0E0E8
-                                draw_text.text_style.font_size: 13.0
+                            // Layer 0: Cosmos spatial canvas (full bleed)
+                            cosmos_canvas := CosmosView {
+                                width: Fill
+                                height: Fill
+                                draw_bg.color: #x06060C
                             }
 
-                            // Cursor indicator — thin purple bar.
-                            // Positioned dynamically by tick_cursor_animation;
-                            // initial abs_pos is a rough default that accounts for
-                            // side panel (220) + divider (1) + editor padding (48).
-                            cursor_overlay := View {
-                                abs_pos: vec2(269, 80)
-                                width: 2
-                                height: 18
+                            // Layer 1: Text editor (hidden when cosmos is active)
+                            editor_area := View {
+                                width: Fill
+                                height: Fill
+                                visible: false
                                 show_bg: true
-                                draw_bg.color: #x7B68EE
+                                draw_bg.color: #x0A0A12
+                                padding: Inset{left: 48, top: 32, right: 48, bottom: 32}
+
+                                editor_label := Label {
+                                    text: ""
+                                    draw_text.color: #xE0E0E8
+                                    draw_text.text_style.font_size: 13.0
+                                }
+
+                                cursor_overlay := View {
+                                    abs_pos: vec2(269, 80)
+                                    width: 2
+                                    height: 18
+                                    show_bg: true
+                                    draw_bg.color: #x7B68EE
+                                }
+
+                                remote_cursor_0 := View {
+                                    abs_pos: vec2(-100, -100)
+                                    width: 24
+                                    height: 18
+                                    visible: false
+                                    RemoteCursorWidget {
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                remote_cursor_1 := View {
+                                    abs_pos: vec2(-100, -100)
+                                    width: 24
+                                    height: 18
+                                    visible: false
+                                    RemoteCursorWidget {
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                remote_cursor_2 := View {
+                                    abs_pos: vec2(-100, -100)
+                                    width: 24
+                                    height: 18
+                                    visible: false
+                                    RemoteCursorWidget {
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                remote_cursor_3 := View {
+                                    abs_pos: vec2(-100, -100)
+                                    width: 24
+                                    height: 18
+                                    visible: false
+                                    RemoteCursorWidget {
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
                             }
 
-                            // Remote cursors — up to 4 peers' cursors
-                            // rendered via the DrawRemoteCursor glow shader.
-                            remote_cursor_0 := View {
-                                abs_pos: vec2(-100, -100)
-                                width: 24
-                                height: 18
-                                visible: false
-                                RemoteCursorWidget {
-                                    width: Fill
-                                    height: Fill
-                                }
-                            }
-                            remote_cursor_1 := View {
-                                abs_pos: vec2(-100, -100)
-                                width: 24
-                                height: 18
-                                visible: false
-                                RemoteCursorWidget {
-                                    width: Fill
-                                    height: Fill
-                                }
-                            }
-                            remote_cursor_2 := View {
-                                abs_pos: vec2(-100, -100)
-                                width: 24
-                                height: 18
-                                visible: false
-                                RemoteCursorWidget {
-                                    width: Fill
-                                    height: Fill
-                                }
-                            }
-                            remote_cursor_3 := View {
-                                abs_pos: vec2(-100, -100)
-                                width: 24
-                                height: 18
-                                visible: false
-                                RemoteCursorWidget {
-                                    width: Fill
-                                    height: Fill
+                            // Layer 2: Floating Aero-HUD (always on top)
+                            View {
+                                width: Fill
+                                height: Fill
+                                align: {x: 0.5, y: 1.0}
+
+                                aero_hud := AeroHud {
+                                    width: Fit
+                                    height: 48
+                                    margin: {bottom: 20}
                                 }
                             }
                         }
-                    }
-
-                    // -- Aero-HUD (Singularity Engine bottom bar) --
-                    aero_hud := AeroHud {
-                        width: Fill
-                        height: 48
                     }
 
                     // -- Status bar --
@@ -1112,11 +1123,17 @@ impl MatchEvent for App {
         if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
             self.cosmos_active = !self.cosmos_active;
             self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
-            self.ui.cosmos_view(cx, ids!(cosmos_canvas)).set_visible(cx, self.cosmos_active);
+            let cv = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+            cv.set_visible(cx, self.cosmos_active);
 
             // Update toggle button label
             let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
             self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
+
+            // When switching to editor, sync display
+            if !self.cosmos_active {
+                self.sync_display(cx);
+            }
             cx.redraw_all();
         }
 
@@ -1196,9 +1213,10 @@ impl AppMain for App {
             self.cursor_timer = cx.start_interval(1.0 / 60.0);
             self.cursor_timer_started = true;
 
-            // Toggle initial view visibility
+            // Toggle initial view visibility — cosmos starts visible
             self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
-            self.ui.cosmos_view(cx, ids!(cosmos_canvas)).set_visible(cx, self.cosmos_active);
+            let cv = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
+            cv.set_visible(cx, self.cosmos_active);
         }
 
         // Skip editor key handling when room input has focus

@@ -153,6 +153,9 @@ pub struct CosmosView {
     walk: Walk,
     #[layout]
     layout: Layout,
+    /// Visibility flag — toggled by the App via set_visible.
+    #[visible]
+    visible: bool,
 
     // ── Camera state (screen-space ↔ world-space transform) ──
     // Using f64 to match Makepad's coordinate system (DVec2/Rect).
@@ -280,6 +283,11 @@ impl Widget for CosmosView {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
+        // Skip drawing entirely when hidden
+        if !self.visible {
+            return DrawStep::done();
+        }
+
         // Get our allocated rect
         let rect = cx.walk_turtle(walk);
         self.widget_rect = rect;
@@ -339,6 +347,12 @@ impl CosmosViewRef {
     pub fn set_camera(&self, x: f32, y: f32, zoom: f32) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_camera(x, y, zoom);
+        }
+    }
+
+    pub fn set_visible(&self, cx: &mut Cx, visible: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_visible(cx, visible);
         }
     }
 }
