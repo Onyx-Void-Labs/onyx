@@ -57,7 +57,7 @@ impl Default for CameraState {
 // --- DSL: The Void UI ---
 
 script_mod! {
-    use mod.prelude.widgets_internal.*
+    use mod.prelude.widgets.*
     use mod.widgets.RemoteCursorWidget
     use mod.widgets.AeroHud
     use mod.widgets.CosmosView
