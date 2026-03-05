@@ -107,6 +107,9 @@ script_mod! {
     mod.widgets.CosmosView = set_type_default() do mod.widgets.CosmosViewBase {
         width: Fill
         height: Fill
+        draw_bg.color: #x0A0A14
+        draw_text.color: #xCCCCDD
+        draw_text.text_style.font_size: 9.0
     }
 }
 
@@ -150,6 +153,8 @@ pub struct CosmosView {
     draw_bg: DrawQuad,
     #[live]
     draw_node: DrawNodeBody,
+    #[live]
+    draw_text: DrawText,
     #[walk]
     walk: Walk,
     #[layout]
@@ -341,6 +346,12 @@ impl Widget for CosmosView {
                 },
             };
             self.draw_node.draw_abs(cx, node_rect);
+
+            // Draw the label below the node
+            self.draw_text.draw_abs(cx, dvec2(
+                screen_x - draw_size * 0.25,
+                screen_y + draw_size * 0.5 + 4.0,
+            ), nd.label);
         }
 
         DrawStep::done()

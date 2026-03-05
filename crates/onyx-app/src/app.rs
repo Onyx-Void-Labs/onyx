@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use crate::cosmos::Cosmos;
 use crate::cosmos_view::{CosmosViewAction, CosmosViewWidgetRefExt, NodeDrawData};
+use crate::aero_hud::AeroHudAction;
 use crate::net_bridge::{NetBridge, NetEvent};
 use crate::media_engine::{MediaEngine, MediaEvent};
 
@@ -56,7 +57,7 @@ impl Default for CameraState {
 // --- DSL: The Void UI ---
 
 script_mod! {
-    use mod.prelude.widgets.*
+    use mod.prelude.widgets_internal.*
     use mod.widgets.RemoteCursorWidget
     use mod.widgets.AeroHud
     use mod.widgets.CosmosView
@@ -251,6 +252,23 @@ impl App {
             .set_text(cx, &format!("Cosmos — {} nodes", self.cosmos.len()));
 
         cx.redraw_all();
+    }
+
+    /// Map HUD button clicks to a typed AeroHudAction.
+    fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
+        if self.ui.button(cx, ids!(hud_spawn_planet)).clicked(actions) {
+            AeroHudAction::SpawnPlanet
+        } else if self.ui.button(cx, ids!(hud_spawn_asteroid)).clicked(actions) {
+            AeroHudAction::SpawnAsteroid
+        } else if self.ui.button(cx, ids!(hud_spawn_satellite)).clicked(actions) {
+            AeroHudAction::SpawnSatellite
+        } else if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
+            AeroHudAction::ToggleView
+        } else if self.ui.button(cx, ids!(hud_delete)).clicked(actions) {
+            AeroHudAction::DeleteSelected
+        } else {
+            AeroHudAction::None
+        }
     }
 
     /// Push the buffer text into the editor label + update status bar.
@@ -853,56 +871,45 @@ impl MatchEvent for App {
             cx.redraw_all();
         }
 
-        // ── Aero-HUD controls ──────────────────────────────────────
-
-        // Spawn Planet
-        if self.ui.button(cx, ids!(hud_spawn_planet)).clicked(actions) {
+        // ── Aero-HUD controls (dispatched via AeroHudAction) ──────
+        {
             use onyx_core::void_node::NodeType;
-            self.cosmos.spawn_node(NodeType::Planet);
-            tracing::info!("spawned Planet — {} nodes total", self.cosmos.len());
-            cx.redraw_all();
-        }
-
-        // Spawn Asteroid
-        if self.ui.button(cx, ids!(hud_spawn_asteroid)).clicked(actions) {
-            use onyx_core::void_node::NodeType;
-            self.cosmos.spawn_node(NodeType::Asteroid);
-            tracing::info!("spawned Asteroid — {} nodes total", self.cosmos.len());
-            cx.redraw_all();
-        }
-
-        // Spawn Satellite
-        if self.ui.button(cx, ids!(hud_spawn_satellite)).clicked(actions) {
-            use onyx_core::void_node::NodeType;
-            self.cosmos.spawn_node(NodeType::Satellite);
-            tracing::info!("spawned Satellite — {} nodes total", self.cosmos.len());
-            cx.redraw_all();
-        }
-
-        // View toggle: cosmos ↔ editor
-        if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
-            self.cosmos_active = !self.cosmos_active;
-            self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
-            let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
-            cv.set_visible(cx, self.cosmos_active);
-
-            // Update toggle button label
-            let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
-            self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
-
-            // When switching to editor, sync display
-            if !self.cosmos_active {
-                self.sync_display(cx);
-            }
-            cx.redraw_all();
-        }
-
-        // Delete selected node
-        if self.ui.button(cx, ids!(hud_delete)).clicked(actions) {
-            if let Some(idx) = self.cosmos.selected {
-                tracing::info!("deleting node {idx}");
-                self.cosmos.remove_node(idx);
-                cx.redraw_all();
+            match self.poll_hud_action(cx, actions) {
+                AeroHudAction::SpawnPlanet => {
+                    self.cosmos.spawn_node(NodeType::Planet);
+                    tracing::info!("spawned Planet — {} nodes total", self.cosmos.len());
+                    cx.redraw_all();
+                }
+                AeroHudAction::SpawnAsteroid => {
+                    self.cosmos.spawn_node(NodeType::Asteroid);
+                    tracing::info!("spawned Asteroid — {} nodes total", self.cosmos.len());
+                    cx.redraw_all();
+                }
+                AeroHudAction::SpawnSatellite => {
+                    self.cosmos.spawn_node(NodeType::Satellite);
+                    tracing::info!("spawned Satellite — {} nodes total", self.cosmos.len());
+                    cx.redraw_all();
+                }
+                AeroHudAction::ToggleView => {
+                    self.cosmos_active = !self.cosmos_active;
+                    self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
+                    let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
+                    cv.set_visible(cx, self.cosmos_active);
+                    let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
+                    self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
+                    if !self.cosmos_active {
+                        self.sync_display(cx);
+                    }
+                    cx.redraw_all();
+                }
+                AeroHudAction::DeleteSelected => {
+                    if let Some(idx) = self.cosmos.selected {
+                        tracing::info!("deleting node {idx}");
+                        self.cosmos.remove_node(idx);
+                        cx.redraw_all();
+                    }
+                }
+                AeroHudAction::None => {}
             }
         }
 
@@ -943,6 +950,12 @@ impl MatchEvent for App {
                     }
                     CosmosViewAction::CameraZoomed(z) => {
                         self.camera.z = z;
+                        self.camera.zoom_level = match z {
+                            z if z < 0.4 => 0, // Multiverse
+                            z if z < 0.8 => 1, // Constellation
+                            z if z < 2.0 => 2, // Planet
+                            _             => 3, // Surface
+                        };
                     }
                     CosmosViewAction::None => {}
                 }

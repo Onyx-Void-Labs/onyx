@@ -90,21 +90,6 @@ impl Cosmos {
         physics::tick(&mut self.nodes, dt);
     }
 
-    /// Hit-test: find the node under the given world-space coordinates.
-    /// Returns the index of the topmost (last-drawn) node, if any.
-    pub fn hit_test(&self, wx: f32, wy: f32) -> Option<usize> {
-        // Iterate in reverse so the topmost (last-drawn) node wins.
-        for (i, node) in self.nodes.iter().enumerate().rev() {
-            let r = physics::node_radius(node);
-            let dx = wx - node.spatial.pos[0];
-            let dy = wy - node.spatial.pos[1];
-            if dx * dx + dy * dy <= r * r {
-                return Some(i);
-            }
-        }
-        None
-    }
-
     /// Move the dragged node to the given world-space coordinates.
     pub fn drag_to(&mut self, wx: f32, wy: f32) {
         if let Some(idx) = self.dragged {

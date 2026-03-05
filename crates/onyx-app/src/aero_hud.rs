@@ -33,7 +33,7 @@ pub enum AeroHudAction {
 }
 
 script_mod! {
-    use mod.prelude.widgets.*
+    use mod.prelude.widgets_internal.*
 
     // ── AeroHud widget ──
     mod.widgets.AeroHudBase = #(AeroHud::register_widget(vm))
