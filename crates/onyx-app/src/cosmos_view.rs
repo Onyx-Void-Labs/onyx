@@ -1,3 +1,4 @@
+use onyx_core::void_node::NodeType;
 // ─── CosmosView: The Spatial Canvas ────────────────────────────────
 // A zoomable, pannable Makepad widget that renders VoidNodes as
 // glowing bodies in 2D space.
@@ -300,31 +301,25 @@ impl Widget for CosmosView {
         // Draw background (deep space)
         self.draw_bg.draw_abs(cx, rect);
 
-        // Draw each node
-        // Access camera and zoom from app (assume available via self.camera and self.zoom_level)
-        let camera_x = self.camera.x;
-        let camera_y = self.camera.y;
-        let zoom = self.zoom_level;
+        // Draw each node using world_to_screen mapping
         for nd in &self.draw_data {
             // Skip nodes with NaN positions to prevent layout crashes
             if nd.x.is_nan() || nd.y.is_nan() {
                 continue;
             }
-            // Apply camera and zoom to node position
-            let sx = (nd.x - camera_x) as f64 * zoom + rect.pos.x;
-            let sy = (nd.y - camera_y) as f64 * zoom + rect.pos.y;
+            let (screen_x, screen_y) = self.world_to_screen(nd.x, nd.y);
 
             // Set explicit draw sizes for node types
             let draw_size = match nd.node_type {
-                NodeType::Asteroid => 40.0 * zoom,
-                NodeType::Planet => 100.0 * zoom,
-                _ => nd.radius as f64 * zoom * 2.5,
+                NodeType::Asteroid => 40.0 * self.cam_zoom,
+                NodeType::Planet => 100.0 * self.cam_zoom,
+                _ => nd.radius as f64 * self.cam_zoom * 2.5,
             };
 
             // Cull nodes outside the viewport (with margin for glow)
             let margin = draw_size * 2.0;
-            if sx + margin < rect.pos.x || sx - margin > rect.pos.x + rect.size.x
-                || sy + margin < rect.pos.y || sy - margin > rect.pos.y + rect.size.y
+            if screen_x + margin < rect.pos.x || screen_x - margin > rect.pos.x + rect.size.x
+                || screen_y + margin < rect.pos.y || screen_y - margin > rect.pos.y + rect.size.y
             {
                 continue;
             }
@@ -337,8 +332,8 @@ impl Widget for CosmosView {
             // Draw the node body (quad sized to encompass circle + glow)
             let node_rect = Rect {
                 pos: DVec2 {
-                    x: sx - draw_size * 0.5,
-                    y: sy - draw_size * 0.5,
+                    x: screen_x - draw_size * 0.5,
+                    y: screen_y - draw_size * 0.5,
                 },
                 size: DVec2 {
                     x: draw_size,

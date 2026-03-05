@@ -63,204 +63,27 @@ script_mod! {
 
     startup() do #(App::script_component(vm)) {
         ui: Root {
+            width: Fill
+            height: Fill
+            draw_bg: { color: #x10101A }
             main_window := Window {
                 window.inner_size: vec2(1280, 800)
                 pass.clear_color: vec4(0.039, 0.039, 0.059, 1.0)
                 body +: {
-                    flow: Down
-                    spacing: 0
-
-                    // -- Title bar --
-                    View {
-                        width: Fill
-                        height: 48
-                        show_bg: true
-                        draw_bg.color: #x12121A
-                        flow: Right
-                        padding: Inset{left: 20, top: 12, right: 20}
-                        spacing: 12
-
-                        // Panel toggle
-                        panel_toggle := Button {
-                            // Full-bleed Overlay: Only CosmosView, editor_area (hidden), and AeroHud remain
-                            Overlay {
-                                cosmos_view := CosmosView {
-                                    width: Fill
-                                    height: Fill
-                                }
-                                editor_area := View {
-                                    width: Fill
-                                    height: Fill
-                                    visible: false
-                                }
-                                aero_hud := AeroHud {
-                                    width: 400.0
-                                    height: 60.0
-                                    margin: Inset{bottom: 20}
-                                }
-                            }
-                                text: "PEERS"
-                                draw_text.color: #x4A4A5A
-                                draw_text.text_style.font_size: 10.0
-                            }
-
-                            peers_label := Label {
-                                text: "Not connected"
-                                draw_text.color: #x3A3A4A
-                                draw_text.text_style.font_size: 11.0
-                            }
-
-                            View { width: Fill, height: 16 }
-
-                            Label {
-                                text: "VOICE"
-                                draw_text.color: #x4A4A5A
-                                draw_text.text_style.font_size: 10.0
-                            }
-
-                            voice_button := Button {
-                                text: "Toggle Voice"
-                                width: Fill
-                                height: 32
-                                visible: false
-                            }
-
-                            voice_status := Label {
-                                text: ""
-                                draw_text.color: #x3A3A4A
-                                draw_text.text_style.font_size: 11.0
-                            }
-                        }
-
-                        // -- Divider --
-                        View {
-                            width: 1
-                            height: Fill
-                            show_bg: true
-                            draw_bg.color: #x1A1A24
-                        }
-
-                        // -- Right-side content: Overlay for cosmos + editor + HUD --
-                        View {
-                            flow: Overlay
+                    Overlay {
+                        cosmos_view := CosmosView {
                             width: Fill
                             height: Fill
-
-                            // Layer 0: Cosmos spatial canvas (full bleed)
-                            cosmos_canvas := CosmosView {
-                                width: Fill
-                                height: Fill
-                                draw_bg.color: #x06060C
-                            }
-
-                            // Layer 1: Text editor (hidden when cosmos is active)
-                            editor_area := View {
-                                width: Fill
-                                height: Fill
-                                visible: false
-                                show_bg: true
-                                draw_bg.color: #x0A0A12
-                                padding: Inset{left: 48, top: 32, right: 48, bottom: 32}
-
-                                editor_label := Label {
-                                    text: ""
-                                    draw_text.color: #xE0E0E8
-                                    draw_text.text_style.font_size: 13.0
-                                }
-
-                                cursor_overlay := View {
-                                    abs_pos: vec2(269, 80)
-                                    width: 2
-                                    height: 18
-                                    show_bg: true
-                                    draw_bg.color: #x7B68EE
-                                }
-
-                                remote_cursor_0 := View {
-                                    abs_pos: vec2(-100, -100)
-                                    width: 24
-                                    height: 18
-                                    visible: false
-                                    RemoteCursorWidget {
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
-                                remote_cursor_1 := View {
-                                    abs_pos: vec2(-100, -100)
-                                    width: 24
-                                    height: 18
-                                    visible: false
-                                    RemoteCursorWidget {
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
-                                remote_cursor_2 := View {
-                                    abs_pos: vec2(-100, -100)
-                                    width: 24
-                                    height: 18
-                                    visible: false
-                                    RemoteCursorWidget {
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
-                                remote_cursor_3 := View {
-                                    abs_pos: vec2(-100, -100)
-                                    width: 24
-                                    height: 18
-                                    visible: false
-                                    RemoteCursorWidget {
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
-                            }
-
-                            // Layer 2: Floating Aero-HUD (always on top)
-                            View {
-                                width: Fill
-                                height: Fill
-                                align: Align{x: 0.5, y: 1.0}
-
-                                aero_hud := AeroHud {
-                                    width: 400.0
-                                    height: 60.0
-                                    margin: Inset{bottom: 20}
-                                }
-                            }
                         }
-                    }
-
-                    // -- Status bar --
-                    View {
-                        width: Fill
-                        height: 28
-                        show_bg: true
-                        draw_bg.color: #x12121A
-                        flow: Right
-                        padding: Inset{left: 20, top: 6, right: 20}
-                        spacing: 24
-
-                        status_label := Label {
-                            text: "Void Active"
-                            draw_text.color: #x4A4A5A
-                            draw_text.text_style.font_size: 10.0
+                        editor_area := View {
+                            width: Fill
+                            height: Fill
+                            visible: false
                         }
-
-                        status_chars := Label {
-                            text: "0 chars"
-                            draw_text.color: #x4A4A5A
-                            draw_text.text_style.font_size: 10.0
-                        }
-
-                        View { width: Fill, height: 1 }
-
-                        status_sync := Label {
-                            text: "Loro in-memory"
-                            draw_text.color: #x3A3A4A
-                            draw_text.text_style.font_size: 10.0
+                        aero_hud := AeroHud {
+                            width: Fit
+                            height: Fit
+                            align: Bottom
                         }
                     }
                 }
@@ -1136,14 +959,19 @@ impl AppMain for App {
             self.poll_network(cx);
         }
 
-        // -- Cursor animation timer (~60 fps) --
-        if self.cursor_timer.is_event(event).is_some() {
-            self.tick_cursor_animation(cx);
-            // Piggyback cosmos physics on the same 60fps timer
-            self.tick_cosmos(cx);
-            // Always request next frame for smooth Cosmos animation
-            cx.request_next_frame();
-        }
+
+            // -- Cosmos physics timer (~60 fps) --
+            if self.cosmos_timer.is_event(event).is_some() {
+                self.tick_cosmos(cx);
+                self.ui.redraw(cx);
+            }
+
+            // -- Cursor animation timer (~60 fps) --
+            if self.cursor_timer.is_event(event).is_some() {
+                self.tick_cursor_animation(cx);
+                // Always request next frame for smooth Cosmos animation
+                cx.new_next_frame();
+            }
 
         // Start cursor timer on first event if not already running
         if !self.cursor_timer_started {
@@ -1154,6 +982,8 @@ impl AppMain for App {
             self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
             let cv = self.ui.cosmos_view(cx, ids!(cosmos_canvas));
             cv.set_visible(cx, self.cosmos_active);
+                // Start cosmos timer for physics loop
+                self.cosmos_timer = cx.start_interval(0.016); // ~60fps
         }
 
         // Skip editor key handling when room input has focus

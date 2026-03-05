@@ -39,10 +39,11 @@ script_mod! {
     mod.widgets.AeroHudBase = #(AeroHud::register_widget(vm))
 
     mod.widgets.AeroHud = set_type_default() do mod.widgets.AeroHudBase {
-        width: Fill
-        height: 48
+        width: Fit
+        height: Fit
         show_bg: true
         draw_bg.color: #x12121A
+        align: Bottom
 
         // ── Child widgets: HUD controls ──
         flow: Right
