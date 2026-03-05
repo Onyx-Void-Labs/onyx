@@ -43,13 +43,13 @@ script_mod! {
         height: Fit
         show_bg: true
         draw_bg.color: #x12121A
-        align: {x: 0.5, y: 1.0}
+        align: Align {x: 0.5, y: 1.0}
 
         // ── Child widgets: HUD controls ──
         flow: Right
         spacing: 12
-        padding: Inset{left: 20, top: 8, right: 20, bottom: 8}
-        align: {x: 0.5, y: 0.5}
+        padding: Inset {left: 20, top: 8, right: 20, bottom: 8}
+        align: Align {x: 0.5, y: 0.5}
 
         hud_spawn_planet := Button {
             text: "● Planet"

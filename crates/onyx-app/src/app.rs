@@ -71,7 +71,6 @@ script_mod! {
                         width: Fill
                         height: Fill
                         flow: Overlay
-                        draw_bg: { color: #x000000 }
 
                         cosmos_view := CosmosView {
                             width: Fill
@@ -85,8 +84,8 @@ script_mod! {
                         aero_hud := AeroHud {
                             width: Fit
                             height: Fit
-                            align: {x: 0.5, y: 1.0}
-                            margin: {bottom: 40.0}
+                            align: Align {x: 0.5, y: 1.0}
+                            margin: Inset {bottom: 40.0, top: 0.0, left: 0.0, right: 0.0}
                         }
                     }
                 }
