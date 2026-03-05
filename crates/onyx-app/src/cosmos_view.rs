@@ -1,4 +1,3 @@
-use onyx_core::void_node::NodeType;
 // ─── CosmosView: The Spatial Canvas ────────────────────────────────
 // A zoomable, pannable Makepad widget that renders VoidNodes as
 // glowing bodies in 2D space.
@@ -110,10 +109,11 @@ script_mod! {
             let glow = exp(-(dist - 0.75) * (dist - 0.75) * 10.0) * glow_intensity
 
             // ── Node-type specific effects ──
-            let type_mod_r = 0.0
-            let type_mod_g = 0.0
-            let type_mod_b = 0.0
-            let type_alpha_mod = 0.0
+            // Use `var` (mutable) since these are reassigned per node-type.
+            var type_mod_r = 0.0
+            var type_mod_g = 0.0
+            var type_mod_b = 0.0
+            var type_alpha_mod = 0.0
 
             // Planet (0): gas-giant fresnel atmosphere
             if self.node_type_id < 0.5 {
@@ -318,14 +318,16 @@ impl Widget for CosmosView {
 
         match event.hits(cx, self.draw_bg.area()) {
             Hit::FingerDown(fd) => {
-                // Check if we hit a node (forgiving 2x hitbox)
-                let (wx, wy) = self.screen_to_world(fd.abs.x, fd.abs.y);
+                // Hit-test in screen-space so the leniency is in pixels,
+                // not world units (which change with zoom).
                 let mut hit_idx = None;
                 for (i, nd) in self.draw_data.iter().enumerate().rev() {
-                    let dx = wx - nd.x as f64;
-                    let dy = wy - nd.y as f64;
-                    let hit_radius = (nd.radius as f64) * 2.0; // 2x forgiving hitbox
-                    if dx * dx + dy * dy <= hit_radius * hit_radius {
+                    let (sx, sy) = self.world_to_screen(nd.x, nd.y);
+                    let dx = fd.abs.x - sx;
+                    let dy = fd.abs.y - sy;
+                    // Screen radius of the drawn circle + 10px flat leniency
+                    let screen_r = (nd.radius as f64) * self.cam_zoom + 10.0;
+                    if dx * dx + dy * dy <= screen_r * screen_r {
                         hit_idx = Some(i);
                         break;
                     }
@@ -385,14 +387,14 @@ impl Widget for CosmosView {
                 cx.redraw_all();
             }
             Hit::FingerHoverOver(fh) => {
-                // Hover detection for hover arrest
-                let (wx, wy) = self.screen_to_world(fh.abs.x, fh.abs.y);
+                // Hover detection in screen-space (same formula as hit-test)
                 let mut hover_idx = None;
                 for (i, nd) in self.draw_data.iter().enumerate().rev() {
-                    let dx = wx - nd.x as f64;
-                    let dy = wy - nd.y as f64;
-                    let hit_radius = (nd.radius as f64) * 2.0;
-                    if dx * dx + dy * dy <= hit_radius * hit_radius {
+                    let (sx, sy) = self.world_to_screen(nd.x, nd.y);
+                    let dx = fh.abs.x - sx;
+                    let dy = fh.abs.y - sy;
+                    let screen_r = (nd.radius as f64) * self.cam_zoom + 10.0;
+                    if dx * dx + dy * dy <= screen_r * screen_r {
                         hover_idx = Some(i);
                         break;
                     }
@@ -442,15 +444,14 @@ impl Widget for CosmosView {
             }
             let (screen_x, screen_y) = self.world_to_screen(nd.x, nd.y);
 
-            // Set explicit draw sizes for node types, with minimum 8px
-            let draw_size = match nd.node_type {
-                NodeType::Asteroid => (40.0 * self.cam_zoom).max(8.0),
-                NodeType::Planet => (100.0 * self.cam_zoom).max(8.0),
-                _ => (nd.radius as f64 * self.cam_zoom * 2.5).max(8.0),
-            };
+            // Screen diameter: mass × zoom, clamped to minimum 8px.
+            // This ensures planets grow dramatically when zooming in,
+            // and never vanish when zooming out.
+            let screen_diameter = ((nd.radius as f64 * 2.0) * self.cam_zoom).max(8.0);
+            let screen_radius = screen_diameter * 0.5;
 
             // Cull nodes outside the viewport (with margin for glow)
-            let margin = draw_size * 2.0;
+            let margin = screen_diameter;
             if screen_x + margin < rect.pos.x || screen_x - margin > rect.pos.x + rect.size.x
                 || screen_y + margin < rect.pos.y || screen_y - margin > rect.pos.y + rect.size.y
             {
@@ -464,23 +465,24 @@ impl Widget for CosmosView {
             self.draw_node.node_type_id = node_type_to_id(nd.node_type);
             self.draw_node.zoom_level = self.cam_zoom as f32;
 
-            // Draw the node body (quad sized to encompass circle + glow)
+            // Draw the node body — quad centered on screen position,
+            // sized exactly to screen_diameter so shader SDF fills it.
             let node_rect = Rect {
                 pos: DVec2 {
-                    x: screen_x - draw_size * 0.5,
-                    y: screen_y - draw_size * 0.5,
+                    x: screen_x - screen_radius,
+                    y: screen_y - screen_radius,
                 },
                 size: DVec2 {
-                    x: draw_size,
-                    y: draw_size,
+                    x: screen_diameter,
+                    y: screen_diameter,
                 },
             };
             self.draw_node.draw_abs(cx, node_rect);
 
             // Draw the label below the node
             self.draw_text.draw_abs(cx, dvec2(
-                screen_x - draw_size * 0.25,
-                screen_y + draw_size * 0.5 + 4.0,
+                screen_x - screen_radius * 0.5,
+                screen_y + screen_radius + 4.0,
             ), nd.label);
         }
 
