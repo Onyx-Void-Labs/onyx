@@ -70,6 +70,17 @@ pub struct SpatialState {
     /// Heat — recency of edits.  Hot nodes glow brighter and stay
     /// near the center; cold nodes drift to the Oort Cloud.
     pub heat: f32,
+
+    /// Kinematic lock — when true, physics forces are skipped and
+    /// velocity is zeroed (the user is dragging this node).
+    #[serde(default)]
+    pub is_dragged: bool,
+
+    /// Hover state — when true, the user's cursor is over this node.
+    /// Physics applies extra damping ("hover arrest") to make it
+    /// easier to click moving targets.
+    #[serde(default)]
+    pub hovered: bool,
 }
 
 impl Default for SpatialState {
@@ -79,6 +90,8 @@ impl Default for SpatialState {
             velocity: [0.0, 0.0, 0.0],
             mass: 1.0,
             heat: 1.0,
+            is_dragged: false,
+            hovered: false,
         }
     }
 }

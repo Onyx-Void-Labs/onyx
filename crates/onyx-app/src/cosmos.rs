@@ -79,12 +79,10 @@ impl Cosmos {
     pub fn tick(&mut self, dt: f32) {
         self.time += dt;
 
-        // If a node is being dragged, pin its velocity to zero
-        // so the physics engine doesn't fight the user.
-        if let Some(idx) = self.dragged {
-            if let Some(node) = self.nodes.get_mut(idx) {
-                node.spatial.velocity = [0.0, 0.0, 0.0];
-            }
+        // Sync the is_dragged flag on the actual node
+        // so the physics engine respects kinematic lock.
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            node.spatial.is_dragged = self.dragged == Some(i);
         }
 
         physics::tick(&mut self.nodes, dt);
@@ -117,6 +115,20 @@ impl Cosmos {
     /// Number of nodes.
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Set hover state on a specific node (for hover arrest).
+    pub fn set_hovered(&mut self, idx: usize, hovered: bool) {
+        if let Some(node) = self.nodes.get_mut(idx) {
+            node.spatial.hovered = hovered;
+        }
+    }
+
+    /// Clear all hover states (e.g. when mouse leaves the cosmos view).
+    pub fn clear_all_hovers(&mut self) {
+        for node in &mut self.nodes {
+            node.spatial.hovered = false;
+        }
     }
 
     /// Delete a node by index (drag into Black Hole).

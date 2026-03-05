@@ -49,6 +49,10 @@ pub enum CosmosViewAction {
     NodeDragging { x: f32, y: f32 },
     /// User released the drag.
     NodeDragEnd,
+    /// Mouse is hovering over a node (for hover arrest).
+    NodeHovered(usize),
+    /// Mouse left a node (clear hover arrest).
+    NodeUnhovered,
     /// Camera panned — new camera x, y.
     CameraPanned { x: f32, y: f32 },
     /// Camera zoomed — new zoom level.
@@ -268,9 +272,9 @@ pub struct CosmosView {
     pan_start: Option<(f64, f64, f64, f64)>, // (mouse_x, mouse_y, cam_x, cam_y)
     #[rust]
     widget_rect: Rect,
-    /// Last click time + node index for double-click detection.
+    /// Index of the currently hovered node (for hover arrest).
     #[rust]
-    last_click: Option<(f64, usize)>,
+    hovered_node: Option<usize>,
 }
 
 impl CosmosView {
@@ -314,32 +318,24 @@ impl Widget for CosmosView {
 
         match event.hits(cx, self.draw_bg.area()) {
             Hit::FingerDown(fd) => {
-                // Check if we hit a node
+                // Check if we hit a node (forgiving 2x hitbox)
                 let (wx, wy) = self.screen_to_world(fd.abs.x, fd.abs.y);
                 let mut hit_idx = None;
                 for (i, nd) in self.draw_data.iter().enumerate().rev() {
                     let dx = wx - nd.x as f64;
                     let dy = wy - nd.y as f64;
-                    if dx * dx + dy * dy <= (nd.radius as f64) * (nd.radius as f64) {
+                    let hit_radius = (nd.radius as f64) * 2.0; // 2x forgiving hitbox
+                    if dx * dx + dy * dy <= hit_radius * hit_radius {
                         hit_idx = Some(i);
                         break;
                     }
                 }
 
                 if let Some(idx) = hit_idx {
-                    // Double-click detection (within 400ms on same node)
-                    let now = fd.time;
-                    let is_double = if let Some((prev_time, prev_idx)) = self.last_click {
-                        prev_idx == idx && (now - prev_time) < 0.4
-                    } else {
-                        false
-                    };
-
-                    if is_double {
+                    // Use Makepad's native tap_count for double-click detection
+                    if fd.tap_count == 2 {
                         cx.widget_action(uid, CosmosViewAction::NodeDoubleClicked(idx));
-                        self.last_click = None;
                     } else {
-                        self.last_click = Some((now, idx));
                         cx.widget_action(uid, CosmosViewAction::NodeClicked(idx));
                         cx.widget_action(uid, CosmosViewAction::NodeDragStart(idx));
                     }
@@ -388,6 +384,34 @@ impl Widget for CosmosView {
                 cx.widget_action(uid, CosmosViewAction::CameraZoomed(self.cam_zoom as f32));
                 cx.redraw_all();
             }
+            Hit::FingerHoverOver(fh) => {
+                // Hover detection for hover arrest
+                let (wx, wy) = self.screen_to_world(fh.abs.x, fh.abs.y);
+                let mut hover_idx = None;
+                for (i, nd) in self.draw_data.iter().enumerate().rev() {
+                    let dx = wx - nd.x as f64;
+                    let dy = wy - nd.y as f64;
+                    let hit_radius = (nd.radius as f64) * 2.0;
+                    if dx * dx + dy * dy <= hit_radius * hit_radius {
+                        hover_idx = Some(i);
+                        break;
+                    }
+                }
+                if hover_idx != self.hovered_node {
+                    if let Some(idx) = hover_idx {
+                        cx.widget_action(uid, CosmosViewAction::NodeHovered(idx));
+                    } else {
+                        cx.widget_action(uid, CosmosViewAction::NodeUnhovered);
+                    }
+                    self.hovered_node = hover_idx;
+                }
+            }
+            Hit::FingerHoverOut(_) => {
+                if self.hovered_node.is_some() {
+                    cx.widget_action(uid, CosmosViewAction::NodeUnhovered);
+                    self.hovered_node = None;
+                }
+            }
             _ => {}
         }
     }
@@ -418,11 +442,11 @@ impl Widget for CosmosView {
             }
             let (screen_x, screen_y) = self.world_to_screen(nd.x, nd.y);
 
-            // Set explicit draw sizes for node types
+            // Set explicit draw sizes for node types, with minimum 8px
             let draw_size = match nd.node_type {
-                NodeType::Asteroid => 40.0 * self.cam_zoom,
-                NodeType::Planet => 100.0 * self.cam_zoom,
-                _ => nd.radius as f64 * self.cam_zoom * 2.5,
+                NodeType::Asteroid => (40.0 * self.cam_zoom).max(8.0),
+                NodeType::Planet => (100.0 * self.cam_zoom).max(8.0),
+                _ => (nd.radius as f64 * self.cam_zoom * 2.5).max(8.0),
             };
 
             // Cull nodes outside the viewport (with margin for glow)

@@ -37,6 +37,11 @@ const MIN_DIST_SQ: f32 = 400.0;
 /// Lower = more viscous, more majestic orbital glide.
 const DAMPING: f32 = 0.92;
 
+/// Hover arrest damping — applied when the user's cursor is over a node.
+/// Much stronger than normal damping so the node "slows down" making
+/// it easy to click moving targets.
+const HOVER_DAMPING: f32 = 0.5;
+
 /// Heat decay rate per second.  heat *= (1.0 - HEAT_DECAY * dt).
 const HEAT_DECAY: f32 = 0.05;
 
@@ -80,6 +85,10 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
 
     for i in 0..n {
         for j in (i + 1)..n {
+            // ── Kinematic lock: skip force accumulation for dragged nodes ──
+            let i_dragged = nodes[i].spatial.is_dragged;
+            let j_dragged = nodes[j].spatial.is_dragged;
+
             let dx = nodes[j].spatial.pos[0] - nodes[i].spatial.pos[0];
             let dy = nodes[j].spatial.pos[1] - nodes[i].spatial.pos[1];
             let dist_sq = (dx * dx + dy * dy).max(MIN_DIST_SQ);
@@ -103,10 +112,15 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             }
 
             // Newton's 3rd law: equal and opposite
-            accel[i][0] += gx / mi.max(1.0);
-            accel[i][1] += gy / mi.max(1.0);
-            accel[j][0] -= gx / mj.max(1.0);
-            accel[j][1] -= gy / mj.max(1.0);
+            // Skip force application for dragged nodes (kinematic lock)
+            if !i_dragged {
+                accel[i][0] += gx / mi.max(1.0);
+                accel[i][1] += gy / mi.max(1.0);
+            }
+            if !j_dragged {
+                accel[j][0] -= gx / mj.max(1.0);
+                accel[j][1] -= gy / mj.max(1.0);
+            }
 
             // ── Soft inverse-square repulsion (smooth push when close) ──
             // Active below SOFT_REPULSION_DIST — prevents overlap without
@@ -118,10 +132,14 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
                 let rep_mag = REPULSION_STRENGTH / (safe_dist * safe_dist);
                 let rx = rep_mag * (dx / dist);
                 let ry = rep_mag * (dy / dist);
-                accel[i][0] -= rx / mi.max(1.0);
-                accel[i][1] -= ry / mi.max(1.0);
-                accel[j][0] += rx / mj.max(1.0);
-                accel[j][1] += ry / mj.max(1.0);
+                if !i_dragged {
+                    accel[i][0] -= rx / mi.max(1.0);
+                    accel[i][1] -= ry / mi.max(1.0);
+                }
+                if !j_dragged {
+                    accel[j][0] += rx / mj.max(1.0);
+                    accel[j][1] += ry / mj.max(1.0);
+                }
             }
         }
 
@@ -140,13 +158,23 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
     for i in 0..n {
         let node = &mut nodes[i];
 
+        // ── Kinematic lock: dragged nodes get zero velocity, skip integration ──
+        if node.spatial.is_dragged {
+            node.spatial.velocity = [0.0, 0.0, 0.0];
+            // Still decay heat
+            node.spatial.heat *= 1.0 - HEAT_DECAY * dt;
+            node.spatial.heat = node.spatial.heat.max(0.0);
+            continue;
+        }
+
         // Update velocity
         node.spatial.velocity[0] += accel[i][0] * dt;
         node.spatial.velocity[1] += accel[i][1] * dt;
 
-        // Damping
-        node.spatial.velocity[0] *= DAMPING;
-        node.spatial.velocity[1] *= DAMPING;
+        // Damping — hover arrest uses stronger damping
+        let damp = if node.spatial.hovered { HOVER_DAMPING } else { DAMPING };
+        node.spatial.velocity[0] *= damp;
+        node.spatial.velocity[1] *= damp;
 
         // Speed limit
         let speed_sq = node.spatial.velocity[0].powi(2) + node.spatial.velocity[1].powi(2);

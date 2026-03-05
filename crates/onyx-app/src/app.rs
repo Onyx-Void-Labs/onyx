@@ -18,6 +18,7 @@
 
 use makepad_widgets::*;
 use onyx_editor::{Cursor, EditorBuffer};
+use onyx_core::id::OnyxId;
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
 
@@ -181,6 +182,10 @@ pub struct App {
     /// Timer driving the physics simulation at ~60 fps.
     #[rust]
     cosmos_timer: Timer,
+    /// The OnyxId of the node currently being edited (\"dived into\").
+    /// When Some, the editor reads/writes to `crdt.get_text_for(id)`.
+    #[rust]
+    active_node_id: Option<OnyxId>,
 }
 
 impl App {
@@ -221,6 +226,7 @@ impl App {
         cosmos.spawn_node(NodeType::Satellite);
         app.cosmos = cosmos;
         app.cosmos_active = true; // start in cosmos view
+        app.active_node_id = None;
         app
     }
 
@@ -902,7 +908,10 @@ impl MatchEvent for App {
                     cv.set_visible(cx, self.cosmos_active);
                     let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
                     self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
-                    if !self.cosmos_active {
+                    if self.cosmos_active {
+                        // Returning to cosmos — clear active node binding
+                        self.active_node_id = None;
+                    } else {
                         self.sync_display(cx);
                     }
                     cx.redraw_all();
@@ -947,14 +956,23 @@ impl MatchEvent for App {
                         cv.set_visible(cx, false);
                         self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, "⟁ Cosmos");
 
-                        // TODO: Load this specific VoidNode's Loro text into the editor.
-                        // When Loro per-node binding is wired:
-                        //   let node = &self.cosmos.nodes[idx];
-                        //   let doc_id = node.id;
-                        //   self.crdt = CrdtDoc::open_or_create(doc_id);
-                        //   let text = self.crdt.get_text().unwrap_or_default();
-                        //   self.buffer.set_text(&text);
-                        //   self.cursor.move_to(0);
+                        // ── The Anvil: Load this VoidNode's Loro text ──
+                        let node_id = self.cosmos.nodes[idx].id;
+                        self.active_node_id = Some(node_id);
+                        let key = node_id.to_string();
+
+                        // Read existing text from the CRDT (or empty for new nodes)
+                        let text = self.crdt.get_text_for(&key).unwrap_or_default();
+
+                        // Sync the editor buffer
+                        let old_len = self.buffer.len_chars();
+                        if old_len > 0 {
+                            self.buffer.delete(0, old_len);
+                        }
+                        if !text.is_empty() {
+                            self.buffer.insert(0, &text);
+                        }
+                        self.cursor.move_to(0);
 
                         self.sync_display(cx);
                         cx.redraw_all();
@@ -984,6 +1002,13 @@ impl MatchEvent for App {
                             z if z < 2.0 => 2, // Planet
                             _             => 3, // Surface
                         };
+                    }
+                    CosmosViewAction::NodeHovered(idx) => {
+                        self.cosmos.clear_all_hovers();
+                        self.cosmos.set_hovered(idx, true);
+                    }
+                    CosmosViewAction::NodeUnhovered => {
+                        self.cosmos.clear_all_hovers();
                     }
                     CosmosViewAction::None => {}
                 }
@@ -1101,7 +1126,12 @@ impl AppMain for App {
                 self.capture_pre_edit_vv();
                 let pos = self.cursor.pos;
                 self.buffer.insert(pos, &e.input);
-                let _ = self.crdt.insert(pos, &e.input);
+                // Write to the active node's CRDT text container
+                if let Some(node_id) = self.active_node_id {
+                    let _ = self.crdt.insert_for(&node_id.to_string(), pos, &e.input);
+                } else {
+                    let _ = self.crdt.insert(pos, &e.input);
+                }
                 self.cursor.move_right(e.input.len(), self.buffer.len_chars());
                 self.sync_display(cx);
                 self.broadcast_crdt_delta();
@@ -1115,7 +1145,11 @@ impl AppMain for App {
                         self.capture_pre_edit_vv();
                         let pos = self.cursor.pos - 1;
                         self.buffer.delete(pos, pos + 1);
-                        let _ = self.crdt.delete(pos, 1);
+                        if let Some(node_id) = self.active_node_id {
+                            let _ = self.crdt.delete_for(&node_id.to_string(), pos, 1);
+                        } else {
+                            let _ = self.crdt.delete(pos, 1);
+                        }
                         self.cursor.move_left(1);
                         self.sync_display(cx);
                         self.broadcast_crdt_delta();
@@ -1125,7 +1159,11 @@ impl AppMain for App {
                         self.capture_pre_edit_vv();
                         let pos = self.cursor.pos;
                         self.buffer.delete(pos, pos + 1);
-                        let _ = self.crdt.delete(pos, 1);
+                        if let Some(node_id) = self.active_node_id {
+                            let _ = self.crdt.delete_for(&node_id.to_string(), pos, 1);
+                        } else {
+                            let _ = self.crdt.delete(pos, 1);
+                        }
                         self.sync_display(cx);
                         self.broadcast_crdt_delta();
                         cx.redraw_all();
@@ -1134,7 +1172,11 @@ impl AppMain for App {
                         self.capture_pre_edit_vv();
                         let pos = self.cursor.pos;
                         self.buffer.insert(pos, "\n");
-                        let _ = self.crdt.insert(pos, "\n");
+                        if let Some(node_id) = self.active_node_id {
+                            let _ = self.crdt.insert_for(&node_id.to_string(), pos, "\n");
+                        } else {
+                            let _ = self.crdt.insert(pos, "\n");
+                        }
                         self.cursor.move_right(1, self.buffer.len_chars());
                         self.sync_display(cx);
                         self.broadcast_crdt_delta();

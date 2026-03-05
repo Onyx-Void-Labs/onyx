@@ -83,6 +83,12 @@ impl CrdtDoc {
         Ok(text.to_string())
     }
 
+    /// Get text content for a named text container (keyed by node ID).
+    pub fn get_text_for(&self, key: &str) -> OnyxResult<String> {
+        let text = self.doc.get_text(key);
+        Ok(text.to_string())
+    }
+
     /// Insert `s` at character position `pos` in the "body" text.
     pub fn insert(&self, pos: usize, s: &str) -> OnyxResult<()> {
         let text = self.doc.get_text("body");
@@ -93,12 +99,32 @@ impl CrdtDoc {
         Ok(())
     }
 
+    /// Insert `s` at character position `pos` in a named text container.
+    pub fn insert_for(&self, key: &str, pos: usize, s: &str) -> OnyxResult<()> {
+        let text = self.doc.get_text(key);
+        text.insert(pos, s)
+            .map_err(|e| OnyxError::Crdt(e.to_string()))?;
+        trace!(key, pos, s, "crdt insert_for");
+        self.maybe_compact();
+        Ok(())
+    }
+
     /// Delete `len` characters starting at `pos`.
     pub fn delete(&self, pos: usize, len: usize) -> OnyxResult<()> {
         let text = self.doc.get_text("body");
         text.delete(pos, len)
             .map_err(|e| OnyxError::Crdt(e.to_string()))?;
         trace!(pos, len, "crdt delete");
+        self.maybe_compact();
+        Ok(())
+    }
+
+    /// Delete `len` characters starting at `pos` in a named text container.
+    pub fn delete_for(&self, key: &str, pos: usize, len: usize) -> OnyxResult<()> {
+        let text = self.doc.get_text(key);
+        text.delete(pos, len)
+            .map_err(|e| OnyxError::Crdt(e.to_string()))?;
+        trace!(key, pos, len, "crdt delete_for");
         self.maybe_compact();
         Ok(())
     }
