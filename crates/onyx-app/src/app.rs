@@ -63,14 +63,16 @@ script_mod! {
 
     startup() do #(App::script_component(vm)) {
         ui: Root {
-            width: Fill
-            height: Fill
-            draw_bg: { color: #x10101A }
             main_window := Window {
                 window.inner_size: vec2(1280, 800)
                 pass.clear_color: vec4(0.039, 0.039, 0.059, 1.0)
                 body +: {
-                    Overlay {
+                    View {
+                        width: Fill
+                        height: Fill
+                        flow: Overlay
+                        draw_bg: { color: #x000000 }
+
                         cosmos_view := CosmosView {
                             width: Fill
                             height: Fill
@@ -83,7 +85,8 @@ script_mod! {
                         aero_hud := AeroHud {
                             width: Fit
                             height: Fit
-                            align: Bottom
+                            align: {x: 0.5, y: 1.0}
+                            margin: {bottom: 40.0}
                         }
                     }
                 }
