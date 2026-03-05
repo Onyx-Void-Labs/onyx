@@ -287,12 +287,12 @@ script_mod! {
                             View {
                                 width: Fill
                                 height: Fill
-                                align: {x: 0.5, y: 1.0}
+                                align: Align{x: 0.5, y: 1.0}
 
                                 aero_hud := AeroHud {
                                     width: Fit
                                     height: 48
-                                    margin: {bottom: 20}
+                                    margin: Inset{bottom: 20}
                                 }
                             }
                         }
