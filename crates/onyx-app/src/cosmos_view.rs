@@ -301,16 +301,28 @@ impl Widget for CosmosView {
         self.draw_bg.draw_abs(cx, rect);
 
         // Draw each node
+        // Access camera and zoom from app (assume available via self.camera and self.zoom_level)
+        let camera_x = self.camera.x;
+        let camera_y = self.camera.y;
+        let zoom = self.zoom_level;
         for nd in &self.draw_data {
             // Skip nodes with NaN positions to prevent layout crashes
             if nd.x.is_nan() || nd.y.is_nan() {
                 continue;
             }
-            let (sx, sy) = self.world_to_screen(nd.x, nd.y);
-            let screen_radius = nd.radius as f64 * self.cam_zoom;
+            // Apply camera and zoom to node position
+            let sx = (nd.x - camera_x) as f64 * zoom + rect.pos.x;
+            let sy = (nd.y - camera_y) as f64 * zoom + rect.pos.y;
+
+            // Set explicit draw sizes for node types
+            let draw_size = match nd.node_type {
+                NodeType::Asteroid => 40.0 * zoom,
+                NodeType::Planet => 100.0 * zoom,
+                _ => nd.radius as f64 * zoom * 2.5,
+            };
 
             // Cull nodes outside the viewport (with margin for glow)
-            let margin = screen_radius * 2.0;
+            let margin = draw_size * 2.0;
             if sx + margin < rect.pos.x || sx - margin > rect.pos.x + rect.size.x
                 || sy + margin < rect.pos.y || sy - margin > rect.pos.y + rect.size.y
             {
@@ -323,7 +335,6 @@ impl Widget for CosmosView {
             self.draw_node.selected = if nd.selected { 1.0 } else { 0.0 };
 
             // Draw the node body (quad sized to encompass circle + glow)
-            let draw_size = screen_radius * 2.5; // extra for glow
             let node_rect = Rect {
                 pos: DVec2 {
                     x: sx - draw_size * 0.5,

@@ -82,88 +82,23 @@ script_mod! {
 
                         // Panel toggle
                         panel_toggle := Button {
-                            text: "<<"
-                            width: 32
-                            height: 28
-                        }
-
-                        Label {
-                            text: "ONYX VOID"
-                            draw_text.color: #x7B68EE
-                            draw_text.text_style.font_size: 14.0
-                        }
-
-                        View { width: Fill, height: 1 }
-
-                        Label {
-                            text: "Phase 4 -- Stellar Physics"
-                            draw_text.color: #x2A2A3A
-                            draw_text.text_style.font_size: 10.0
-                        }
-                    }
-
-                    // -- Content row: side panel + divider + editor --
-                    View {
-                        width: Fill
-                        height: Fill
-                        flow: Right
-                        spacing: 0
-
-                        // -- Side Panel --
-                        side_panel := View {
-                            width: 220
-                            height: Fill
-                            show_bg: true
-                            draw_bg.color: #x0E0E14
-                            flow: Down
-                            spacing: 8
-                            padding: Inset{left: 16, top: 16, right: 16}
-
-                            Label {
-                                text: "DOCUMENTS"
-                                draw_text.color: #x4A4A5A
-                                draw_text.text_style.font_size: 10.0
+                            // Full-bleed Overlay: Only CosmosView, editor_area (hidden), and AeroHud remain
+                            Overlay {
+                                cosmos_view := CosmosView {
+                                    width: Fill
+                                    height: Fill
+                                }
+                                editor_area := View {
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                }
+                                aero_hud := AeroHud {
+                                    width: 400.0
+                                    height: 60.0
+                                    margin: Inset{bottom: 20}
+                                }
                             }
-
-                            Label {
-                                text: "untitled.void"
-                                draw_text.color: #x7B68EE
-                                draw_text.text_style.font_size: 12.0
-                            }
-
-                            View { width: Fill, height: 16 }
-
-                            Label {
-                                text: "ROOM"
-                                draw_text.color: #x4A4A5A
-                                draw_text.text_style.font_size: 10.0
-                            }
-
-                            room_input := TextInput {
-                                empty_text: "secret room code..."
-                                width: Fill
-                                height: 36
-                                draw_bg.color: #x1A1A24
-                                draw_text.color: #xC0C0D0
-                                draw_text.text_style.font_size: 11.0
-                            }
-
-                            join_button := Button {
-                                text: "Join Void"
-                                width: Fill
-                                height: 32
-                            }
-
-                            disconnect_button := Button {
-                                text: "Disconnect"
-                                width: Fill
-                                height: 32
-                                visible: false
-                            }
-
-                            View { width: Fill, height: 16 }
-
-                            Label {
                                 text: "PEERS"
                                 draw_text.color: #x4A4A5A
                                 draw_text.text_style.font_size: 10.0
@@ -1206,6 +1141,8 @@ impl AppMain for App {
             self.tick_cursor_animation(cx);
             // Piggyback cosmos physics on the same 60fps timer
             self.tick_cosmos(cx);
+            // Always request next frame for smooth Cosmos animation
+            cx.request_next_frame();
         }
 
         // Start cursor timer on first event if not already running
@@ -1255,19 +1192,17 @@ impl AppMain for App {
         match event {
             // -- Printable text input --
             Event::TextInput(e) => {
+                // Block all typing if in Cosmos mode (editor hidden)
+                if self.cosmos_active {
+                    return;
+                }
                 // ── Android IME full-state sync ──
-                // On Android, the primary keyboard path sends ImeTextStateChanged
-                // which populates `full_state_sync` with the entire editor text +
-                // selection, while `input` is empty.  Handle this path so that
-                // typing in the chat editor actually works on Android.
                 if let Some(ref full_state) = e.full_state_sync {
                     let new_text = &full_state.text;
                     let text_changed = self.buffer.text() != *new_text;
                     if text_changed {
                         self.capture_pre_edit_vv();
-                        // Replace entire buffer with the authoritative IME state
                         self.buffer.set_text(new_text);
-                        // Sync CRDT to the new full text: delete everything, re-insert
                         let old_crdt_text = self.crdt.get_text().unwrap_or_default();
                         let old_len = old_crdt_text.chars().count();
                         if old_len > 0 {
@@ -1278,24 +1213,19 @@ impl AppMain for App {
                         }
                         self.broadcast_crdt_delta();
                     }
-                    // Update cursor from selection end (CharOffset.0 is already a char index)
                     let char_pos = full_state.selection.end.0.min(self.buffer.len_chars());
                     self.cursor.move_to(char_pos);
                     self.sync_display(cx);
                     cx.redraw_all();
                     return;
                 }
-
                 if e.input.is_empty() {
                     return;
                 }
                 self.capture_pre_edit_vv();
                 let pos = self.cursor.pos;
-                // Insert into the Rope buffer
                 self.buffer.insert(pos, &e.input);
-                // Mirror into the Loro CRDT
                 let _ = self.crdt.insert(pos, &e.input);
-                // Advance cursor
                 self.cursor.move_right(e.input.len(), self.buffer.len_chars());
                 self.sync_display(cx);
                 self.broadcast_crdt_delta();
