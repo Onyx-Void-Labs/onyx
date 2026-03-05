@@ -60,12 +60,10 @@ pub enum CosmosViewAction {
 script_mod! {
     use mod.prelude.widgets_internal.*
 
-    // DrawNodeBody: a circle shader with glow
+    // DrawNodeBody: a circle shader with glow (extends DrawQuad)
     set_type_default() do #(DrawNodeBody::script_shader(vm)){
         ..mod.draw.DrawQuad
-    }
 
-    mod.widgets.DrawNodeBody = {
         node_color: #x7B68EE
         heat: 1.0
         selected: 0.0
@@ -108,8 +106,8 @@ script_mod! {
         width: Fill
         height: Fill
         draw_bg.color: #x0A0A14
+        draw_text.text_style: theme.font_regular{font_size: 9.0}
         draw_text.color: #xCCCCDD
-        draw_text.text_style.font_size: 9.0
     }
 }
 

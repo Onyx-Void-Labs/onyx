@@ -82,11 +82,16 @@ script_mod! {
                             height: Fill
                             visible: false
                         }
-                        aero_hud := AeroHud {
-                            width: 400.0
-                            height: 60.0
+                        // Wrapper View to position HUD at bottom-center
+                        View {
+                            width: Fill
+                            height: Fill
                             align: Align{x: 0.5, y: 1.0}
-                            margin: Inset{bottom: 40.0}
+                            padding: Inset{bottom: 40.0}
+                            aero_hud := AeroHud {
+                                width: 400.0
+                                height: 60.0
+                            }
                         }
                     }
                 }
@@ -999,6 +1004,9 @@ impl AppMain for App {
             cv.set_visible(cx, self.cosmos_active);
                 // Start cosmos timer for physics loop
                 self.cosmos_timer = cx.start_interval(0.016); // ~60fps
+
+            // Seed initial draw data so the first frame has nodes
+            self.tick_cosmos(cx);
         }
 
         // Skip editor key handling when room input has focus
