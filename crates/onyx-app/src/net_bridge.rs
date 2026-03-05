@@ -47,8 +47,6 @@ pub enum NetEvent {
     DeltaReceived(Vec<u8>),
     /// A peer sent a Goodbye — remove them immediately.
     GoodbyeReceived(String),
-    /// A peer sent a Heartbeat — reset their TTL.
-    HeartbeatReceived(String),
     /// Media QUIC connection established with the relay.
     MediaStarted,
     /// Received an Opus audio frame from a remote peer.
@@ -562,8 +560,9 @@ async fn network_loop(
                                     let _ = evt_tx.send(NetEvent::GoodbyeReceived(from));
                                 }
                                 onyx_core::protocol::CTRL_HEARTBEAT => {
-                                    trace!(peer = %from, "received Heartbeat");
-                                    let _ = evt_tx.send(NetEvent::HeartbeatReceived(from));
+                                    // Heartbeat received — no longer used for TTL,
+                                    // peer presence is managed by Iroh NeighborDown.
+                                    trace!(peer = %from, "received Heartbeat (ignored)");
                                 }
                                 onyx_core::protocol::CTRL_CURSOR_POS => {
                                     if let Some(pos) = onyx_core::protocol::decode_cursor_pos(&delta.data) {

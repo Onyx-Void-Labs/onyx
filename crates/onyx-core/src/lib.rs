@@ -8,7 +8,9 @@ pub mod error;
 pub mod id;
 pub mod identity;
 pub mod protocol;
+pub mod void_node;
 
 pub use error::OnyxError;
 pub use id::OnyxId;
 pub use identity::VoidIdentity;
+pub use void_node::{NodeType, SpatialState, VoidNode};

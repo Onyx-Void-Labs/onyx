@@ -20,16 +20,43 @@ use makepad_widgets::*;
 use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
-use std::time::Instant;
 
 use crate::net_bridge::{NetBridge, NetEvent};
 use crate::media_engine::{MediaEngine, MediaEvent};
+
+// ── Cosmos Camera ───────────────────────────────────────────────
+
+/// Camera state for navigating the spatial knowledge universe.
+///
+/// Zoom levels:
+///   0 — Multiverse (distant vault glows)
+///   1 — Constellation (topic clusters)
+///   2 — Planet (individual note)
+///   3 — Surface (inline editing)
+pub struct CameraState {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub zoom_level: u8,
+}
+
+impl Default for CameraState {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+            zoom_level: 2, // start at Planet level
+        }
+    }
+}
 
 // --- DSL: The Void UI ---
 
 script_mod! {
     use mod.prelude.widgets.*
     use mod.widgets.RemoteCursorWidget
+    use mod.widgets.AeroHud
 
     startup() do #(App::script_component(vm)) {
         ui: Root {
@@ -244,6 +271,12 @@ script_mod! {
                         }
                     }
 
+                    // -- Aero-HUD (Singularity Engine bottom bar) --
+                    aero_hud := AeroHud {
+                        width: Fill
+                        height: 48
+                    }
+
                     // -- Status bar --
                     View {
                         width: Fill
@@ -334,12 +367,6 @@ pub struct App {
     /// The relay’s NodeID string — cached so we can filter it from the peers list.
     #[rust]
     relay_node_id: String,
-    /// Last-seen timestamp for each peer (for heartbeat TTL expiry).
-    #[rust]
-    peer_last_seen: HashMap<String, Instant>,
-    /// Heartbeat broadcast counter (sends every ~5s at 50ms poll rate).
-    #[rust]
-    heartbeat_counter: u32,
     /// Whether the MoQ voice engine is active.
     #[rust]
     voice_active: bool,
@@ -355,6 +382,9 @@ pub struct App {
     /// Counter for cursor broadcast debouncing (every ~500ms = 10 polls).
     #[rust]
     cursor_broadcast_counter: u32,
+    /// Cosmos camera state for spatial navigation.
+    #[rust]
+    camera: CameraState,
 }
 
 impl App {
@@ -363,6 +393,8 @@ impl App {
         // Register the remote cursor shader + widget BEFORE the app's own
         // script_mod so the DSL can reference RemoteCursorWidget.
         crate::remote_cursor::script_mod(vm);
+        // Register the Aero-HUD widget for the Singularity Engine UI.
+        crate::aero_hud::script_mod(vm);
         let mut app = App::from_script_mod(vm, self::script_mod);
         app.panel_open = true;
         app.last_display_hash = 0;
@@ -372,13 +404,12 @@ impl App {
         app.cursor_vel_y = 0.0;
         app.cursor_time = 0.0;
         app.relay_node_id = onyx_core::protocol::relay_node_id_string();
-        app.peer_last_seen = HashMap::new();
-        app.heartbeat_counter = 0;
         app.voice_active = false;
         app.media_engine = None;
         app.our_node_id = String::new();
         app.remote_cursors = HashMap::new();
         app.cursor_broadcast_counter = 0;
+        app.camera = CameraState::default();
         app
     }
 
@@ -735,18 +766,8 @@ impl App {
         let Some(ref net) = self.net else { return };
         let events = net.drain_events();
 
-        // ── Heartbeat broadcast (every ~5 seconds at 50ms poll rate) ──
+        // ── Cursor position broadcast (every ~500ms = 10 polls) ──
         if self.connected {
-            self.heartbeat_counter += 1;
-            if self.heartbeat_counter >= 100 {
-                self.heartbeat_counter = 0;
-                let hb = onyx_core::protocol::encode_control(
-                    onyx_core::protocol::CTRL_HEARTBEAT,
-                );
-                net.send_control(hb);
-            }
-
-            // ── Cursor position broadcast (every ~500ms = 10 polls) ──
             self.cursor_broadcast_counter += 1;
             if self.cursor_broadcast_counter >= 10 {
                 self.cursor_broadcast_counter = 0;
@@ -754,24 +775,6 @@ impl App {
                     self.cursor.pos as u32,
                 );
                 net.send_control(cursor_msg);
-            }
-
-            // ── Heartbeat TTL expiry (15 seconds = 3 missed heartbeats) ──
-            // Only disconnect peers on actual network failure (3 consecutive
-            // missed heartbeats), NOT because the user is idle.
-            let now = Instant::now();
-            let expired: Vec<String> = self
-                .peer_last_seen
-                .iter()
-                .filter(|(_, last)| now.duration_since(**last).as_secs() >= 15)
-                .map(|(id, _)| id.clone())
-                .collect();
-            for peer_id in expired {
-                tracing::warn!(peer = %peer_id, "peer expired (15s — 3 missed heartbeats)");
-                self.peer_last_seen.remove(&peer_id);
-                self.peers.retain(|p| p != &peer_id);
-                self.remote_cursors.remove(&peer_id);
-                self.update_peers_display(cx);
             }
         }
 
@@ -792,7 +795,6 @@ impl App {
                     if !self.peers.contains(&peer_id) {
                         self.peers.push(peer_id.clone());
                     }
-                    self.peer_last_seen.insert(peer_id, Instant::now());
                     self.update_peers_display(cx);
 
                     // ── Catch-Up Handshake ──
@@ -801,22 +803,14 @@ impl App {
                 NetEvent::PeerLeft(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer left");
                     self.peers.retain(|p| p != &peer_id);
-                    self.peer_last_seen.remove(&peer_id);
                     self.remote_cursors.remove(&peer_id);
                     self.update_peers_display(cx);
                 }
                 NetEvent::GoodbyeReceived(peer_id) => {
                     tracing::info!(peer = %peer_id, "peer sent Goodbye — removing instantly");
                     self.peers.retain(|p| p != &peer_id);
-                    self.peer_last_seen.remove(&peer_id);
                     self.remote_cursors.remove(&peer_id);
                     self.update_peers_display(cx);
-                }
-                NetEvent::HeartbeatReceived(peer_id) => {
-                    // Reset the peer's TTL
-                    if self.peers.contains(&peer_id) {
-                        self.peer_last_seen.insert(peer_id, Instant::now());
-                    }
                 }
                 NetEvent::CursorReceived { from, pos } => {
                     // Store the remote peer's cursor position for rendering.
@@ -955,9 +949,7 @@ impl MatchEvent for App {
             // Clear local state
             self.connected = false;
             self.peers.clear();
-            self.peer_last_seen.clear();
             self.remote_cursors.clear();
-            self.heartbeat_counter = 0;
             self.cursor_broadcast_counter = 0;
             self.voice_active = false;
             self.our_node_id.clear();

@@ -38,6 +38,9 @@ zstd         = { workspace = true }
 anyhow       = { workspace = true }
 
 # Audio / Voice (Phase 3: The Senses)
+# Gated to non-Android — Android builds skip CMake/Opus entirely.
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
 cpal         = { workspace = true }
 audiopus     = { workspace = true }
 bytes        = { workspace = true }

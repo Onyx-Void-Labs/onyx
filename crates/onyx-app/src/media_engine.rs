@@ -20,41 +20,14 @@
 //     Opus frames travel as QUIC Unreliable Datagrams with header:
 //       [32B topic_hash] [32B sender_node_id] [N bytes opus frame]
 //
-// Dependencies (gated behind `voice` feature):
+// Dependencies:
 //   • cpal      — cross-platform audio capture/playback
 //   • audiopus  — safe Opus encoding/decoding bindings
+//
+// On Android, a no-op stub is compiled instead (no cpal/audiopus).
 // ────────────────────────────────────────────────────────────────────
 
-use std::sync::mpsc;
-use std::thread;
-use tracing::{info, warn, error, trace};
-
-/// Opus always operates at 48 kHz internally.
-const OPUS_RATE: u32 = 48000;
-
-/// Opus frame size: 20ms at 48 kHz mono = 960 samples.
-const FRAME_SIZE: usize = 960;
-
-/// Maximum encoded Opus frame (bytes).  Opus rarely exceeds 500 B
-/// for mono voice at 48 kHz, but we keep headroom.
-const MAX_OPUS_BYTES: usize = 4000;
-
-/// VAD: RMS energy threshold for voice detection.
-/// Typical ambient noise is ~0.002–0.005 RMS; voice starts ~0.01+.
-const VAD_THRESHOLD: f32 = 0.008;
-
-/// VAD: Number of 20ms frames to keep in the rolling pre-buffer (200ms).
-const VAD_RING_FRAMES: usize = 10;
-
-/// VAD: Number of 20ms trailing frames to keep sending after voice stops (200ms).
-const VAD_TRAILING_FRAMES: u32 = 10;
-
-/// Keep-alive: send a silence frame every N silent frames (~5s = 250 × 20ms).
-/// This prevents the QUIC media connection from timing out during long silence.
-/// We use a very long interval so we don't leak bandwidth during muted periods.
-const KEEPALIVE_INTERVAL_FRAMES: u64 = 250;
-
-// ── Commands (UI → MediaEngine) ─────────────────────────────────
+// ── Shared types (all platforms) ────────────────────────────────
 
 /// Commands from the UI/App thread into the media engine.
 #[derive(Debug)]
@@ -69,8 +42,6 @@ pub enum MediaCommand {
     Shutdown,
 }
 
-// ── Events (MediaEngine → UI) ───────────────────────────────────
-
 /// Events emitted by the media engine back to the UI thread.
 #[derive(Debug, Clone)]
 pub enum MediaEvent {
@@ -84,17 +55,84 @@ pub enum MediaEvent {
     Error(String),
 }
 
-// ── UI-side handle ──────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════
+// Android stub — no cpal, no audiopus, pure Rust, no CMake
+// ═════════════════════════════════════════════════════════════════
+
+#[cfg(target_os = "android")]
+pub struct MediaEngine {
+    pub evt_rx: std::sync::mpsc::Receiver<MediaEvent>,
+}
+
+#[cfg(target_os = "android")]
+impl MediaEngine {
+    pub fn spawn() -> Self {
+        let (_tx, evt_rx) = std::sync::mpsc::channel::<MediaEvent>();
+        Self { evt_rx }
+    }
+    pub fn start(&self) {}
+    pub fn stop(&self) {}
+    pub fn receive_audio(&self, _from: String, _data: Vec<u8>) {}
+    pub fn shutdown(&self) {}
+    pub fn drain_events(&self) -> Vec<MediaEvent> { Vec::new() }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Desktop / non-Android — full cpal + Opus pipeline
+// ═════════════════════════════════════════════════════════════════
+
+#[cfg(not(target_os = "android"))]
+use std::sync::mpsc;
+#[cfg(not(target_os = "android"))]
+use std::thread;
+#[cfg(not(target_os = "android"))]
+use tracing::{info, warn, error, trace};
+
+#[cfg(not(target_os = "android"))]
+/// Opus always operates at 48 kHz internally.
+const OPUS_RATE: u32 = 48000;
+
+#[cfg(not(target_os = "android"))]
+/// Opus frame size: 20ms at 48 kHz mono = 960 samples.
+const FRAME_SIZE: usize = 960;
+
+#[cfg(not(target_os = "android"))]
+/// Maximum encoded Opus frame (bytes).  Opus rarely exceeds 500 B
+/// for mono voice at 48 kHz, but we keep headroom.
+const MAX_OPUS_BYTES: usize = 4000;
+
+#[cfg(not(target_os = "android"))]
+/// VAD: RMS energy threshold for voice detection.
+/// Typical ambient noise is ~0.002–0.005 RMS; voice starts ~0.01+.
+const VAD_THRESHOLD: f32 = 0.008;
+
+#[cfg(not(target_os = "android"))]
+/// VAD: Number of 20ms frames to keep in the rolling pre-buffer (200ms).
+const VAD_RING_FRAMES: usize = 10;
+
+#[cfg(not(target_os = "android"))]
+/// VAD: Number of 20ms trailing frames to keep sending after voice stops (200ms).
+const VAD_TRAILING_FRAMES: u32 = 10;
+
+#[cfg(not(target_os = "android"))]
+/// Keep-alive: send a silence frame every N silent frames (~5s = 250 × 20ms).
+/// This prevents the QUIC media connection from timing out during long silence.
+/// We use a very long interval so we don't leak bandwidth during muted periods.
+const KEEPALIVE_INTERVAL_FRAMES: u64 = 250;
+
+// ── UI-side handle (Desktop) ────────────────────────────────────
 
 /// The UI-side handle to the Media Engine.
 ///
 /// All heavy lifting happens on the background thread.
 /// The UI communicates via channels — never blocking the render loop.
+#[cfg(not(target_os = "android"))]
 pub struct MediaEngine {
     cmd_tx: mpsc::Sender<MediaCommand>,
     pub evt_rx: mpsc::Receiver<MediaEvent>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl MediaEngine {
     /// Spawn the media engine on a dedicated background thread.
     pub fn spawn() -> Self {
@@ -143,6 +181,7 @@ impl MediaEngine {
 
 // -- Resampling --
 
+#[cfg(not(target_os = "android"))]
 /// Linear interpolation resampler.  Good enough for voice (Opus is
 /// lossy anyway). Converts `input` from `in_rate` Hz to `out_rate` Hz
 /// producing exactly `out_len` samples.
@@ -164,6 +203,7 @@ fn resample(input: &[f32], in_rate: u32, out_rate: u32, out_len: usize) -> Vec<f
 }
 
 /// Compute RMS (root-mean-square) energy of a PCM frame.
+#[cfg(not(target_os = "android"))]
 fn rms_energy(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -174,6 +214,7 @@ fn rms_energy(samples: &[f32]) -> f32 {
 
 // ── VAD state machine ───────────────────────────────────────────
 
+#[cfg(not(target_os = "android"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VadState {
     /// Below threshold — buffering into ring, not sending.
@@ -188,6 +229,7 @@ enum VadState {
 // Background media loop — voice feature ENABLED
 // ═══════════════════════════════════════════════════════════════════
 
+#[cfg(not(target_os = "android"))]
 fn media_loop(
     cmd_rx: mpsc::Receiver<MediaCommand>,
     evt_tx: mpsc::Sender<MediaEvent>,
