@@ -1,8 +1,0 @@
-[package]
-name = "makepad-stitch-coremark"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-makepad-stitch = { path = ".." }
-wasmi = "0.31.2"
