@@ -22,8 +22,8 @@ pub enum AeroHudAction {
     SpawnNode,
     /// Reset the cosmos to initial state.
     ResetCosmos,
-    /// Purge all tombstoned nodes.
-    PurgeTombstones,
+    /// Show the cosmos view (close editor if open).
+    ShowCosmos,
     #[default]
     None,
 }

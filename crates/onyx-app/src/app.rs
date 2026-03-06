@@ -18,6 +18,7 @@
 
 use makepad_widgets::*;
 use onyx_core::id::OnyxId;
+use onyx_core::void_node::NodeType;
 use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
@@ -111,10 +112,10 @@ script_mod! {
                                         width: Fill
                                         height: Fill
                                         is_read_only: true
-                                        empty_message: "Write to ignite the star..."
+                                        empty_text: "Write to ignite the star..."
                                         draw_text.color: #xE0E0E0
+                                        draw_text.text_style: {font_size: 14.0}
                                         draw_bg.color: #x00000000
-                                        text_style: {font_size: 14.0}
                                     }
                                 }
                             }
@@ -154,15 +155,15 @@ script_mod! {
                                 padding: {left: 20.0, right: 20.0, top: 10.0, bottom: 10.0}
 
                                 dock_create := Button {
-                                    text: "CREATE"
+                                    text: "SPAWN"
+                                    draw_bg.color: #x0000
+                                }
+                                dock_cosmos := Button {
+                                    text: "COSMOS"
                                     draw_bg.color: #x0000
                                 }
                                 dock_reset := Button {
                                     text: "RESET"
-                                    draw_bg.color: #x0000
-                                }
-                                dock_purge := Button {
-                                    text: "PURGE"
                                     draw_bg.color: #x0000
                                 }
                             }
@@ -323,6 +324,28 @@ impl App {
         let dt = 1.0 / 60.0_f32; // fixed timestep at 60 fps
         self.cosmos.tick(dt);
 
+        // Anchor singularities to screen corners (world-space)
+        let zoom = (self.camera.z as f64).max(0.1);
+        let half_w = (640.0 / zoom) as f32;
+        let half_h = (400.0 / zoom) as f32;
+        let cam_x = self.camera.x;
+        let cam_y = self.camera.y;
+        for node in &mut self.cosmos.nodes {
+            match node.node_type {
+                NodeType::BlackHole => {
+                    node.spatial.pos[0] = cam_x + half_w - 100.0;
+                    node.spatial.pos[1] = cam_y + half_h - 100.0;
+                    node.spatial.velocity = [0.0, 0.0, 0.0];
+                }
+                NodeType::WhiteHole => {
+                    node.spatial.pos[0] = cam_x - half_w + 100.0;
+                    node.spatial.pos[1] = cam_y + half_h - 100.0;
+                    node.spatial.velocity = [0.0, 0.0, 0.0];
+                }
+                _ => {}
+            }
+        }
+
         // Build draw data from current cosmos state
         let draw_data: Vec<NodeDrawData> = self
             .cosmos
@@ -371,10 +394,10 @@ impl App {
     fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
         if self.ui.button(cx, ids!(dock_create)).clicked(actions) {
             AeroHudAction::SpawnNode
+        } else if self.ui.button(cx, ids!(dock_cosmos)).clicked(actions) {
+            AeroHudAction::ShowCosmos
         } else if self.ui.button(cx, ids!(dock_reset)).clicked(actions) {
             AeroHudAction::ResetCosmos
-        } else if self.ui.button(cx, ids!(dock_purge)).clicked(actions) {
-            AeroHudAction::PurgeTombstones
         } else {
             AeroHudAction::None
         }
@@ -990,10 +1013,10 @@ impl MatchEvent for App {
                     tracing::info!("cosmos reset — {} nodes", self.cosmos.len());
                     cx.redraw_all();
                 }
-                AeroHudAction::PurgeTombstones => {
-                    self.cosmos.purge_tombstones();
-                    tracing::info!("purged tombstones — {} nodes remain", self.cosmos.len());
-                    cx.redraw_all();
+                AeroHudAction::ShowCosmos => {
+                    if !self.cosmos_active {
+                        self.close_editor(cx);
+                    }
                 }
                 AeroHudAction::None => {}
             }

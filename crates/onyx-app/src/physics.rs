@@ -127,15 +127,26 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
                 continue;
             }
 
+            // ── Safety Field: BlackHole repulsion for non-dragged nodes ──
+            // When a Normal node drifts near a BlackHole without being dragged,
+            // reverse gravity into strong repulsion ("safety bounce").
+            // Only intentional drag allows attraction (pull-to-delete).
+            let j_is_bh = matches!(nodes[j].node_type, NodeType::BlackHole);
+            let i_is_bh = matches!(nodes[i].node_type, NodeType::BlackHole);
+            let safety_i = j_is_bh && !i_dragged && !i_kinematic;
+            let safety_j = i_is_bh && !j_dragged && !j_kinematic;
+            let force_sign_i = if safety_i { -3.0_f32 } else { 1.0 };
+            let force_sign_j = if safety_j { -3.0_f32 } else { 1.0 };
+
             // Newton's 3rd law: equal and opposite
             // Skip force application for dragged/kinematic nodes
             if !i_dragged && !i_kinematic {
-                accel[i][0] += gx / mi.max(1.0);
-                accel[i][1] += gy / mi.max(1.0);
+                accel[i][0] += gx / mi.max(1.0) * force_sign_i;
+                accel[i][1] += gy / mi.max(1.0) * force_sign_i;
             }
             if !j_dragged && !j_kinematic {
-                accel[j][0] -= gx / mj.max(1.0);
-                accel[j][1] -= gy / mj.max(1.0);
+                accel[j][0] -= gx / mj.max(1.0) * force_sign_j;
+                accel[j][1] -= gy / mj.max(1.0) * force_sign_j;
             }
 
             // ── Surface-to-Surface Repulsion (rigid separation) ──
@@ -308,7 +319,16 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             if dist < radius_sum {
                 match nodes[j].node_type {
                     NodeType::BlackHole => {
-                        tombstone_indices.push(i);
+                        // Safety physics: only tombstone if the node is being
+                        // intentionally dragged into the BlackHole.
+                        if nodes[i].spatial.is_dragged {
+                            tombstone_indices.push(i);
+                        } else {
+                            // Safety bounce — repel drifting nodes away
+                            let nx = dx / dist;
+                            let ny = dy / dist;
+                            kick_list.push((i, -nx * 800.0, -ny * 800.0));
+                        }
                     }
                     NodeType::WhiteHole => {
                         println!("EXPORTING NODE [{}]", nodes[i].id);

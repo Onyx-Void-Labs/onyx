@@ -225,19 +225,19 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
             y: 0.41,
             z: 0.93,
             w: 1.0,
-        }, // Purple (same visual treatment as RockyPlanet)
+        }, // Indigo
         NodeType::RockyPlanet => Vec4 {
-            x: 0.48,
-            y: 0.41,
-            z: 0.93,
+            x: 0.44,
+            y: 0.50,
+            z: 0.56,
+            w: 1.0,
+        }, // Slate
+        NodeType::GasGiant => Vec4 {
+            x: 0.58,
+            y: 0.35,
+            z: 0.85,
             w: 1.0,
         }, // Purple
-        NodeType::GasGiant => Vec4 {
-            x: 0.93,
-            y: 0.60,
-            z: 0.30,
-            w: 1.0,
-        }, // Amber
         NodeType::Sun => Vec4 {
             x: 0.93,
             y: 0.80,
@@ -245,17 +245,17 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
             w: 1.0,
         }, // Gold
         NodeType::BlackHole => Vec4 {
-            x: 0.0,
+            x: 0.15,
             y: 0.0,
             z: 0.0,
             w: 1.0,
-        }, // #000 — Absolute void
+        }, // Black/Red
         NodeType::WhiteHole => Vec4 {
             x: 1.0,
             y: 1.0,
             z: 1.0,
             w: 1.0,
-        }, // #FFF — Brilliant radiance
+        }, // Brilliant radiance
     }
 }
 

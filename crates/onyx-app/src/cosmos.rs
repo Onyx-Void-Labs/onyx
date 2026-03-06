@@ -170,6 +170,7 @@ impl Cosmos {
     }
 
     /// Purge all tombstoned nodes from the cosmos.
+    #[allow(dead_code)]
     pub fn purge_tombstones(&mut self) {
         self.nodes.retain(|n| !n.tombstone);
         self.selected = None;

@@ -65,16 +65,36 @@ impl PhysicsEngine {
     ///
     /// `dt` is elapsed time in seconds since the last tick.
     /// Clamped internally to 0.05s to prevent physics explosion on lag.
+    /// `screen_w` and `screen_h` are the world-space viewport dimensions
+    /// used for anchoring singularity nodes to screen corners.
     ///
     /// # Algorithm
-    /// 1. O(N²) pairwise force accumulation (gravity + repulsion)
-    /// 2. Semi-implicit Euler integration with 0.92 damping
-    /// 3. Recursive NaN quarantine on all position/velocity vectors
-    pub fn tick(&mut self, nodes: &mut [VoidNode], dt: f32) {
+    /// 1. Force singularity positions to screen corners
+    /// 2. O(N²) pairwise force accumulation (gravity + repulsion)
+    /// 3. Semi-implicit Euler integration with 0.92 damping
+    /// 4. Recursive NaN quarantine on all position/velocity vectors
+    pub fn tick(&mut self, nodes: &mut [VoidNode], dt: f32, screen_w: f32, screen_h: f32) {
         let dt = dt.min(0.05);
         let n = nodes.len();
         if n == 0 {
             return;
+        }
+
+        // ── 0. Force Singularity Positions to Screen Corners ─────
+        let half_w = screen_w / 2.0;
+        let half_h = screen_h / 2.0;
+        for node in nodes.iter_mut() {
+            match node.node_type {
+                NodeType::BlackHole => {
+                    node.position = [half_w - 100.0, -half_h + 100.0, 0.0];
+                    node.velocity = [0.0, 0.0, 0.0];
+                }
+                NodeType::WhiteHole => {
+                    node.position = [-half_w + 100.0, -half_h + 100.0, 0.0];
+                    node.velocity = [0.0, 0.0, 0.0];
+                }
+                _ => {}
+            }
         }
 
         // ── 1. Force Accumulation (O(N²) pairwise) ─────────────
@@ -120,18 +140,26 @@ impl PhysicsEngine {
                     continue;
                 }
 
+                // ── Safety Field: BlackHole repulsion for non-kinematic nodes ──
+                let j_is_bh = matches!(nodes[j].node_type, NodeType::BlackHole);
+                let i_is_bh = matches!(nodes[i].node_type, NodeType::BlackHole);
+                let safety_i = j_is_bh && !i_kinematic;
+                let safety_j = i_is_bh && !j_kinematic;
+                let force_sign_i = if safety_i { -3.0_f32 } else { 1.0 };
+                let force_sign_j = if safety_j { -3.0_f32 } else { 1.0 };
+
                 // Newton's 3rd law — equal and opposite
                 if !i_kinematic {
                     let inv_mi = 1.0 / mi.max(1.0);
-                    accel[i][0] += gx * inv_mi;
-                    accel[i][1] += gy * inv_mi;
-                    accel[i][2] += gz * inv_mi;
+                    accel[i][0] += gx * inv_mi * force_sign_i;
+                    accel[i][1] += gy * inv_mi * force_sign_i;
+                    accel[i][2] += gz * inv_mi * force_sign_i;
                 }
                 if !j_kinematic {
                     let inv_mj = 1.0 / mj.max(1.0);
-                    accel[j][0] -= gx * inv_mj;
-                    accel[j][1] -= gy * inv_mj;
-                    accel[j][2] -= gz * inv_mj;
+                    accel[j][0] -= gx * inv_mj * force_sign_j;
+                    accel[j][1] -= gy * inv_mj * force_sign_j;
+                    accel[j][2] -= gz * inv_mj * force_sign_j;
                 }
 
                 // ── Surface-to-Surface Repulsion (rigid separation) ──
@@ -297,7 +325,7 @@ impl PhysicsEngine {
         let n = nodes.len();
 
         // Collect deferred mutations to avoid aliased &mut borrows.
-        let mut tombstone_indices: Vec<usize> = Vec::new();
+        let tombstone_indices: Vec<usize> = Vec::new();
         let mut kick_list: Vec<(usize, f32, f32, f32)> = Vec::new();
 
         for i in 0..n {
@@ -329,7 +357,12 @@ impl PhysicsEngine {
                 if dist < radius_sum {
                     match nodes[j].node_type {
                         NodeType::BlackHole => {
-                            tombstone_indices.push(i);
+                            // Safety: only tombstone if no safety mechanism
+                            // (core_state VoidNode has no is_dragged; bounce instead)
+                            let nx = dx / dist;
+                            let ny = dy / dist;
+                            let nz = dz / dist;
+                            kick_list.push((i, -nx * 800.0, -ny * 800.0, -nz * 800.0));
                         }
                         NodeType::WhiteHole => {
                             println!("EXPORTING NODE [{}]", nodes[i].id);
