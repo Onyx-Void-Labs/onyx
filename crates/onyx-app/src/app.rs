@@ -80,18 +80,56 @@ script_mod! {
                         }
                         // Inline editor overlay — fades in on "Dive" (double-click)
                         dive_editor := View {
+                            visible: false
                             width: Fill
                             height: Fill
-                            visible: false
-                            align: {x: 0.5, y: 0.5}
-                            padding: {top: 80.0, right: 80.0, bottom: 80.0, left: 80.0}
-                            dive_text_input := TextInput {
+                            show_bg: true
+                            draw_bg.color: #x080808
+                            flow: Overlay
+
+                            // Centered editor paper
+                            View {
                                 width: Fill
                                 height: Fill
-                                is_read_only: true
-                                draw_text.color: vec4(0.8, 0.8, 0.9, 0.0)
-                                draw_bg.color: vec4(0.05, 0.05, 0.08, 0.0)
-                                text_style: {font_size: 14.0}
+                                flow: Down
+                                align: {x: 0.5, y: 0.5}
+                                padding: {top: 50.0, left: 50.0, right: 50.0, bottom: 50.0}
+
+                                View {
+                                    width: 800.0
+                                    height: Fill
+                                    flow: Down
+                                    spacing: 20.0
+
+                                    dive_title := Label {
+                                        text: "ENTERING ORBIT..."
+                                        draw_text.color: #x666666
+                                        draw_text.text_style: {font_size: 10.0}
+                                    }
+
+                                    dive_text_input := TextInput {
+                                        width: Fill
+                                        height: Fill
+                                        is_read_only: true
+                                        empty_message: "Write to ignite the star..."
+                                        draw_text.color: #xE0E0E0
+                                        draw_bg.color: #x101010
+                                        text_style: {font_size: 14.0}
+                                    }
+                                }
+                            }
+
+                            // Close button (floating top-right)
+                            View {
+                                width: Fill
+                                height: Fit
+                                align: {x: 1.0, y: 0.0}
+                                padding: {top: 15.0, right: 15.0}
+                                eject_button := Button {
+                                    text: "EJECT [ESC]"
+                                    draw_text.color: #xDD0000
+                                    draw_bg.color: vec4(0.0, 0.0, 0.0, 0.0)
+                                }
                             }
                         }
                         editor_area := View {
@@ -288,6 +326,22 @@ impl App {
             .label(cx, ids!(status_label))
             .set_text(cx, &format!("Cosmos — {} nodes", self.cosmos.len()));
 
+        cx.redraw_all();
+    }
+
+    /// Close the dive editor overlay and return to the cosmos view.
+    fn close_editor(&mut self, cx: &mut Cx) {
+        self.ui.view(cx, ids!(dive_editor)).set_visible(cx, false);
+        let dive_input = self.ui.text_input(cx, ids!(dive_text_input));
+        dive_input.set_is_read_only(cx, true);
+        self.cosmos_active = true;
+        self.active_node_id = None;
+        let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
+        cv.set_visible(cx, true);
+        self.ui.view(cx, ids!(editor_area)).set_visible(cx, false);
+        self.ui
+            .button(cx, ids!(hud_view_toggle))
+            .set_text(cx, "\u{27C1} Editor");
         cx.redraw_all();
     }
 
@@ -889,6 +943,13 @@ impl MatchEvent for App {
             cx.redraw_all();
         }
 
+        // -- EJECT button (close dive editor) --
+        if self.ui.button(cx, ids!(eject_button)).clicked(actions) {
+            if !self.cosmos_active {
+                self.close_editor(cx);
+            }
+        }
+
         // ── Aero-HUD controls (dispatched via AeroHudAction) ──────
         {
             match self.poll_hud_action(cx, actions) {
@@ -1229,6 +1290,9 @@ impl AppMain for App {
                         self.cursor.move_to(max);
                         self.sync_display(cx);
                         cx.redraw_all();
+                    }
+                    KeyCode::Escape if !self.cosmos_active => {
+                        self.close_editor(cx);
                     }
                     _ => {}
                 }

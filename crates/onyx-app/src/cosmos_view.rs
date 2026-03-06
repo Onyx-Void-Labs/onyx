@@ -74,6 +74,7 @@ script_mod! {
         selected: 0.0
         node_type_id: 0.0
         zoom_level: 1.0
+        hover_expand: 0.0
 
         pixel: fn() {
             let uv = (self.pos * 2.0 - 1.0) * 1.5
@@ -144,16 +145,22 @@ script_mod! {
             let ring_dist = abs(dist - 0.88)
             let ring = smoothstep(0.04, 0.01, ring_dist) * self.selected
 
-            let alpha = clamp(body + glow + ring + type_alpha_mod, 0.0, 1.0)
+            // ── Hover highlight ring (hardcoded radius, not self.pos scaled) ──
+            let planet_radius = 0.85
+            let highlight_radius = planet_radius + 0.08
+            let hover_ring_dist = abs(dist - highlight_radius)
+            let hover_ring = smoothstep(0.03, 0.005, hover_ring_dist) * self.hover_expand
+
+            let alpha = clamp(body + glow + ring + hover_ring + type_alpha_mod, 0.0, 1.0)
             if alpha < 0.005 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
             // ── Final colour: base tint + atmospheric modulation ──
             let brightness = 0.55 + self.heat * 0.45
-            let r = self.node_color.r * brightness + type_mod_r + ring * 0.3
-            let g = self.node_color.g * brightness + type_mod_g + ring * 0.3
-            let b = self.node_color.b * brightness + type_mod_b + ring * 0.3
+            let r = self.node_color.r * brightness + type_mod_r + ring * 0.3 + hover_ring * 0.5
+            let g = self.node_color.g * brightness + type_mod_g + ring * 0.3 + hover_ring * 0.5
+            let b = self.node_color.b * brightness + type_mod_b + ring * 0.3 + hover_ring * 0.5
 
             return Pal.premul(vec4(r, g, b, alpha))
         }
@@ -188,6 +195,8 @@ pub struct DrawNodeBody {
     node_type_id: f32,
     #[live]
     zoom_level: f32,
+    #[live]
+    hover_expand: f32,
 }
 
 // ── Colour palette for node types ───────────────────────────────
@@ -284,6 +293,9 @@ pub struct CosmosView {
     /// Per-frame drag delta in world-space (for inertia throw).
     #[rust]
     drag_delta: (f64, f64),
+    /// Per-node hover animation value (0.0 → 1.0, snappy transitions).
+    #[rust]
+    hover_anim: Vec<f32>,
 }
 
 impl CosmosView {
@@ -475,8 +487,23 @@ impl Widget for CosmosView {
         // Draw background (deep space)
         self.draw_bg.draw_abs(cx, rect);
 
+        // Animate hover_expand per node (snappy transitions)
+        self.hover_anim.resize(self.draw_data.len(), 0.0);
+        for (i, anim) in self.hover_anim.iter_mut().enumerate() {
+            let target = if self.hovered_node == Some(i) {
+                1.0_f32
+            } else {
+                0.0
+            };
+            if target > *anim {
+                *anim = (*anim + 0.34).min(1.0); // ~0.05s on at 60fps
+            } else if target < *anim {
+                *anim = (*anim - 0.17).max(0.0); // ~0.1s off at 60fps
+            }
+        }
+
         // Draw each node using world_to_screen mapping
-        for nd in &self.draw_data {
+        for (i, nd) in self.draw_data.iter().enumerate() {
             // Skip nodes with NaN positions to prevent layout crashes
             if nd.x.is_nan() || nd.y.is_nan() {
                 continue;
@@ -505,6 +532,7 @@ impl Widget for CosmosView {
             self.draw_node.selected = if nd.selected { 1.0 } else { 0.0 };
             self.draw_node.node_type_id = node_type_to_id(nd.node_type);
             self.draw_node.zoom_level = self.cam_zoom as f32;
+            self.draw_node.hover_expand = self.hover_anim.get(i).copied().unwrap_or(0.0);
 
             // Draw the node body — quad is 50% larger than visual body
             // so SDF glow can bleed without hitting the quad edge.
