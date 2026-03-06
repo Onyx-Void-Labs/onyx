@@ -195,20 +195,24 @@ pub fn tick(
     }
 
     // ── 0. Inverse Camera Projection — Tether Singularities ──────
+    // Visible world bounds: half-extents in world space.
     let zoom_safe = zoom.max(0.01);
-    let world_offset_x = (screen_w / 2.0) / zoom_safe;
-    let world_offset_y = (screen_h / 2.0) / zoom_safe;
+    let half_w = (screen_w / 2.0) / zoom_safe;
+    let half_h = (screen_h / 2.0) / zoom_safe;
+    // 150 screen-px margin, converted to world space.
     let margin = 150.0 / zoom_safe;
     for node in nodes.iter_mut() {
         match node.node_type {
+            // BlackHole → bottom-right corner
             NodeType::BlackHole => {
-                node.spatial.pos[0] = view_center_x + world_offset_x - margin;
-                node.spatial.pos[1] = view_center_y - world_offset_y + margin;
+                node.spatial.pos[0] = view_center_x + half_w - margin;
+                node.spatial.pos[1] = view_center_y + half_h - margin;
                 node.spatial.velocity = [0.0, 0.0, 0.0];
             }
+            // WhiteHole → bottom-left corner
             NodeType::WhiteHole => {
-                node.spatial.pos[0] = view_center_x - world_offset_x + margin;
-                node.spatial.pos[1] = view_center_y - world_offset_y + margin;
+                node.spatial.pos[0] = view_center_x - half_w + margin;
+                node.spatial.pos[1] = view_center_y + half_h - margin;
                 node.spatial.velocity = [0.0, 0.0, 0.0];
             }
             _ => {}

@@ -92,24 +92,28 @@ impl PhysicsEngine {
         }
 
         // ── 0. Inverse Camera Projection — Tether Singularities ────
+        // Visible world bounds: half-extents in world space.
         let zoom_safe = zoom.max(0.01);
-        let world_offset_x = (screen_w as f64 / 2.0) / zoom_safe;
-        let world_offset_y = (screen_h as f64 / 2.0) / zoom_safe;
+        let half_w = (screen_w as f64 / 2.0) / zoom_safe;
+        let half_h = (screen_h as f64 / 2.0) / zoom_safe;
+        // 150 screen-px margin, converted to world space.
         let margin = 150.0 / zoom_safe;
         for node in nodes.iter_mut() {
             match node.node_type {
+                // BlackHole → bottom-right corner
                 NodeType::BlackHole => {
                     node.position = [
-                        (view_center_x + world_offset_x - margin) as f32,
-                        (view_center_y - world_offset_y + margin) as f32,
+                        (view_center_x + half_w - margin) as f32,
+                        (view_center_y + half_h - margin) as f32,
                         0.0,
                     ];
                     node.velocity = [0.0, 0.0, 0.0];
                 }
+                // WhiteHole → bottom-left corner
                 NodeType::WhiteHole => {
                     node.position = [
-                        (view_center_x - world_offset_x + margin) as f32,
-                        (view_center_y - world_offset_y + margin) as f32,
+                        (view_center_x - half_w + margin) as f32,
+                        (view_center_y + half_h - margin) as f32,
                         0.0,
                     ];
                     node.velocity = [0.0, 0.0, 0.0];

@@ -20,7 +20,8 @@ use makepad_widgets::*;
 pub enum AeroHudAction {
     /// User wants to spawn a new node (type is emergent).
     SpawnNode,
-    /// Reset the cosmos to initial state.
+    /// Reset the cosmos to initial state (Phase 3 — currently unused).
+    #[allow(dead_code)]
     ResetCosmos,
     /// Show the cosmos view (close editor if open).
     ShowCosmos,

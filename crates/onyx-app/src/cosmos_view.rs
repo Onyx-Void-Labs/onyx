@@ -299,7 +299,9 @@ pub struct CosmosView {
 
     // ── Interaction state ──
     #[rust]
-    pan_start: Option<(f64, f64, f64, f64)>, // (mouse_x, mouse_y, cam_x, cam_y)
+    panning: bool,
+    #[rust]
+    pan_last: Option<(f64, f64)>, // last mouse position during pan
     #[rust]
     widget_rect: Rect,
     /// Index of the currently hovered node (for hover arrest).
@@ -384,22 +386,27 @@ impl Widget for CosmosView {
                     }
                 } else {
                     // Start camera pan
-                    self.pan_start = Some((fd.abs.x, fd.abs.y, self.cam_x, self.cam_y));
+                    self.panning = true;
+                    self.pan_last = Some((fd.abs.x, fd.abs.y));
                     cx.widget_action(uid, CosmosViewAction::Deselect);
                 }
             }
             Hit::FingerMove(fm) => {
-                if let Some((sx, sy, cx_start, cy_start)) = self.pan_start {
-                    // Camera pan
-                    let new_cx = cx_start - (fm.abs.x - sx) / self.cam_zoom;
-                    let new_cy = cy_start - (fm.abs.y - sy) / self.cam_zoom;
-                    self.cam_x = new_cx;
-                    self.cam_y = new_cy;
+                if self.panning {
+                    // Camera pan — incremental delta divided by zoom
+                    // This prevents "supersonic" panning when zoomed in.
+                    if let Some((lx, ly)) = self.pan_last {
+                        let dx = (fm.abs.x - lx) / self.cam_zoom;
+                        let dy = (fm.abs.y - ly) / self.cam_zoom;
+                        self.cam_x -= dx;
+                        self.cam_y -= dy;
+                    }
+                    self.pan_last = Some((fm.abs.x, fm.abs.y));
                     cx.widget_action(
                         uid,
                         CosmosViewAction::CameraPanned {
-                            x: new_cx as f32,
-                            y: new_cy as f32,
+                            x: self.cam_x as f32,
+                            y: self.cam_y as f32,
                         },
                     );
                 } else {
@@ -422,8 +429,9 @@ impl Widget for CosmosView {
                 cx.redraw_all();
             }
             Hit::FingerUp(_) => {
-                if self.pan_start.is_some() {
-                    self.pan_start = None;
+                if self.panning {
+                    self.panning = false;
+                    self.pan_last = None;
                 } else {
                     // Inject throw velocity from accumulated drag delta
                     cx.widget_action(
