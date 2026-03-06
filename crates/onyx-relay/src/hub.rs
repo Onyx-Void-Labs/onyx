@@ -145,11 +145,7 @@ impl GiantHall {
     /// Drain buffered messages for a specific peer on a topic.
     ///
     /// Returns messages that the peer hasn't seen (i.e., not sent by them).
-    pub fn drain_for_peer(
-        &self,
-        topic: &TopicHash,
-        peer: &EndpointId,
-    ) -> Vec<Vec<u8>> {
+    pub fn drain_for_peer(&self, topic: &TopicHash, peer: &EndpointId) -> Vec<Vec<u8>> {
         let inner = self.inner.lock().unwrap();
         match inner.topics.get(topic) {
             Some(buf) => buf
@@ -204,9 +200,9 @@ impl GiantHall {
         }
 
         // Remove empty topics
-        inner.topics.retain(|_, buf| {
-            !buf.messages.is_empty() || !buf.subscribers.is_empty()
-        });
+        inner
+            .topics
+            .retain(|_, buf| !buf.messages.is_empty() || !buf.subscribers.is_empty());
 
         // Recalculate total bytes
         inner.total_bytes = inner.topics.values().map(|b| b.total_bytes).sum();

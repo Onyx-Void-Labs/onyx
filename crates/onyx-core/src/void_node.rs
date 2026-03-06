@@ -24,9 +24,17 @@ use crate::id::OnyxId;
 /// - **DysonSphere**: Encrypted content — passkey-protected, rendered
 ///   as a procedural golden shell that unfolds on authentication.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash,
-    Archive, Serialize, Deserialize,
-    serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Archive,
+    Serialize,
+    Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum NodeType {
     /// Unsorted capture — lives in the Asteroid Belt (inbox).
@@ -52,9 +60,7 @@ impl Default for NodeType {
 /// All rendering, clustering (constellations), and interaction
 /// (gravity, accretion, Oort Cloud drift) derive from this state.
 #[derive(
-    Debug, Clone, PartialEq,
-    Archive, Serialize, Deserialize,
-    serde::Serialize, serde::Deserialize,
+    Debug, Clone, PartialEq, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
 )]
 pub struct SpatialState {
     /// Position in 3D space [x, y, z].
@@ -105,9 +111,7 @@ impl Default for SpatialState {
 /// (referenced by `id`), while its spatial existence is governed
 /// by Newtonian-ish physics via `spatial`.
 #[derive(
-    Debug, Clone, PartialEq,
-    Archive, Serialize, Deserialize,
-    serde::Serialize, serde::Deserialize,
+    Debug, Clone, PartialEq, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
 )]
 pub struct VoidNode {
     /// Unique identity — same ID used as the Loro document key.

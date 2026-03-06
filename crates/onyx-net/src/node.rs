@@ -74,10 +74,10 @@ impl OnyxNode {
         // This tells the endpoint how to reach the relay node
         // so gossip can bootstrap through it.
         let relay_id = onyx_core::protocol::relay_endpoint_id();
-        let relay_addrs: BTreeSet<SocketAddr> =
-            [SocketAddr::from((RELAY_VPS_IP, RELAY_VPS_PORT))].into_iter().collect();
-        let relay_info = EndpointInfo::new(relay_id)
-            .with_ip_addrs(relay_addrs);
+        let relay_addrs: BTreeSet<SocketAddr> = [SocketAddr::from((RELAY_VPS_IP, RELAY_VPS_PORT))]
+            .into_iter()
+            .collect();
+        let relay_info = EndpointInfo::new(relay_id).with_ip_addrs(relay_addrs);
         let memory = MemoryLookup::new();
         memory.set_endpoint_info(relay_info);
         endpoint.address_lookup().add(memory);

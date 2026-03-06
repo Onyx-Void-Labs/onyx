@@ -172,7 +172,11 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         node.spatial.velocity[1] += accel[i][1] * dt;
 
         // Damping — hover arrest uses stronger damping
-        let damp = if node.spatial.hovered { HOVER_DAMPING } else { DAMPING };
+        let damp = if node.spatial.hovered {
+            HOVER_DAMPING
+        } else {
+            DAMPING
+        };
         node.spatial.velocity[0] *= damp;
         node.spatial.velocity[1] *= damp;
 
@@ -193,10 +197,18 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         node.spatial.heat = node.spatial.heat.max(0.0);
 
         // ── 4. NaN quarantine — forcefully sanitize ──
-        if node.spatial.pos[0].is_nan() { node.spatial.pos[0] = 0.0; }
-        if node.spatial.pos[1].is_nan() { node.spatial.pos[1] = 0.0; }
-        if node.spatial.velocity[0].is_nan() { node.spatial.velocity[0] = 0.0; }
-        if node.spatial.velocity[1].is_nan() { node.spatial.velocity[1] = 0.0; }
+        if node.spatial.pos[0].is_nan() {
+            node.spatial.pos[0] = 0.0;
+        }
+        if node.spatial.pos[1].is_nan() {
+            node.spatial.pos[1] = 0.0;
+        }
+        if node.spatial.velocity[0].is_nan() {
+            node.spatial.velocity[0] = 0.0;
+        }
+        if node.spatial.velocity[1].is_nan() {
+            node.spatial.velocity[1] = 0.0;
+        }
     }
 }
 

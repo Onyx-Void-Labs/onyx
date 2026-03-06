@@ -212,10 +212,30 @@ pub struct DrawNodeBody {
 fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
     use onyx_core::void_node::NodeType;
     match nt {
-        NodeType::Planet      => Vec4 { x: 0.48, y: 0.41, z: 0.93, w: 1.0 }, // Purple
-        NodeType::Asteroid    => Vec4 { x: 0.55, y: 0.65, z: 0.75, w: 1.0 }, // Blue-grey
-        NodeType::Satellite   => Vec4 { x: 0.93, y: 0.60, z: 0.30, w: 1.0 }, // Amber
-        NodeType::DysonSphere => Vec4 { x: 0.93, y: 0.80, z: 0.20, w: 1.0 }, // Gold
+        NodeType::Planet => Vec4 {
+            x: 0.48,
+            y: 0.41,
+            z: 0.93,
+            w: 1.0,
+        }, // Purple
+        NodeType::Asteroid => Vec4 {
+            x: 0.55,
+            y: 0.65,
+            z: 0.75,
+            w: 1.0,
+        }, // Blue-grey
+        NodeType::Satellite => Vec4 {
+            x: 0.93,
+            y: 0.60,
+            z: 0.30,
+            w: 1.0,
+        }, // Amber
+        NodeType::DysonSphere => Vec4 {
+            x: 0.93,
+            y: 0.80,
+            z: 0.20,
+            w: 1.0,
+        }, // Gold
     }
 }
 
@@ -224,9 +244,9 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
 fn node_type_to_id(nt: onyx_core::void_node::NodeType) -> f32 {
     use onyx_core::void_node::NodeType;
     match nt {
-        NodeType::Planet      => 0.0,
-        NodeType::Asteroid    => 1.0,
-        NodeType::Satellite   => 2.0,
+        NodeType::Planet => 0.0,
+        NodeType::Asteroid => 1.0,
+        NodeType::Satellite => 2.0,
         NodeType::DysonSphere => 3.0,
     }
 }
@@ -354,14 +374,23 @@ impl Widget for CosmosView {
                     let new_cy = cy_start - (fm.abs.y - sy) / self.cam_zoom;
                     self.cam_x = new_cx;
                     self.cam_y = new_cy;
-                    cx.widget_action(uid, CosmosViewAction::CameraPanned {
-                        x: new_cx as f32,
-                        y: new_cy as f32,
-                    });
+                    cx.widget_action(
+                        uid,
+                        CosmosViewAction::CameraPanned {
+                            x: new_cx as f32,
+                            y: new_cy as f32,
+                        },
+                    );
                 } else {
                     // Node dragging
                     let (wx, wy) = self.screen_to_world(fm.abs.x, fm.abs.y);
-                    cx.widget_action(uid, CosmosViewAction::NodeDragging { x: wx as f32, y: wy as f32 });
+                    cx.widget_action(
+                        uid,
+                        CosmosViewAction::NodeDragging {
+                            x: wx as f32,
+                            y: wy as f32,
+                        },
+                    );
                 }
                 cx.redraw_all();
             }
@@ -452,8 +481,10 @@ impl Widget for CosmosView {
 
             // Cull nodes outside the viewport (with margin for glow)
             let margin = screen_diameter;
-            if screen_x + margin < rect.pos.x || screen_x - margin > rect.pos.x + rect.size.x
-                || screen_y + margin < rect.pos.y || screen_y - margin > rect.pos.y + rect.size.y
+            if screen_x + margin < rect.pos.x
+                || screen_x - margin > rect.pos.x + rect.size.x
+                || screen_y + margin < rect.pos.y
+                || screen_y - margin > rect.pos.y + rect.size.y
             {
                 continue;
             }
@@ -480,10 +511,14 @@ impl Widget for CosmosView {
             self.draw_node.draw_abs(cx, node_rect);
 
             // Draw the label below the node
-            self.draw_text.draw_abs(cx, dvec2(
-                screen_x - screen_radius * 0.5,
-                screen_y + screen_radius + 4.0,
-            ), nd.label);
+            self.draw_text.draw_abs(
+                cx,
+                dvec2(
+                    screen_x - screen_radius * 0.5,
+                    screen_y + screen_radius + 4.0,
+                ),
+                nd.label,
+            );
         }
 
         DrawStep::done()

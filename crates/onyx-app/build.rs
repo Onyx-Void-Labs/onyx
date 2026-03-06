@@ -117,10 +117,7 @@ fn configure_android(target_arch: &str) {
             ndk_path, target_arch
         );
         // Export for this crate's own use (informational).
-        println!(
-            "cargo:rustc-env=ANDROID_NDK_HOME={}",
-            ndk_path.display()
-        );
+        println!("cargo:rustc-env=ANDROID_NDK_HOME={}", ndk_path.display());
     } else {
         println!(
             "cargo:warning=[onyx-app build.rs] NDK directory {:?} exists but \

@@ -3,11 +3,13 @@
 // Every other crate depends on this. Zero IO. Pure data & logic.
 // ────────────────────────────────────────────────────────────────────
 
+pub mod core_state;
 pub mod document;
 pub mod error;
 pub mod id;
 pub mod identity;
 pub mod protocol;
+pub mod stellar_physics;
 pub mod void_node;
 
 pub use error::OnyxError;

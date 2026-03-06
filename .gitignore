@@ -34,3 +34,6 @@
 *.swo
 Thumbs.db
 .DS_Store
+
+.github/instructions/instructions.instructions.md
+.github/skills/skillset/SKILL.md

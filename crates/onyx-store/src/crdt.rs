@@ -131,7 +131,9 @@ impl CrdtDoc {
 
     /// Export the full state as a binary snapshot.
     pub fn export_snapshot(&self) -> Vec<u8> {
-        self.doc.export(loro::ExportMode::Snapshot).unwrap_or_default()
+        self.doc
+            .export(loro::ExportMode::Snapshot)
+            .unwrap_or_default()
     }
 
     /// Get the current version vector (for incremental delta sync).
@@ -179,8 +181,7 @@ impl CrdtDoc {
 
     /// Import a ZSTD-compressed snapshot.
     pub fn import_compressed(&self, data: &[u8]) -> OnyxResult<()> {
-        let raw = zstd::decode_all(data)
-            .map_err(|e| OnyxError::Serialization(e.to_string()))?;
+        let raw = zstd::decode_all(data).map_err(|e| OnyxError::Serialization(e.to_string()))?;
         self.import_snapshot(&raw)
     }
 }
@@ -219,7 +220,10 @@ mod tests {
         // Export only the delta
         let delta = doc1.export_updates_since(&vv).unwrap();
         assert!(!delta.is_empty());
-        assert!(delta.len() < snapshot.len(), "delta should be smaller than snapshot");
+        assert!(
+            delta.len() < snapshot.len(),
+            "delta should be smaller than snapshot"
+        );
 
         // Apply delta to doc2
         doc2.import_snapshot(&delta).unwrap(); // Loro import handles both snapshots and updates

@@ -1,4 +1,4 @@
-﻿// --- Glowing Remote Cursor ---
+// --- Glowing Remote Cursor ---
 // GPU-driven cursor shader for showing a friend's cursor position.
 // Renders a thin vertical bar with a bloom/glow falloff and a
 // gentle pulse animation.

@@ -138,7 +138,10 @@ pub enum PubSubMsg {
     Deliver { topic: TopicHash, payload: Vec<u8> },
     /// Client → Relay/Peer: request full state (initial sync).
     /// `version_info` is the local Loro VersionVector (serialized).
-    RequestState { topic: TopicHash, version_info: Vec<u8> },
+    RequestState {
+        topic: TopicHash,
+        version_info: Vec<u8>,
+    },
     /// Relay/Peer → Client: full or partial state snapshot.
     DeliverState { topic: TopicHash, snapshot: Vec<u8> },
 }
@@ -152,9 +155,10 @@ impl PubSubMsg {
             Self::Unsubscribe { topic } => (TAG_UNSUBSCRIBE, topic, &[][..]),
             Self::Publish { topic, payload } => (TAG_PUBLISH, topic, payload.as_slice()),
             Self::Deliver { topic, payload } => (TAG_DELIVER, topic, payload.as_slice()),
-            Self::RequestState { topic, version_info } => {
-                (TAG_REQUEST_STATE, topic, version_info.as_slice())
-            }
+            Self::RequestState {
+                topic,
+                version_info,
+            } => (TAG_REQUEST_STATE, topic, version_info.as_slice()),
             Self::DeliverState { topic, snapshot } => {
                 (TAG_DELIVER_STATE, topic, snapshot.as_slice())
             }

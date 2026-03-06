@@ -11,11 +11,19 @@ use std::fmt;
 /// Stored as two u64s to guarantee 8-byte alignment on both ARM64 and
 /// x86_64 without padding issues—critical for true zero-copy with rkyv.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash,
-    Archive, Serialize, Deserialize,
-    serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Archive,
+    Serialize,
+    Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
 )]
-#[repr(C)]              // Deterministic layout across architectures
+#[repr(C)] // Deterministic layout across architectures
 pub struct OnyxId {
     hi: u64,
     lo: u64,

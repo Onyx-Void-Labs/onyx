@@ -137,14 +137,22 @@ impl Cosmos {
             self.nodes.remove(idx);
             // Fix up selected / dragged indices.
             self.selected = self.selected.and_then(|s| {
-                if s == idx { None }
-                else if s > idx { Some(s - 1) }
-                else { Some(s) }
+                if s == idx {
+                    None
+                } else if s > idx {
+                    Some(s - 1)
+                } else {
+                    Some(s)
+                }
             });
             self.dragged = self.dragged.and_then(|d| {
-                if d == idx { None }
-                else if d > idx { Some(d - 1) }
-                else { Some(d) }
+                if d == idx {
+                    None
+                } else if d > idx {
+                    Some(d - 1)
+                } else {
+                    Some(d)
+                }
             });
         }
     }

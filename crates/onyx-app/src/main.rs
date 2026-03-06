@@ -8,8 +8,8 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod app;
 mod aero_hud;
+mod app;
 mod cosmos;
 mod cosmos_view;
 mod media_engine;

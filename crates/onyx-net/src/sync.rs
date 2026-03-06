@@ -53,9 +53,7 @@ impl SyncEngine {
         gossip_sender: GossipSender,
         mut incoming_rx: mpsc::Receiver<MeshEvent>,
     ) -> Self {
-        let state = Arc::new(Mutex::new(SyncState {
-            crdt,
-        }));
+        let state = Arc::new(Mutex::new(SyncState { crdt }));
 
         // Channel for outbound deltas (editor → network)
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(128);

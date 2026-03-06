@@ -17,11 +17,11 @@
 // Gated behind the `vault` feature flag.
 // ────────────────────────────────────────────────────────────────────
 
+use argon2::Argon2;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
-use argon2::Argon2;
 use rand::Rng;
 use tracing::info;
 
@@ -105,19 +105,15 @@ impl Vault {
     pub fn decrypt(&self, blob: &[u8]) -> Result<Vec<u8>, VaultError> {
         let min_len = SALT_LEN + NONCE_LEN + 16; // 16 = auth tag
         if blob.len() < min_len {
-            return Err(VaultError::Decryption(
-                "ciphertext too short".into(),
-            ));
+            return Err(VaultError::Decryption("ciphertext too short".into()));
         }
 
         let nonce = XNonce::from_slice(&blob[SALT_LEN..SALT_LEN + NONCE_LEN]);
         let ciphertext = &blob[SALT_LEN + NONCE_LEN..];
 
-        self.cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| VaultError::Decryption(
-                "decryption failed — wrong password or corrupted data".into(),
-            ))
+        self.cipher.decrypt(nonce, ciphertext).map_err(|_| {
+            VaultError::Decryption("decryption failed — wrong password or corrupted data".into())
+        })
     }
 
     /// Open an encrypted blob with a password.

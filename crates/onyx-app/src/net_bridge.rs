@@ -198,10 +198,7 @@ async fn drain_relay_delivers(
     Ok(())
 }
 
-async fn network_loop(
-    cmd_rx: mpsc::Receiver<NetCommand>,
-    evt_tx: mpsc::Sender<NetEvent>,
-) {
+async fn network_loop(cmd_rx: mpsc::Receiver<NetCommand>, evt_tx: mpsc::Sender<NetEvent>) {
     use onyx_core::identity::VoidIdentity;
     use onyx_core::protocol::{self, PubSubMsg, ONYX_MEDIA_ALPN, ONYX_PUBSUB_ALPN};
     use onyx_net::{OnyxNode, ShadowMesh};
@@ -270,10 +267,8 @@ async fn network_loop(
                                 VoidIdentity::load_or_create(Some(&path))
                                     .expect("failed to load/create profile identity")
                             }
-                            None => {
-                                VoidIdentity::load_or_create(None)
-                                    .expect("failed to load/create default identity")
-                            }
+                            None => VoidIdentity::load_or_create(None)
+                                .expect("failed to load/create default identity"),
                         }
                     };
                     let our_id = identity.public_key().to_string();
@@ -387,10 +382,7 @@ async fn network_loop(
                                 frame.extend_from_slice(&(d.len() as u32).to_be_bytes());
                                 frame.extend_from_slice(d);
                             }
-                            debug!(
-                                count,
-                                "in-flight batch: merged {count} deltas → 1 packet"
-                            );
+                            debug!(count, "in-flight batch: merged {count} deltas → 1 packet");
                             frame
                         };
 
@@ -417,7 +409,6 @@ async fn network_loop(
                 }
 
                 // ── Media datagram commands ──────────────────────
-
                 NetCommand::StartMedia => {
                     if media_conn.is_some() {
                         info!("media connection already active");
@@ -455,10 +446,11 @@ async fn network_loop(
                                                     }
                                                 };
                                                 let opus_data = raw[64..].to_vec();
-                                                let _ = evt_tx2.send(NetEvent::MediaDatagramReceived {
-                                                    from,
-                                                    data: opus_data,
-                                                });
+                                                let _ =
+                                                    evt_tx2.send(NetEvent::MediaDatagramReceived {
+                                                        from,
+                                                        data: opus_data,
+                                                    });
                                             }
                                             Err(e) => {
                                                 info!(%e, "media datagram reader stopped");
@@ -504,15 +496,12 @@ async fn network_loop(
                         let our_id = n.id();
 
                         // Wire format: [32B topic][32B sender][opus]
-                        let mut datagram =
-                            Vec::with_capacity(64 + opus_frame.len());
+                        let mut datagram = Vec::with_capacity(64 + opus_frame.len());
                         datagram.extend_from_slice(&topic);
                         datagram.extend_from_slice(our_id.as_bytes());
                         datagram.extend_from_slice(&opus_frame);
 
-                        if let Err(e) =
-                            conn.send_datagram(bytes::Bytes::from(datagram))
-                        {
+                        if let Err(e) = conn.send_datagram(bytes::Bytes::from(datagram)) {
                             trace!(%e, "media datagram send failed");
                         }
                     }
@@ -522,9 +511,8 @@ async fn network_loop(
                     info!("disconnecting from mesh — broadcasting Goodbye");
                     // Broadcast Goodbye before leaving so peers remove us instantly
                     if let Some(ref sender) = gossip_sender {
-                        let goodbye = onyx_core::protocol::encode_control(
-                            onyx_core::protocol::CTRL_GOODBYE,
-                        );
+                        let goodbye =
+                            onyx_core::protocol::encode_control(onyx_core::protocol::CTRL_GOODBYE);
                         let _ = sender.broadcast(goodbye.into()).await;
                         // Brief delay to ensure the message propagates
                         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -565,7 +553,9 @@ async fn network_loop(
                                     trace!(peer = %from, "received Heartbeat (ignored)");
                                 }
                                 onyx_core::protocol::CTRL_CURSOR_POS => {
-                                    if let Some(pos) = onyx_core::protocol::decode_cursor_pos(&delta.data) {
+                                    if let Some(pos) =
+                                        onyx_core::protocol::decode_cursor_pos(&delta.data)
+                                    {
                                         trace!(peer = %from, pos, "received CursorPos");
                                         let _ = evt_tx.send(NetEvent::CursorReceived { from, pos });
                                     }
@@ -623,9 +613,9 @@ async fn network_loop(
                     }
                     Err(e) => {
                         warn!(%e, "failed to re-subscribe, will retry on next poll");
-                        let _ = evt_tx.send(NetEvent::Error(
-                            format!("Gossip stream lost, reconnect failed: {e}"),
-                        ));
+                        let _ = evt_tx.send(NetEvent::Error(format!(
+                            "Gossip stream lost, reconnect failed: {e}"
+                        )));
                     }
                 }
             }

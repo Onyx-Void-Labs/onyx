@@ -130,11 +130,7 @@ impl PubSubReflector {
                                     "[reflector] gossip message received — broadcasting to tree"
                                 );
                                 // Buffer in the hall for offline peers
-                                hall.publish(
-                                    topic_hash,
-                                    msg.delivered_from,
-                                    msg.content.to_vec(),
-                                );
+                                hall.publish(topic_hash, msg.delivered_from, msg.content.to_vec());
                                 // The gossip protocol automatically re-broadcasts
                                 // to all neighbors in the tree — no manual send needed.
                             }
@@ -193,25 +189,47 @@ impl PubSubReflector {
                                         let _keep_alive_2 = new_sender;
                                         loop {
                                             match new_fused.next().await {
-                                                Some(Ok(iroh_gossip::api::Event::Received(msg))) => {
-                                                    hall.publish(topic_hash, msg.delivered_from, msg.content.to_vec());
+                                                Some(Ok(iroh_gossip::api::Event::Received(
+                                                    msg,
+                                                ))) => {
+                                                    hall.publish(
+                                                        topic_hash,
+                                                        msg.delivered_from,
+                                                        msg.content.to_vec(),
+                                                    );
                                                 }
-                                                Some(Ok(iroh_gossip::api::Event::NeighborUp(peer))) => {
+                                                Some(Ok(iroh_gossip::api::Event::NeighborUp(
+                                                    peer,
+                                                ))) => {
                                                     info!(peer = %peer, topic = hex_short(&topic_hash), "[reflector] peer joined");
                                                 }
-                                                Some(Ok(iroh_gossip::api::Event::NeighborDown(peer))) => {
+                                                Some(Ok(
+                                                    iroh_gossip::api::Event::NeighborDown(peer),
+                                                )) => {
                                                     warn!(peer = %peer, topic = hex_short(&topic_hash), "[reflector] peer left");
                                                 }
                                                 Some(Ok(iroh_gossip::api::Event::Lagged)) => {
-                                                    warn!(topic = hex_short(&topic_hash), "[reflector] lagged");
+                                                    warn!(
+                                                        topic = hex_short(&topic_hash),
+                                                        "[reflector] lagged"
+                                                    );
                                                 }
                                                 Some(Err(e)) => {
                                                     warn!(%e, topic = hex_short(&topic_hash), "[reflector] error");
-                                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                                    tokio::time::sleep(
+                                                        std::time::Duration::from_millis(500),
+                                                    )
+                                                    .await;
                                                 }
                                                 None => {
-                                                    warn!(topic = hex_short(&topic_hash), "[reflector] stream ended again");
-                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    warn!(
+                                                        topic = hex_short(&topic_hash),
+                                                        "[reflector] stream ended again"
+                                                    );
+                                                    tokio::time::sleep(
+                                                        std::time::Duration::from_secs(5),
+                                                    )
+                                                    .await;
                                                     break; // break inner loop, which breaks outer too
                                                 }
                                             }
@@ -227,7 +245,10 @@ impl PubSubReflector {
                         }
                     }
 
-                    warn!(topic = hex_short(&topic_hash), "gossip reflector task exiting");
+                    warn!(
+                        topic = hex_short(&topic_hash),
+                        "gossip reflector task exiting"
+                    );
                 });
             }
             Err(e) => {
@@ -241,10 +262,7 @@ impl PubSubReflector {
     }
 
     /// Handle a single PubSub client connection.
-    async fn handle_connection(
-        &self,
-        conn: iroh::endpoint::Connection,
-    ) -> anyhow::Result<()> {
+    async fn handle_connection(&self, conn: iroh::endpoint::Connection) -> anyhow::Result<()> {
         let peer = conn.remote_id();
 
         loop {
@@ -348,9 +366,8 @@ impl iroh::protocol::ProtocolHandler for PubSubReflector {
 // head-of-line blocking. Lost audio frames are simply skipped.
 
 /// Active media connections grouped by topic, shared across tasks.
-type MediaRooms = Arc<TokioMutex<
-    HashMap<[u8; 32], Vec<(iroh::EndpointId, iroh::endpoint::Connection)>>,
->>;
+type MediaRooms =
+    Arc<TokioMutex<HashMap<[u8; 32], Vec<(iroh::EndpointId, iroh::endpoint::Connection)>>>>;
 
 struct MediaReflector {
     rooms: MediaRooms,
@@ -510,13 +527,17 @@ async fn main() -> anyhow::Result<()> {
             iroh_gossip::ALPN.to_vec(),
         ])
         .clear_ip_transports()
-        .bind_addr(std::net::SocketAddr::from(
-            ([0, 0, 0, 0], onyx_core::protocol::RELAY_VPS_PORT),
-        ))?
+        .bind_addr(std::net::SocketAddr::from((
+            [0, 0, 0, 0],
+            onyx_core::protocol::RELAY_VPS_PORT,
+        )))?
         .bind()
         .await?;
 
-    info!("IPv6 disabled — relay bound to IPv4 only (0.0.0.0:{})", onyx_core::protocol::RELAY_VPS_PORT);
+    info!(
+        "IPv6 disabled — relay bound to IPv4 only (0.0.0.0:{})",
+        onyx_core::protocol::RELAY_VPS_PORT
+    );
 
     info!(endpoint_id = %endpoint.id(), "iroh endpoint bound");
 
@@ -553,7 +574,10 @@ async fn main() -> anyhow::Result<()> {
         let reflector_ref = Arc::clone(&reflector);
         for secret in topics_str.split(',').filter(|s| !s.is_empty()) {
             let topic_hash = onyx_core::protocol::topic_from_secret(secret.trim());
-            info!(room = secret.trim(), "pre-subscribing to topic from ONYX_TOPICS");
+            info!(
+                room = secret.trim(),
+                "pre-subscribing to topic from ONYX_TOPICS"
+            );
             reflector_ref.ensure_gossip_topic(topic_hash).await;
         }
     }
@@ -587,9 +611,5 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn hex_short(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .take(8)
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }

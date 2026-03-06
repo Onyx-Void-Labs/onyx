@@ -74,7 +74,9 @@ impl MediaEngine {
     pub fn stop(&self) {}
     pub fn receive_audio(&self, _from: String, _data: Vec<u8>) {}
     pub fn shutdown(&self) {}
-    pub fn drain_events(&self) -> Vec<MediaEvent> { Vec::new() }
+    pub fn drain_events(&self) -> Vec<MediaEvent> {
+        Vec::new()
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════
@@ -86,7 +88,7 @@ use std::sync::mpsc;
 #[cfg(not(target_os = "android"))]
 use std::thread;
 #[cfg(not(target_os = "android"))]
-use tracing::{info, warn, error, trace};
+use tracing::{error, info, trace, warn};
 
 #[cfg(not(target_os = "android"))]
 /// Opus always operates at 48 kHz internally.
@@ -230,16 +232,13 @@ enum VadState {
 // ═══════════════════════════════════════════════════════════════════
 
 #[cfg(not(target_os = "android"))]
-fn media_loop(
-    cmd_rx: mpsc::Receiver<MediaCommand>,
-    evt_tx: mpsc::Sender<MediaEvent>,
-) {
+fn media_loop(cmd_rx: mpsc::Receiver<MediaCommand>, evt_tx: mpsc::Sender<MediaEvent>) {
     use std::collections::HashMap;
     use std::collections::VecDeque;
 
     use audiopus::coder::{Decoder as OpusDecoder, Encoder as OpusEncoder};
-    use audiopus::{Application, Channels, MutSignals, SampleRate};
     use audiopus::packet::Packet as OpusPacket;
+    use audiopus::{Application, Channels, MutSignals, SampleRate};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     info!("media engine started");
@@ -251,30 +250,31 @@ fn media_loop(
     let output_device = host.default_output_device();
 
     // Query the native input config (sample rate the hardware actually wants).
-    let (input_native_rate, input_channels, input_sample_format) = if let Some(ref dev) = input_device {
-        match dev.default_input_config() {
-            Ok(cfg) => {
-                let rate = cfg.sample_rate().0;
-                let ch = cfg.channels();
-                let fmt = cfg.sample_format();
-                info!(
-                    name = %dev.name().unwrap_or_default(),
-                    sample_rate = rate,
-                    channels = ch,
-                    sample_format = ?fmt,
-                    "input device (native config)"
-                );
-                (rate, ch, fmt)
+    let (input_native_rate, input_channels, input_sample_format) =
+        if let Some(ref dev) = input_device {
+            match dev.default_input_config() {
+                Ok(cfg) => {
+                    let rate = cfg.sample_rate().0;
+                    let ch = cfg.channels();
+                    let fmt = cfg.sample_format();
+                    info!(
+                        name = %dev.name().unwrap_or_default(),
+                        sample_rate = rate,
+                        channels = ch,
+                        sample_format = ?fmt,
+                        "input device (native config)"
+                    );
+                    (rate, ch, fmt)
+                }
+                Err(e) => {
+                    warn!(%e, "failed to query input config, falling back to 48kHz mono F32");
+                    (OPUS_RATE, 1, cpal::SampleFormat::F32)
+                }
             }
-            Err(e) => {
-                warn!(%e, "failed to query input config, falling back to 48kHz mono F32");
-                (OPUS_RATE, 1, cpal::SampleFormat::F32)
-            }
-        }
-    } else {
-        warn!("no input audio device available");
-        (OPUS_RATE, 1, cpal::SampleFormat::F32)
-    };
+        } else {
+            warn!("no input audio device available");
+            (OPUS_RATE, 1, cpal::SampleFormat::F32)
+        };
 
     // Query the native output config.
     let (output_native_rate, output_channels) = if let Some(ref dev) = output_device {
@@ -366,11 +366,7 @@ fn media_loop(
                     info!("starting audio capture + playback");
 
                     // — Opus Encoder (always 48kHz, Voip for low latency) —
-                    match OpusEncoder::new(
-                        SampleRate::Hz48000,
-                        Channels::Mono,
-                        Application::Voip,
-                    ) {
+                    match OpusEncoder::new(SampleRate::Hz48000, Channels::Mono, Application::Voip) {
                         Ok(enc) => {
                             info!("Opus encoder created (48kHz, mono, VOIP mode)");
                             encoder = Some(enc);
@@ -576,7 +572,7 @@ fn media_loop(
                     _output_stream = None;
                     encoder = None;
                     decoders.clear();
-                    playback_tx = None;  // drop the sender — receiver in callback sees disconnect
+                    playback_tx = None; // drop the sender — receiver in callback sees disconnect
                     vad_state = VadState::Silent;
                     vad_ring.clear();
                     capturing = false;
@@ -596,13 +592,11 @@ fn media_loop(
                     );
 
                     // Get or create a per-peer Opus decoder.
-                    let decoder = decoders
-                        .entry(from.clone())
-                        .or_insert_with(|| {
-                            info!(peer = %from, "creating new Opus decoder for peer");
-                            OpusDecoder::new(SampleRate::Hz48000, Channels::Mono)
-                                .expect("failed to create Opus decoder")
-                        });
+                    let decoder = decoders.entry(from.clone()).or_insert_with(|| {
+                        info!(peer = %from, "creating new Opus decoder for peer");
+                        OpusDecoder::new(SampleRate::Hz48000, Channels::Mono)
+                            .expect("failed to create Opus decoder")
+                    });
 
                     // Decode Opus → i16 PCM at 48kHz.
                     let mut pcm = vec![0i16; FRAME_SIZE];
@@ -623,15 +617,12 @@ fn media_loop(
                     match decoder.decode(Some(packet), output, false) {
                         Ok(samples) => {
                             // Convert i16 → f32.
-                            let pcm_f32: Vec<f32> = pcm[..samples]
-                                .iter()
-                                .map(|&s| s as f32 / 32768.0)
-                                .collect();
+                            let pcm_f32: Vec<f32> =
+                                pcm[..samples].iter().map(|&s| s as f32 / 32768.0).collect();
 
                             // Resample 48kHz → native output rate if needed.
                             let output_samples = if output_native_rate != OPUS_RATE {
-                                let out_len = (samples as u64
-                                    * output_native_rate as u64
+                                let out_len = (samples as u64 * output_native_rate as u64
                                     / OPUS_RATE as u64)
                                     as usize;
                                 resample(&pcm_f32, OPUS_RATE, output_native_rate, out_len)
@@ -715,20 +706,13 @@ fn media_loop(
                                 for buffered in vad_ring.drain(..) {
                                     let pcm_i16: Vec<i16> = buffered
                                         .iter()
-                                        .map(|&s| {
-                                            (s * 32767.0).clamp(-32768.0, 32767.0)
-                                                as i16
-                                        })
+                                        .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
                                         .collect();
                                     let mut opus_buf = vec![0u8; MAX_OPUS_BYTES];
-                                    if let Ok(len) =
-                                        enc.encode(&pcm_i16, &mut opus_buf)
-                                    {
+                                    if let Ok(len) = enc.encode(&pcm_i16, &mut opus_buf) {
                                         opus_buf.truncate(len);
                                         opus_packets_sent += 1;
-                                        let _ = evt_tx.send(
-                                            MediaEvent::AudioFrame(opus_buf),
-                                        );
+                                        let _ = evt_tx.send(MediaEvent::AudioFrame(opus_buf));
                                     }
                                 }
                             }
@@ -758,8 +742,9 @@ fn media_loop(
                             true // keep sending
                         } else {
                             // Voice just stopped — enter trailing period.
-                            vad_state =
-                                VadState::Trailing { remaining: VAD_TRAILING_FRAMES };
+                            vad_state = VadState::Trailing {
+                                remaining: VAD_TRAILING_FRAMES,
+                            };
                             trace!(
                                 energy = format!("{energy:.4}"),
                                 "VAD: voice stopped — entering trailing period"
@@ -773,8 +758,9 @@ fn media_loop(
                             vad_state = VadState::Speaking;
                             true
                         } else if remaining > 0 {
-                            vad_state =
-                                VadState::Trailing { remaining: remaining - 1 };
+                            vad_state = VadState::Trailing {
+                                remaining: remaining - 1,
+                            };
                             true // still in trail
                         } else {
                             // Trail expired — go silent, start buffering.
@@ -792,9 +778,7 @@ fn media_loop(
                     if let Some(ref mut enc) = encoder {
                         let pcm_i16: Vec<i16> = pcm_48k
                             .iter()
-                            .map(|&s| {
-                                (s * 32767.0).clamp(-32768.0, 32767.0) as i16
-                            })
+                            .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
                             .collect();
 
                         let mut opus_buf = vec![0u8; MAX_OPUS_BYTES];
@@ -803,9 +787,7 @@ fn media_loop(
                                 opus_buf.truncate(len);
                                 opus_packets_sent += 1;
 
-                                if opus_packets_sent <= 5
-                                    || opus_packets_sent % 50 == 0
-                                {
+                                if opus_packets_sent <= 5 || opus_packets_sent % 50 == 0 {
                                     info!(
                                         opus_bytes = len,
                                         packet_num = opus_packets_sent,
@@ -814,8 +796,7 @@ fn media_loop(
                                         "Opus packet sent"
                                     );
                                 }
-                                let _ =
-                                    evt_tx.send(MediaEvent::AudioFrame(opus_buf));
+                                let _ = evt_tx.send(MediaEvent::AudioFrame(opus_buf));
                             }
                             Err(e) => {
                                 warn!(%e, "Opus encode error");

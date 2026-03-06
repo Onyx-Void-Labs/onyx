@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use candle_core::{Device, Tensor, DType};
+use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use hf_hub::api::sync::Api;
@@ -68,13 +68,8 @@ impl NeuralIndex {
         let config: BertConfig = serde_json::from_str(&config_str)?;
 
         // Load model weights.
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(
-                &[weights_path],
-                DType::F32,
-                &device,
-            )?
-        };
+        let vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)? };
         let model = BertModel::load(vb, &config)?;
 
         info!("neural index ready ({}D embeddings, CPU)", EMBED_DIM);
@@ -89,7 +84,8 @@ impl NeuralIndex {
 
     /// Ensure the model files are downloaded.  Uses hf-hub's built-in
     /// caching so the ~20MB download only happens once.
-    fn ensure_model() -> Result<(PathBuf, PathBuf, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
+    fn ensure_model(
+    ) -> Result<(PathBuf, PathBuf, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
         let api = Api::new()?;
         let repo = api.model(MODEL_REPO.to_string());
 
@@ -117,7 +113,11 @@ impl NeuralIndex {
             .map_err(|e| format!("tokenization failed: {e}"))?;
 
         let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-        let mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&x| x as i64).collect();
+        let mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .map(|&x| x as i64)
+            .collect();
         let seq_len = ids.len();
 
         let token_ids = Tensor::new(vec![ids], &self.device)?;
@@ -125,19 +125,21 @@ impl NeuralIndex {
         let token_type_ids = Tensor::zeros(&[1, seq_len], DType::I64, &self.device)?;
 
         // Forward pass through BERT.
-        let output = self.model.forward(&token_ids, &token_type_ids, Some(&attention))?;
+        let output = self
+            .model
+            .forward(&token_ids, &token_type_ids, Some(&attention))?;
 
         // Mean pooling over the sequence dimension, masked by attention.
-        let attention_f32 = attention.to_dtype(DType::F32)?;     // [1, seq_len]
-        let attention_3d = attention_f32.unsqueeze(2)?;           // [1, seq_len, 1]
-        let masked = output.broadcast_mul(&attention_3d)?;        // [1, seq_len, hidden]
-        let summed = masked.sum(1)?;                              // [1, hidden]
-        let mask_sum = attention_3d.sum(1)?;                      // [1, 1]
-        let pooled = summed.broadcast_div(&mask_sum)?;            // [1, hidden]
+        let attention_f32 = attention.to_dtype(DType::F32)?; // [1, seq_len]
+        let attention_3d = attention_f32.unsqueeze(2)?; // [1, seq_len, 1]
+        let masked = output.broadcast_mul(&attention_3d)?; // [1, seq_len, hidden]
+        let summed = masked.sum(1)?; // [1, hidden]
+        let mask_sum = attention_3d.sum(1)?; // [1, 1]
+        let pooled = summed.broadcast_div(&mask_sum)?; // [1, hidden]
 
         // L2 normalize.
-        let norm = pooled.sqr()?.sum(1)?.sqrt()?.unsqueeze(1)?;  // [1, 1]
-        let normalized = pooled.broadcast_div(&norm)?;            // [1, hidden]
+        let norm = pooled.sqr()?.sum(1)?.sqrt()?.unsqueeze(1)?; // [1, 1]
+        let normalized = pooled.broadcast_div(&norm)?; // [1, hidden]
 
         let embedding: Vec<f32> = normalized.squeeze(0)?.to_vec1()?;
         Ok(embedding)

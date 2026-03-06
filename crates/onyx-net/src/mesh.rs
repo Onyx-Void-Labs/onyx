@@ -54,10 +54,7 @@ impl ShadowMesh {
         );
 
         // Subscribe to the gossip topic
-        let (sender, receiver) = gossip
-            .subscribe(topic_id, bootstrap_peers)
-            .await?
-            .split();
+        let (sender, receiver) = gossip.subscribe(topic_id, bootstrap_peers).await?.split();
 
         Ok(Self {
             topic_hash,
@@ -72,13 +69,8 @@ impl ShadowMesh {
     /// This is fire-and-forget — it does NOT block the UI thread.
     /// The delta should already be ZSTD-compressed.
     pub async fn broadcast(&self, compressed_delta: Vec<u8>) -> anyhow::Result<()> {
-        trace!(
-            bytes = compressed_delta.len(),
-            "broadcasting delta to mesh"
-        );
-        self.sender
-            .broadcast(compressed_delta.into())
-            .await?;
+        trace!(bytes = compressed_delta.len(), "broadcasting delta to mesh");
+        self.sender.broadcast(compressed_delta.into()).await?;
         Ok(())
     }
 
@@ -99,9 +91,7 @@ impl ShadowMesh {
     /// (i.e. the subscription is closed), we **never** poll it again
     /// — which prevents the "Unfold must not be polled after it
     /// returned Ready(None)" panic.
-    pub fn spawn_receiver(
-        self,
-    ) -> (GossipSender, mpsc::Receiver<MeshEvent>) {
+    pub fn spawn_receiver(self) -> (GossipSender, mpsc::Receiver<MeshEvent>) {
         let (tx, rx) = mpsc::channel(256);
         let sender = self.sender;
 
@@ -132,13 +122,21 @@ impl ShadowMesh {
                     }
                     Some(Ok(iroh_gossip::api::Event::NeighborUp(peer))) => {
                         info!(peer = %peer, "[gossip] raw event: NeighborUp — peer joined");
-                        if tx.send(MeshEvent::PeerJoined(peer.to_string())).await.is_err() {
+                        if tx
+                            .send(MeshEvent::PeerJoined(peer.to_string()))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
                     Some(Ok(iroh_gossip::api::Event::NeighborDown(peer))) => {
                         warn!(peer = %peer, "[gossip] raw event: NeighborDown — peer left");
-                        if tx.send(MeshEvent::PeerLeft(peer.to_string())).await.is_err() {
+                        if tx
+                            .send(MeshEvent::PeerLeft(peer.to_string()))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }

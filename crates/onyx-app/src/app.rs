@@ -1,4 +1,4 @@
-﻿// --- Makepad Application Shell ---
+// --- Makepad Application Shell ---
 // Root Makepad app. Owns the widget tree and bridges keyboard input
 // to the local EditorBuffer (Rope) + Loro CRDT.
 //
@@ -17,16 +17,16 @@
 // ----
 
 use makepad_widgets::*;
-use onyx_editor::{Cursor, EditorBuffer};
 use onyx_core::id::OnyxId;
+use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
 
+use crate::aero_hud::AeroHudAction;
 use crate::cosmos::Cosmos;
 use crate::cosmos_view::{CosmosViewAction, CosmosViewWidgetRefExt, NodeDrawData};
-use crate::aero_hud::AeroHudAction;
-use crate::net_bridge::{NetBridge, NetEvent};
 use crate::media_engine::{MediaEngine, MediaEvent};
+use crate::net_bridge::{NetBridge, NetEvent};
 
 // ── Cosmos Camera ───────────────────────────────────────────────
 
@@ -240,8 +240,12 @@ impl App {
         self.cosmos.tick(dt);
 
         // Build draw data from current cosmos state
-        let draw_data: Vec<NodeDrawData> = self.cosmos.nodes.iter().enumerate().map(|(i, node)| {
-            NodeDrawData {
+        let draw_data: Vec<NodeDrawData> = self
+            .cosmos
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| NodeDrawData {
                 x: node.spatial.pos[0],
                 y: node.spatial.pos[1],
                 radius: crate::physics::node_radius(node),
@@ -249,8 +253,8 @@ impl App {
                 node_type: node.node_type,
                 selected: self.cosmos.selected == Some(i),
                 label: self.cosmos.node_label(i),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Feed draw data to the CosmosView widget
         let cosmos_view = self.ui.cosmos_view(cx, ids!(cosmos_view));
@@ -269,9 +273,17 @@ impl App {
     fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
         if self.ui.button(cx, ids!(hud_spawn_planet)).clicked(actions) {
             AeroHudAction::SpawnPlanet
-        } else if self.ui.button(cx, ids!(hud_spawn_asteroid)).clicked(actions) {
+        } else if self
+            .ui
+            .button(cx, ids!(hud_spawn_asteroid))
+            .clicked(actions)
+        {
             AeroHudAction::SpawnAsteroid
-        } else if self.ui.button(cx, ids!(hud_spawn_satellite)).clicked(actions) {
+        } else if self
+            .ui
+            .button(cx, ids!(hud_spawn_satellite))
+            .clicked(actions)
+        {
             AeroHudAction::SpawnSatellite
         } else if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
             AeroHudAction::ToggleView
@@ -303,26 +315,22 @@ impl App {
         };
         if new_hash != self.last_display_hash {
             self.last_display_hash = new_hash;
-            self.ui
-                .label(cx, ids!(editor_label))
-                .set_text(cx, &display);
+            self.ui.label(cx, ids!(editor_label)).set_text(cx, &display);
         }
 
         // Status: char count
-        self.ui.label(cx, ids!(status_chars)).set_text(
-            cx,
-            &format!("{} chars", self.buffer.len_chars()),
-        );
+        self.ui
+            .label(cx, ids!(status_chars))
+            .set_text(cx, &format!("{} chars", self.buffer.len_chars()));
 
         // Status: line/col info
         let buf_text = self.buffer.text();
         let pos = self.cursor.pos.min(buf_text.len());
         let line = buf_text[..pos].matches('\n').count() + 1;
         let col = pos - buf_text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0) + 1;
-        self.ui.label(cx, ids!(status_label)).set_text(
-            cx,
-            &format!("Void Active  Ln {} Col {}", line, col),
-        );
+        self.ui
+            .label(cx, ids!(status_label))
+            .set_text(cx, &format!("Void Active  Ln {} Col {}", line, col));
 
         // Sync status — reports TEXT mesh peers only (decoupled from voice state)
         let visible_peer_count = self
@@ -360,10 +368,9 @@ impl App {
         let blink = (self.cursor_time * 3.0).sin();
         let caret = if blink > 0.0 { "|" } else { " " };
 
-        self.ui.label(cx, ids!(status_label)).set_text(
-            cx,
-            &format!("{caret} Ln {line} Col {col}"),
-        );
+        self.ui
+            .label(cx, ids!(status_label))
+            .set_text(cx, &format!("{caret} Ln {line} Col {col}"));
     }
 
     /// Spring-mass cursor animation tick (~60 fps).
@@ -415,7 +422,7 @@ impl App {
         // ── Position the cursor overlay ──
         // Map animated column/line to pixel coords.
         // These constants approximate glyph metrics at font_size 13.
-        let char_width: f32 = 7.8;  // approximate monospace glyph width at font_size 13
+        let char_width: f32 = 7.8; // approximate monospace glyph width at font_size 13
         let line_height: f32 = 20.0;
 
         // Derive the editor text origin from the editor_area's actual
@@ -424,7 +431,7 @@ impl App {
         // the editor area's own padding (left:48, top:32).
         let editor_rect = self.ui.view(cx, ids!(editor_area)).area().rect(cx);
         let pad_left: f32 = editor_rect.pos.x as f32 + 48.0; // editor view X + left padding
-        let pad_top: f32 = editor_rect.pos.y as f32 + 32.0;  // editor view Y + top padding
+        let pad_top: f32 = editor_rect.pos.y as f32 + 32.0; // editor view Y + top padding
 
         let px_x = pad_left + self.cursor_anim_x * char_width;
         let px_y = pad_top + self.cursor_anim_y * line_height;
@@ -505,9 +512,7 @@ impl App {
         };
         if new_hash != self.last_display_hash {
             self.last_display_hash = new_hash;
-            self.ui
-                .label(cx, ids!(editor_label))
-                .set_text(cx, &display);
+            self.ui.label(cx, ids!(editor_label)).set_text(cx, &display);
         }
 
         cx.redraw_all();
@@ -536,9 +541,7 @@ impl App {
             }
             lines.join("\n")
         };
-        self.ui
-            .label(cx, ids!(peers_label))
-            .set_text(cx, &text);
+        self.ui.label(cx, ids!(peers_label)).set_text(cx, &text);
 
         // Show/hide disconnect and voice buttons based on connection state
         self.ui
@@ -640,9 +643,7 @@ impl App {
             self.cursor_broadcast_counter += 1;
             if self.cursor_broadcast_counter >= 10 {
                 self.cursor_broadcast_counter = 0;
-                let cursor_msg = onyx_core::protocol::encode_cursor_control(
-                    self.cursor.pos as u32,
-                );
+                let cursor_msg = onyx_core::protocol::encode_cursor_control(self.cursor.pos as u32);
                 net.send_control(cursor_msg);
             }
         }
@@ -715,8 +716,7 @@ impl App {
                     // Single delta:  raw Loro bytes (starts with 'l' = 0x6C)
                     // Batch frame:   0xBB | u16 count | [u32 len | bytes]…
                     if raw_bytes.first() == Some(&0xBB) && raw_bytes.len() >= 3 {
-                        let count =
-                            u16::from_be_bytes([raw_bytes[1], raw_bytes[2]]) as usize;
+                        let count = u16::from_be_bytes([raw_bytes[1], raw_bytes[2]]) as usize;
                         tracing::debug!(count, "received batched delta packet");
                         let mut offset = 3usize;
                         for i in 0..count {
@@ -735,9 +735,8 @@ impl App {
                                 tracing::warn!(idx = i, "truncated delta in batch");
                                 break;
                             }
-                            if let Err(e) = self
-                                .crdt
-                                .import_snapshot(&raw_bytes[offset..offset + len])
+                            if let Err(e) =
+                                self.crdt.import_snapshot(&raw_bytes[offset..offset + len])
                             {
                                 tracing::warn!(%e, idx = i, "failed to import batched delta");
                             }
@@ -831,9 +830,7 @@ impl MatchEvent for App {
             self.cursor.move_to(0);
             self.sync_display(cx);
             self.update_peers_display(cx);
-            self.ui
-                .label(cx, ids!(voice_status))
-                .set_text(cx, "");
+            self.ui.label(cx, ids!(voice_status)).set_text(cx, "");
             cx.redraw_all();
         }
 
@@ -869,16 +866,16 @@ impl MatchEvent for App {
                 }
                 "Voice: OFF"
             };
-            self.ui
-                .label(cx, ids!(voice_status))
-                .set_text(cx, status);
+            self.ui.label(cx, ids!(voice_status)).set_text(cx, status);
             cx.redraw_all();
         }
 
         // -- Panel toggle button --
         if self.ui.button(cx, ids!(panel_toggle)).clicked(actions) {
             self.panel_open = !self.panel_open;
-            self.ui.view(cx, ids!(side_panel)).set_visible(cx, self.panel_open);
+            self.ui
+                .view(cx, ids!(side_panel))
+                .set_visible(cx, self.panel_open);
             cx.redraw_all();
         }
 
@@ -903,11 +900,19 @@ impl MatchEvent for App {
                 }
                 AeroHudAction::ToggleView => {
                     self.cosmos_active = !self.cosmos_active;
-                    self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
+                    self.ui
+                        .view(cx, ids!(editor_area))
+                        .set_visible(cx, !self.cosmos_active);
                     let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
                     cv.set_visible(cx, self.cosmos_active);
-                    let label = if self.cosmos_active { "⟁ Editor" } else { "⟁ Cosmos" };
-                    self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, label);
+                    let label = if self.cosmos_active {
+                        "⟁ Editor"
+                    } else {
+                        "⟁ Cosmos"
+                    };
+                    self.ui
+                        .button(cx, ids!(hud_view_toggle))
+                        .set_text(cx, label);
                     if self.cosmos_active {
                         // Returning to cosmos — clear active node binding
                         self.active_node_id = None;
@@ -929,7 +934,8 @@ impl MatchEvent for App {
 
         // -- Track room input focus to avoid editor key conflicts --
         let room_input = self.ui.text_input(cx, ids!(room_input));
-        for action in actions.filter_widget_actions_cast::<TextInputAction>(room_input.widget_uid()) {
+        for action in actions.filter_widget_actions_cast::<TextInputAction>(room_input.widget_uid())
+        {
             match action {
                 TextInputAction::KeyFocus => self.room_input_focused = true,
                 TextInputAction::KeyFocusLost => self.room_input_focused = false,
@@ -940,7 +946,9 @@ impl MatchEvent for App {
         // -- CosmosView actions --
         if self.cosmos_active {
             let cosmos_view_ref = self.ui.cosmos_view(cx, ids!(cosmos_view));
-            for action in actions.filter_widget_actions_cast::<CosmosViewAction>(cosmos_view_ref.widget_uid()) {
+            for action in
+                actions.filter_widget_actions_cast::<CosmosViewAction>(cosmos_view_ref.widget_uid())
+            {
                 match action {
                     CosmosViewAction::NodeClicked(idx) => {
                         self.cosmos.selected = Some(idx);
@@ -954,7 +962,9 @@ impl MatchEvent for App {
                         self.ui.view(cx, ids!(editor_area)).set_visible(cx, true);
                         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
                         cv.set_visible(cx, false);
-                        self.ui.button(cx, ids!(hud_view_toggle)).set_text(cx, "⟁ Cosmos");
+                        self.ui
+                            .button(cx, ids!(hud_view_toggle))
+                            .set_text(cx, "⟁ Cosmos");
 
                         // ── The Anvil: Load this VoidNode's Loro text ──
                         let node_id = self.cosmos.nodes[idx].id;
@@ -1000,7 +1010,7 @@ impl MatchEvent for App {
                             z if z < 0.4 => 0, // Multiverse
                             z if z < 0.8 => 1, // Constellation
                             z if z < 2.0 => 2, // Planet
-                            _             => 3, // Surface
+                            _ => 3,            // Surface
                         };
                     }
                     CosmosViewAction::NodeHovered(idx) => {
@@ -1027,19 +1037,18 @@ impl AppMain for App {
             self.poll_network(cx);
         }
 
+        // -- Cosmos physics timer (~60 fps) --
+        if self.cosmos_timer.is_event(event).is_some() {
+            self.tick_cosmos(cx);
+            self.ui.redraw(cx);
+        }
 
-            // -- Cosmos physics timer (~60 fps) --
-            if self.cosmos_timer.is_event(event).is_some() {
-                self.tick_cosmos(cx);
-                self.ui.redraw(cx);
-            }
-
-            // -- Cursor animation timer (~60 fps) --
-            if self.cursor_timer.is_event(event).is_some() {
-                self.tick_cursor_animation(cx);
-                // Always request next frame for smooth Cosmos animation
-                cx.new_next_frame();
-            }
+        // -- Cursor animation timer (~60 fps) --
+        if self.cursor_timer.is_event(event).is_some() {
+            self.tick_cursor_animation(cx);
+            // Always request next frame for smooth Cosmos animation
+            cx.new_next_frame();
+        }
 
         // Start cursor timer on first event if not already running
         if !self.cursor_timer_started {
@@ -1047,11 +1056,13 @@ impl AppMain for App {
             self.cursor_timer_started = true;
 
             // Toggle initial view visibility — cosmos starts visible
-            self.ui.view(cx, ids!(editor_area)).set_visible(cx, !self.cosmos_active);
+            self.ui
+                .view(cx, ids!(editor_area))
+                .set_visible(cx, !self.cosmos_active);
             let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
             cv.set_visible(cx, self.cosmos_active);
-                // Start cosmos timer for physics loop
-                self.cosmos_timer = cx.start_interval(0.016); // ~60fps
+            // Start cosmos timer for physics loop
+            self.cosmos_timer = cx.start_interval(0.016); // ~60fps
 
             // Seed initial draw data so the first frame has nodes
             self.tick_cosmos(cx);
@@ -1081,9 +1092,8 @@ impl AppMain for App {
             Event::Shutdown => {
                 // Broadcast Goodbye so peers remove us instantly
                 if let Some(ref net) = self.net {
-                    let goodbye = onyx_core::protocol::encode_control(
-                        onyx_core::protocol::CTRL_GOODBYE,
-                    );
+                    let goodbye =
+                        onyx_core::protocol::encode_control(onyx_core::protocol::CTRL_GOODBYE);
                     net.send_control(goodbye);
                 }
             }
@@ -1132,7 +1142,8 @@ impl AppMain for App {
                 } else {
                     let _ = self.crdt.insert(pos, &e.input);
                 }
-                self.cursor.move_right(e.input.len(), self.buffer.len_chars());
+                self.cursor
+                    .move_right(e.input.len(), self.buffer.len_chars());
                 self.sync_display(cx);
                 self.broadcast_crdt_delta();
                 cx.redraw_all();
