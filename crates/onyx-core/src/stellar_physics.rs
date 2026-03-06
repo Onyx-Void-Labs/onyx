@@ -35,8 +35,12 @@ const MIN_DIST_SQ: f32 = 400.0;
 /// Velocity damping factor per tick.  Exactly 0.92 — non-negotiable.
 const DAMPING: f32 = 0.92;
 
+/// Throw damping — applied at high velocities so thrown nodes
+/// retain momentum longer before settling to normal DAMPING.
+const THROW_DAMPING: f32 = 0.98;
+
 /// Maximum velocity magnitude (speed limit).
-const MAX_SPEED: f32 = 10.0;
+const MAX_SPEED: f32 = 40.0;
 
 /// Effective mass assigned to kinematic bodies (Sun, Utility).
 /// Large enough for dominant attraction, finite to prevent f32 overflow.
@@ -151,6 +155,22 @@ impl PhysicsEngine {
                     }
                 }
             }
+            // Anti-clump tangential injection — prevents straight-line center crash.
+            // Adds perpendicular force [-dir.y, dir.x] so nodes swirl into orbit.
+            if !i_kinematic {
+                let px = nodes[i].position[0];
+                let py = nodes[i].position[1];
+                let center_dist = (px * px + py * py).sqrt().max(1.0);
+                if center_dist < 300.0 {
+                    let dir_x = px / center_dist;
+                    let dir_y = py / center_dist;
+                    let tang_x = -dir_y;
+                    let tang_y = dir_x;
+                    let tang_strength = 15.0 / center_dist.max(20.0);
+                    accel[i][0] += tang_x * tang_strength;
+                    accel[i][1] += tang_y * tang_strength;
+                }
+            }
         }
 
         // ── 2. Semi-Implicit Euler Integration ──────────────────
@@ -168,10 +188,16 @@ impl PhysicsEngine {
             node.velocity[1] += accel[i][1] * dt;
             node.velocity[2] += accel[i][2] * dt;
 
-            // Damping — exactly 0.92 per tick (game feel)
-            node.velocity[0] *= DAMPING;
-            node.velocity[1] *= DAMPING;
-            node.velocity[2] *= DAMPING;
+            // Velocity-dependent damping: thrown nodes retain momentum longer
+            // (0.98 at high speed, settling to 0.92 when slow).
+            let speed_sq =
+                node.velocity[0].powi(2) + node.velocity[1].powi(2) + node.velocity[2].powi(2);
+            let speed = speed_sq.sqrt();
+            let speed_factor = (speed / MAX_SPEED).clamp(0.0, 1.0);
+            let damp = DAMPING + (THROW_DAMPING - DAMPING) * speed_factor;
+            node.velocity[0] *= damp;
+            node.velocity[1] *= damp;
+            node.velocity[2] *= damp;
 
             // Speed clamping
             let speed_sq =
@@ -195,10 +221,10 @@ impl PhysicsEngine {
     }
 
     /// Returns `true` if this node type is kinematic (infinite mass, fixed).
-    /// Sun and Utility nodes never move.
+    /// Sun nodes never move.
     #[inline]
     fn is_kinematic(node: &VoidNode) -> bool {
-        matches!(node.node_type, NodeType::Sun | NodeType::Utility(_))
+        matches!(node.node_type, NodeType::Sun)
     }
 
     /// Effective mass for gravity calculations.
@@ -209,10 +235,9 @@ impl PhysicsEngine {
     #[inline]
     fn effective_mass(node: &VoidNode) -> f32 {
         match node.node_type {
-            NodeType::Sun | NodeType::Utility(_) => KINEMATIC_MASS,
+            NodeType::Sun => KINEMATIC_MASS,
             NodeType::GasGiant => node.mass * 3.0,
-            NodeType::RockyMoon => node.mass * 0.5,
-            NodeType::Atom => node.mass,
+            NodeType::RockyPlanet => node.mass * 1.5,
             NodeType::Asteroid => node.mass * 0.3,
         }
     }

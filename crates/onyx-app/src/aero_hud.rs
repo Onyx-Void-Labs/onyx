@@ -18,12 +18,8 @@ use makepad_widgets::*;
 
 #[derive(Clone, Debug, Default)]
 pub enum AeroHudAction {
-    /// User wants to spawn a new Planet.
-    SpawnPlanet,
-    /// User wants to spawn a new Asteroid.
-    SpawnAsteroid,
-    /// User wants to spawn a new Satellite.
-    SpawnSatellite,
+    /// User wants to spawn a new node (type is emergent).
+    SpawnNode,
     /// Toggle between Cosmos view and Editor view.
     ToggleView,
     /// Delete the currently selected node.
@@ -52,21 +48,9 @@ script_mod! {
         padding: Inset{left: 20, top: 8, right: 20, bottom: 8}
         align: Center
 
-        hud_spawn_planet := Button {
-            text: "● Planet"
+        hud_spawn := Button {
+            text: "✦ Spawn"
             width: 80
-            height: 32
-        }
-
-        hud_spawn_asteroid := Button {
-            text: "☄ Asteroid"
-            width: 90
-            height: 32
-        }
-
-        hud_spawn_satellite := Button {
-            text: "◎ Satellite"
-            width: 95
             height: 32
         }
 

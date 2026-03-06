@@ -11,40 +11,14 @@
 use rkyv::{Archive, Deserialize, Serialize};
 use serde;
 
-// ── Utility Anchor Classification ───────────────────────────────
+// ── Node Classification (Ignition Protocol) ─────────────────────
 
-/// Anchor types for utility nodes — fixed-position system nodes
-/// that serve as gravitational anchors in the spatial universe.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Archive,
-    Serialize,
-    Deserialize,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub enum UtilityAnchor {
-    Settings,
-    Calendar,
-    Passwords,
-    Email,
-}
-
-// ── Node Classification (Phase 4 Stellar Dynamics) ─────────────
-
-/// Stellar classification of a VoidNode in the Phase 4 universe.
+/// Stellar classification of a VoidNode — emergent via the Ignition Protocol.
 ///
-/// - **Atom**: Smallest data particle — a single capture or note.
-/// - **RockyMoon**: Structured data node — tasks, events, small docs.
-/// - **GasGiant**: Topic-level aggregator — high mass, strong gravity.
-/// - **Sun**: System anchor — infinite effective mass, kinematic (fixed).
-/// - **Asteroid**: Unsorted inbox items — low mass, drift-eligible.
-/// - **Utility**: Fixed system anchors (Settings, Calendar, etc.) — kinematic.
+/// - **Asteroid**: mass < 2.0 — unsorted capture.
+/// - **RockyPlanet**: mass >= 2.0 && < 10.0 — structured data.
+/// - **GasGiant**: mass >= 10.0 && < 50.0 — topic-level aggregator.
+/// - **Sun**: mass >= 50.0 — ignited system anchor.
 #[derive(
     Debug,
     Clone,
@@ -58,17 +32,15 @@ pub enum UtilityAnchor {
     serde::Deserialize,
 )]
 pub enum NodeType {
-    Atom,
-    RockyMoon,
+    Asteroid,
+    RockyPlanet,
     GasGiant,
     Sun,
-    Asteroid,
-    Utility(UtilityAnchor),
 }
 
 impl Default for NodeType {
     fn default() -> Self {
-        NodeType::Atom
+        NodeType::Asteroid
     }
 }
 
@@ -124,14 +96,14 @@ impl VoidNode {
         }
     }
 
-    /// Create an Atom (smallest data particle).
-    pub fn atom(id: String) -> Self {
-        Self::new(id, NodeType::Atom)
+    /// Create an Asteroid (unsorted inbox item).
+    pub fn asteroid(id: String) -> Self {
+        Self::new(id, NodeType::Asteroid)
     }
 
-    /// Create a RockyMoon (structured data node).
-    pub fn rocky_moon(id: String) -> Self {
-        Self::new(id, NodeType::RockyMoon)
+    /// Create a RockyPlanet (structured data node).
+    pub fn rocky_planet(id: String) -> Self {
+        Self::new(id, NodeType::RockyPlanet)
     }
 
     /// Create a GasGiant (topic-level aggregator, high mass).
@@ -142,18 +114,25 @@ impl VoidNode {
         }
     }
 
-    /// Create a Sun (kinematic system anchor).
+    /// Create a Sun (ignited system anchor).
     pub fn sun(id: String) -> Self {
         Self::new(id, NodeType::Sun)
     }
 
-    /// Create an Asteroid (unsorted inbox item).
-    pub fn asteroid(id: String) -> Self {
-        Self::new(id, NodeType::Asteroid)
-    }
-
-    /// Create a Utility anchor (kinematic, fixed position).
-    pub fn utility(id: String, anchor: UtilityAnchor) -> Self {
-        Self::new(id, NodeType::Utility(anchor))
+    /// Ignition Protocol: Calculate mass and emergent node type from
+    /// content length and incoming link count.
+    /// Taxonomy is emergent — no manual type selection.
+    pub fn calculate_mass_and_type(&mut self, content_length: usize, incoming_links: usize) {
+        let mass = 1.0 + (content_length as f32) * 0.001 + (incoming_links as f32) * 5.0;
+        self.mass = mass;
+        self.node_type = if mass >= 50.0 {
+            NodeType::Sun
+        } else if mass >= 10.0 {
+            NodeType::GasGiant
+        } else if mass >= 2.0 {
+            NodeType::RockyPlanet
+        } else {
+            NodeType::Asteroid
+        };
     }
 }

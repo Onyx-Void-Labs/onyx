@@ -216,14 +216,20 @@ impl App {
 
         // ── Cosmos initialisation ──
         let mut cosmos = Cosmos::new();
-        // Spawn a few demo nodes so the canvas isn't empty on first launch.
-        use onyx_core::void_node::NodeType;
-        cosmos.spawn_node(NodeType::Planet);
-        cosmos.spawn_node(NodeType::Planet);
-        cosmos.spawn_node(NodeType::Asteroid);
-        cosmos.spawn_node(NodeType::Asteroid);
-        cosmos.spawn_node(NodeType::Asteroid);
-        cosmos.spawn_node(NodeType::Satellite);
+        // Spawn demo nodes with simulated content for Ignition Protocol.
+        // Taxonomy is emergent: mass determines type automatically.
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(10000, 8); // Sun (≥ 50.0)
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(3000, 2); // GasGiant
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(1500, 1); // RockyPlanet
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(800, 0); // Asteroid
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(200, 0); // Asteroid
+        let idx = cosmos.spawn_node();
+        cosmos.nodes[idx].calculate_mass_and_type(5000, 3); // GasGiant
         app.cosmos = cosmos;
         app.cosmos_active = true; // start in cosmos view
         app.active_node_id = None;
@@ -271,20 +277,8 @@ impl App {
 
     /// Map HUD button clicks to a typed AeroHudAction.
     fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
-        if self.ui.button(cx, ids!(hud_spawn_planet)).clicked(actions) {
-            AeroHudAction::SpawnPlanet
-        } else if self
-            .ui
-            .button(cx, ids!(hud_spawn_asteroid))
-            .clicked(actions)
-        {
-            AeroHudAction::SpawnAsteroid
-        } else if self
-            .ui
-            .button(cx, ids!(hud_spawn_satellite))
-            .clicked(actions)
-        {
-            AeroHudAction::SpawnSatellite
+        if self.ui.button(cx, ids!(hud_spawn)).clicked(actions) {
+            AeroHudAction::SpawnNode
         } else if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
             AeroHudAction::ToggleView
         } else if self.ui.button(cx, ids!(hud_delete)).clicked(actions) {
@@ -881,21 +875,10 @@ impl MatchEvent for App {
 
         // ── Aero-HUD controls (dispatched via AeroHudAction) ──────
         {
-            use onyx_core::void_node::NodeType;
             match self.poll_hud_action(cx, actions) {
-                AeroHudAction::SpawnPlanet => {
-                    self.cosmos.spawn_node(NodeType::Planet);
-                    tracing::info!("spawned Planet — {} nodes total", self.cosmos.len());
-                    cx.redraw_all();
-                }
-                AeroHudAction::SpawnAsteroid => {
-                    self.cosmos.spawn_node(NodeType::Asteroid);
-                    tracing::info!("spawned Asteroid — {} nodes total", self.cosmos.len());
-                    cx.redraw_all();
-                }
-                AeroHudAction::SpawnSatellite => {
-                    self.cosmos.spawn_node(NodeType::Satellite);
-                    tracing::info!("spawned Satellite — {} nodes total", self.cosmos.len());
+                AeroHudAction::SpawnNode => {
+                    let idx = self.cosmos.spawn_node();
+                    tracing::info!("spawned node {idx} — {} nodes total", self.cosmos.len());
                     cx.redraw_all();
                 }
                 AeroHudAction::ToggleView => {
@@ -997,8 +980,8 @@ impl MatchEvent for App {
                     CosmosViewAction::NodeDragging { x, y } => {
                         self.cosmos.drag_to(x, y);
                     }
-                    CosmosViewAction::NodeDragEnd => {
-                        self.cosmos.dragged = None;
+                    CosmosViewAction::NodeDragEnd { throw_vx, throw_vy } => {
+                        self.cosmos.release_throw(throw_vx, throw_vy);
                     }
                     CosmosViewAction::CameraPanned { x, y } => {
                         self.camera.x = x;

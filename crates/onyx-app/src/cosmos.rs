@@ -45,11 +45,12 @@ impl Cosmos {
         Self::default()
     }
 
-    /// Spawn a new VoidNode of the given type at a semi-random position
-    /// near the origin.  Returns the index of the new node.
-    pub fn spawn_node(&mut self, node_type: NodeType) -> usize {
+    /// Spawn a new VoidNode.  All nodes start as Asteroids —
+    /// taxonomy is emergent via `calculate_mass_and_type()`.
+    /// Returns the index of the new node.
+    pub fn spawn_node(&mut self) -> usize {
         let id = OnyxId::new();
-        let mut node = VoidNode::new(id, node_type);
+        let mut node = VoidNode::new(id, NodeType::Asteroid);
 
         // Generate a position on a golden-angle spiral so new nodes
         // don't stack on top of each other.
@@ -63,13 +64,8 @@ impl Cosmos {
         // New nodes are hot (just created).
         node.spatial.heat = 1.0;
 
-        // Planets start with more mass so they anchor constellations.
-        match node_type {
-            NodeType::Planet => node.spatial.mass = 50.0,
-            NodeType::DysonSphere => node.spatial.mass = 40.0,
-            NodeType::Satellite => node.spatial.mass = 5.0,
-            NodeType::Asteroid => node.spatial.mass = 3.0,
-        }
+        // Base mass for a fresh node (will evolve via Ignition Protocol).
+        node.spatial.mass = 1.0;
 
         self.nodes.push(node);
         self.nodes.len() - 1
@@ -105,9 +101,9 @@ impl Cosmos {
     pub fn node_label(&self, idx: usize) -> &'static str {
         match self.nodes.get(idx).map(|n| n.node_type) {
             Some(NodeType::Asteroid) => "☄",
-            Some(NodeType::Planet) => "●",
-            Some(NodeType::Satellite) => "◎",
-            Some(NodeType::DysonSphere) => "◈",
+            Some(NodeType::RockyPlanet) => "●",
+            Some(NodeType::GasGiant) => "◎",
+            Some(NodeType::Sun) => "☀",
             None => "?",
         }
     }
@@ -129,6 +125,19 @@ impl Cosmos {
         for node in &mut self.nodes {
             node.spatial.hovered = false;
         }
+    }
+
+    /// Release a dragged node with throw velocity (inertia).
+    /// Scales per-frame drag delta into physics velocity.
+    pub fn release_throw(&mut self, vx: f32, vy: f32) {
+        const THROW_MULTIPLIER: f32 = 60.0;
+        if let Some(idx) = self.dragged {
+            if let Some(node) = self.nodes.get_mut(idx) {
+                node.spatial.velocity[0] = vx * THROW_MULTIPLIER;
+                node.spatial.velocity[1] = vy * THROW_MULTIPLIER;
+            }
+        }
+        self.dragged = None;
     }
 
     /// Delete a node by index (drag into Black Hole).

@@ -46,8 +46,8 @@ pub enum CosmosViewAction {
     NodeDragStart(usize),
     /// User is dragging — world-space coordinates.
     NodeDragging { x: f32, y: f32 },
-    /// User released the drag.
-    NodeDragEnd,
+    /// User released the drag — carries throw velocity for inertia.
+    NodeDragEnd { throw_vx: f32, throw_vy: f32 },
     /// Mouse is hovering over a node (for hover arrest).
     NodeHovered(usize),
     /// Mouse left a node (clear hover arrest).
@@ -76,12 +76,12 @@ script_mod! {
         zoom_level: 1.0
 
         pixel: fn() {
-            let uv = self.pos * 2.0 - 1.0
+            let uv = (self.pos * 2.0 - 1.0) * 1.5
             let dist = length(uv)
 
-            // ── Early discard: anything beyond the bounding circle ──
-            // Forces GPU Early-Z rejection — saves massive fill-rate.
-            if dist > 1.05 {
+            // ── Early discard: expanded for 1.5× glow bleed room ──
+            // Quad is 50% larger than visual body; glow renders in the margin.
+            if dist > 1.5 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
@@ -108,23 +108,15 @@ script_mod! {
             let glow_intensity = self.heat * 0.35 + 0.08
             let glow = exp(-(dist - 0.75) * (dist - 0.75) * 10.0) * glow_intensity
 
-            // ── Node-type specific effects ──
+            // ── Node-type specific effects (Ignition Protocol taxonomy) ──
             // Use `var` (mutable) since these are reassigned per node-type.
             var type_mod_r = 0.0
             var type_mod_g = 0.0
             var type_mod_b = 0.0
             var type_alpha_mod = 0.0
 
-            // Planet (0): gas-giant fresnel atmosphere
+            // Asteroid (0): darker, sharper, slightly translucent
             if self.node_type_id < 0.5 {
-                type_mod_r = rim_strength * 0.6
-                type_mod_g = rim_strength * 0.3
-                type_mod_b = rim_strength * 0.9
-                type_alpha_mod = glow * 1.5
-            }
-
-            // Asteroid (1): darker, sharper, slightly translucent
-            if self.node_type_id > 0.5 && self.node_type_id < 1.5 {
                 let body2 = 1.0 - smoothstep(0.75, 0.78, dist)
                 let body_val = body2 * 0.75
                 let alpha2 = clamp(body_val + glow * 0.3, 0.0, 0.9)
@@ -135,20 +127,23 @@ script_mod! {
                 return Pal.premul(vec4(r, g, b, alpha2))
             }
 
-            // Satellite (2): bright tiny glowing star
-            if self.node_type_id > 1.5 && self.node_type_id < 2.5 {
-                let star_core = 1.0 - smoothstep(0.0, 0.5, dist)
-                let star_flare = exp(-dist * dist * 4.0) * 1.2
-                let star_alpha = clamp(star_core + star_flare + glow * 2.0, 0.0, 1.0)
-                if star_alpha < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
-                let brightness = 0.9 + self.heat * 0.1
-                let r = self.node_color.r * brightness + star_flare * 0.4
-                let g = self.node_color.g * brightness + star_flare * 0.3
-                let b = self.node_color.b * brightness + star_flare * 0.2
-                return Pal.premul(vec4(r, g, b, star_alpha))
+            // RockyPlanet (1): fresnel atmosphere with rim-lighting
+            if self.node_type_id > 0.5 && self.node_type_id < 1.5 {
+                type_mod_r = rim_strength * 0.6
+                type_mod_g = rim_strength * 0.3
+                type_mod_b = rim_strength * 0.9
+                type_alpha_mod = glow * 1.5
             }
 
-            // DysonSphere (3): golden shell with inner ring
+            // GasGiant (2): dramatic gas atmosphere with enhanced glow
+            if self.node_type_id > 1.5 && self.node_type_id < 2.5 {
+                type_mod_r = rim_strength * 0.7
+                type_mod_g = rim_strength * 0.5
+                type_mod_b = rim_strength * 0.3
+                type_alpha_mod = glow * 2.0
+            }
+
+            // Sun (3): golden ignited star with core ring
             if self.node_type_id > 2.5 {
                 let shell_ring = smoothstep(0.03, 0.01, abs(dist - 0.7))
                 type_mod_r = rim_strength * 0.9 + shell_ring * 0.4
@@ -212,25 +207,25 @@ pub struct DrawNodeBody {
 fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
     use onyx_core::void_node::NodeType;
     match nt {
-        NodeType::Planet => Vec4 {
-            x: 0.48,
-            y: 0.41,
-            z: 0.93,
-            w: 1.0,
-        }, // Purple
         NodeType::Asteroid => Vec4 {
             x: 0.55,
             y: 0.65,
             z: 0.75,
             w: 1.0,
         }, // Blue-grey
-        NodeType::Satellite => Vec4 {
+        NodeType::RockyPlanet => Vec4 {
+            x: 0.48,
+            y: 0.41,
+            z: 0.93,
+            w: 1.0,
+        }, // Purple
+        NodeType::GasGiant => Vec4 {
             x: 0.93,
             y: 0.60,
             z: 0.30,
             w: 1.0,
         }, // Amber
-        NodeType::DysonSphere => Vec4 {
+        NodeType::Sun => Vec4 {
             x: 0.93,
             y: 0.80,
             z: 0.20,
@@ -240,14 +235,14 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
 }
 
 /// Map NodeType to a float ID for the shader.
-/// Planet=0, Asteroid=1, Satellite=2, DysonSphere=3.
+/// Asteroid=0, RockyPlanet=1, GasGiant=2, Sun=3.
 fn node_type_to_id(nt: onyx_core::void_node::NodeType) -> f32 {
     use onyx_core::void_node::NodeType;
     match nt {
-        NodeType::Planet => 0.0,
-        NodeType::Asteroid => 1.0,
-        NodeType::Satellite => 2.0,
-        NodeType::DysonSphere => 3.0,
+        NodeType::Asteroid => 0.0,
+        NodeType::RockyPlanet => 1.0,
+        NodeType::GasGiant => 2.0,
+        NodeType::Sun => 3.0,
     }
 }
 
@@ -295,6 +290,12 @@ pub struct CosmosView {
     /// Index of the currently hovered node (for hover arrest).
     #[rust]
     hovered_node: Option<usize>,
+    /// Last world-space position during a node drag (for delta-V tracking).
+    #[rust]
+    drag_last_world: Option<(f64, f64)>,
+    /// Per-frame drag delta in world-space (for inertia throw).
+    #[rust]
+    drag_delta: (f64, f64),
 }
 
 impl CosmosView {
@@ -360,6 +361,8 @@ impl Widget for CosmosView {
                     } else {
                         cx.widget_action(uid, CosmosViewAction::NodeClicked(idx));
                         cx.widget_action(uid, CosmosViewAction::NodeDragStart(idx));
+                        self.drag_last_world = None;
+                        self.drag_delta = (0.0, 0.0);
                     }
                 } else {
                     // Start camera pan
@@ -382,8 +385,12 @@ impl Widget for CosmosView {
                         },
                     );
                 } else {
-                    // Node dragging
+                    // Node dragging — track delta-V for inertia throw
                     let (wx, wy) = self.screen_to_world(fm.abs.x, fm.abs.y);
+                    if let Some((lx, ly)) = self.drag_last_world {
+                        self.drag_delta = (wx - lx, wy - ly);
+                    }
+                    self.drag_last_world = Some((wx, wy));
                     cx.widget_action(
                         uid,
                         CosmosViewAction::NodeDragging {
@@ -398,7 +405,16 @@ impl Widget for CosmosView {
                 if self.pan_start.is_some() {
                     self.pan_start = None;
                 } else {
-                    cx.widget_action(uid, CosmosViewAction::NodeDragEnd);
+                    // Inject throw velocity from accumulated drag delta
+                    cx.widget_action(
+                        uid,
+                        CosmosViewAction::NodeDragEnd {
+                            throw_vx: self.drag_delta.0 as f32,
+                            throw_vy: self.drag_delta.1 as f32,
+                        },
+                    );
+                    self.drag_last_world = None;
+                    self.drag_delta = (0.0, 0.0);
                 }
             }
             Hit::FingerScroll(fs) => {
@@ -496,16 +512,18 @@ impl Widget for CosmosView {
             self.draw_node.node_type_id = node_type_to_id(nd.node_type);
             self.draw_node.zoom_level = self.cam_zoom as f32;
 
-            // Draw the node body — quad centered on screen position,
-            // sized exactly to screen_diameter so shader SDF fills it.
+            // Draw the node body — quad is 50% larger than visual body
+            // so SDF glow can bleed without hitting the quad edge.
+            let quad_diameter = screen_diameter * 1.5;
+            let quad_radius = quad_diameter * 0.5;
             let node_rect = Rect {
                 pos: DVec2 {
-                    x: screen_x - screen_radius,
-                    y: screen_y - screen_radius,
+                    x: screen_x - quad_radius,
+                    y: screen_y - quad_radius,
                 },
                 size: DVec2 {
-                    x: screen_diameter,
-                    y: screen_diameter,
+                    x: quad_diameter,
+                    y: quad_diameter,
                 },
             };
             self.draw_node.draw_abs(cx, node_rect);

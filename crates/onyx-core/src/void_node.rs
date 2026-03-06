@@ -16,13 +16,12 @@ use crate::id::OnyxId;
 
 // ── Node Classification ─────────────────────────────────────────
 
-/// The classification of a VoidNode within the spatial universe.
+/// Stellar classification — emergent from content mass via the Ignition Protocol.
 ///
-/// - **Asteroid**: Unsorted / inbox — orbits the camera until triaged.
-/// - **Planet**: A topic-level knowledge node (large, has gravity).
-/// - **Satellite**: A task — orbits its parent Planet.
-/// - **DysonSphere**: Encrypted content — passkey-protected, rendered
-///   as a procedural golden shell that unfolds on authentication.
+/// - **Asteroid**: mass < 2.0 — unsorted / inbox.
+/// - **RockyPlanet**: mass >= 2.0 && < 10.0 — structured data, small docs.
+/// - **GasGiant**: mass >= 10.0 && < 50.0 — topic-level aggregator.
+/// - **Sun**: mass >= 50.0 — ignited system anchor, dominant gravity.
 #[derive(
     Debug,
     Clone,
@@ -37,14 +36,14 @@ use crate::id::OnyxId;
     serde::Deserialize,
 )]
 pub enum NodeType {
-    /// Unsorted capture — lives in the Asteroid Belt (inbox).
+    /// Unsorted capture — lives in the Asteroid Belt (inbox). mass < 2.0.
     Asteroid,
-    /// A topic node — attracts related Asteroids via semantic gravity.
-    Planet,
-    /// A task — orbits its parent Planet with deadline-driven urgency.
-    Satellite,
-    /// Encrypted node — encased in a procedural shell, requires Passkey.
-    DysonSphere,
+    /// Structured data node — tasks, events, small docs. mass >= 2.0 && < 10.0.
+    RockyPlanet,
+    /// Topic-level aggregator — high mass, strong gravity. mass >= 10.0 && < 50.0.
+    GasGiant,
+    /// System anchor — ignited! Massive gravitational pull. mass >= 50.0.
+    Sun,
 }
 
 impl Default for NodeType {
@@ -146,25 +145,36 @@ impl VoidNode {
         Self::new(id, NodeType::Asteroid)
     }
 
-    /// Create a new Planet (topic node).
-    pub fn planet(id: OnyxId) -> Self {
-        Self::new(id, NodeType::Planet)
+    /// Create a new RockyPlanet (structured data node).
+    pub fn rocky_planet(id: OnyxId) -> Self {
+        Self::new(id, NodeType::RockyPlanet)
     }
 
-    /// Create a new Satellite (task node).
-    pub fn satellite(id: OnyxId) -> Self {
-        Self::new(id, NodeType::Satellite)
+    /// Create a new GasGiant (topic aggregator).
+    pub fn gas_giant(id: OnyxId) -> Self {
+        Self::new(id, NodeType::GasGiant)
     }
 
-    /// Create a new DysonSphere (encrypted node).
-    pub fn dyson_sphere(id: OnyxId) -> Self {
-        Self::new(id, NodeType::DysonSphere)
+    /// Create a new Sun (system anchor — ignited).
+    pub fn sun(id: OnyxId) -> Self {
+        Self::new(id, NodeType::Sun)
     }
 
-    /// Update mass from content size (e.g. character count).
-    /// Clamps to a minimum of 1.0 to avoid zero-gravity nodes.
-    pub fn update_mass_from_content(&mut self, char_count: usize) {
-        self.spatial.mass = (char_count as f32).max(1.0);
+    /// Ignition Protocol: Calculate mass and emergent node type from
+    /// content length and incoming link count.
+    /// Taxonomy is emergent — no manual type selection.
+    pub fn calculate_mass_and_type(&mut self, content_length: usize, incoming_links: usize) {
+        let mass = 1.0 + (content_length as f32) * 0.001 + (incoming_links as f32) * 5.0;
+        self.spatial.mass = mass;
+        self.node_type = if mass >= 50.0 {
+            NodeType::Sun
+        } else if mass >= 10.0 {
+            NodeType::GasGiant
+        } else if mass >= 2.0 {
+            NodeType::RockyPlanet
+        } else {
+            NodeType::Asteroid
+        };
     }
 
     /// Apply a heat pulse (edit recency bump).

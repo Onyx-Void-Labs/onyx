@@ -37,6 +37,10 @@ const MIN_DIST_SQ: f32 = 400.0;
 /// Lower = more viscous, more majestic orbital glide.
 const DAMPING: f32 = 0.92;
 
+/// Throw damping — applied at high velocities so thrown nodes
+/// retain momentum longer before settling to normal DAMPING.
+const THROW_DAMPING: f32 = 0.98;
+
 /// Hover arrest damping — applied when the user's cursor is over a node.
 /// Much stronger than normal damping so the node "slows down" making
 /// it easy to click moving targets.
@@ -52,8 +56,8 @@ const OORT_HEAT_THRESHOLD: f32 = 0.15;
 const OORT_DRIFT_FORCE: f32 = 8.0;
 
 /// Maximum velocity magnitude (speed limit).
-/// Capped low to prevent nodes flinging off-screen.
-const MAX_SPEED: f32 = 10.0;
+/// Raised to accommodate throw inertia; damping brings it down.
+const MAX_SPEED: f32 = 40.0;
 
 /// Visual radius scale: radius = RADIUS_BASE + sqrt(mass) * RADIUS_SCALE.
 const RADIUS_BASE: f32 = 12.0;
@@ -152,6 +156,25 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             accel[i][0] += OORT_DRIFT_FORCE * coldness * (px / center_dist);
             accel[i][1] += OORT_DRIFT_FORCE * coldness * (py / center_dist);
         }
+
+        // ── Anti-clump tangential injection (orbital mechanics) ──
+        // If a node is being pulled toward center [0,0], add a
+        // perpendicular force [-dir.y, dir.x] so nodes swirl into
+        // orbit instead of crashing straight into the center.
+        if !nodes[i].spatial.is_dragged {
+            let px = nodes[i].spatial.pos[0];
+            let py = nodes[i].spatial.pos[1];
+            let center_dist = (px * px + py * py).sqrt().max(1.0);
+            if center_dist < 300.0 {
+                let dir_x = px / center_dist;
+                let dir_y = py / center_dist;
+                let tang_x = -dir_y;
+                let tang_y = dir_x;
+                let tang_strength = 15.0 / center_dist.max(20.0);
+                accel[i][0] += tang_x * tang_strength;
+                accel[i][1] += tang_y * tang_strength;
+            }
+        }
     }
 
     // ── 2. Integrate (semi-implicit Euler) ───────────────────────
@@ -171,11 +194,16 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         node.spatial.velocity[0] += accel[i][0] * dt;
         node.spatial.velocity[1] += accel[i][1] * dt;
 
-        // Damping — hover arrest uses stronger damping
+        // Adaptive damping — thrown nodes retain momentum longer
+        // (0.98 at high speed, settling to 0.92 when slow).
+        // Hover arrest uses even stronger damping.
+        let speed_sq = node.spatial.velocity[0].powi(2) + node.spatial.velocity[1].powi(2);
+        let speed = speed_sq.sqrt();
         let damp = if node.spatial.hovered {
             HOVER_DAMPING
         } else {
-            DAMPING
+            let speed_factor = (speed / MAX_SPEED).clamp(0.0, 1.0);
+            DAMPING + (THROW_DAMPING - DAMPING) * speed_factor
         };
         node.spatial.velocity[0] *= damp;
         node.spatial.velocity[1] *= damp;
@@ -213,12 +241,12 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
 }
 
 /// Effective mass for gravity calculations.
-/// Planets have amplified gravitational pull; Asteroids are light.
+/// Sun has dominant pull; GasGiant and RockyPlanet scale by type.
 fn effective_mass(node: &VoidNode) -> f32 {
     match node.node_type {
-        NodeType::Planet => node.spatial.mass * 3.0,
-        NodeType::DysonSphere => node.spatial.mass * 2.0,
-        NodeType::Satellite => node.spatial.mass * 0.5,
+        NodeType::Sun => node.spatial.mass * 5.0,
+        NodeType::GasGiant => node.spatial.mass * 3.0,
+        NodeType::RockyPlanet => node.spatial.mass * 1.5,
         NodeType::Asteroid => node.spatial.mass * 0.3,
     }
 }
