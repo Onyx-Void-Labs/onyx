@@ -68,104 +68,113 @@ script_mod! {
         ui: Root {
             main_window := Window {
                 window.inner_size: vec2(1280, 800)
-                pass.clear_color: vec4(0.039, 0.039, 0.059, 1.0)
+                pass.clear_color: vec4(0.02, 0.02, 0.03, 1.0)
                 body +: {
                     View {
                         width: Fill
                         height: Fill
                         flow: Overlay
 
+                        // ── Full-screen Cosmos Canvas ──
                         cosmos_view := CosmosView {
                             width: Fill
                             height: Fill
                         }
-                        // Inline editor overlay — fades in on "Dive" (double-click)
+
+                        // ── Dive Editor Overlay (flat — no nested wrappers) ──
                         dive_editor := View {
                             visible: false
                             width: Fill
                             height: Fill
                             show_bg: true
-                            draw_bg.color: #x080808D0
-                            flow: Overlay
+                            draw_bg.color: #x111111EE
+                            flow: Down
+                            align: {x: 0.5, y: 0.3}
+                            padding: {top: 60.0, left: 80.0, right: 80.0, bottom: 60.0}
+                            spacing: 20.0
 
-                            // Centered editor paper
-                            View {
-                                width: Fill
-                                height: Fill
-                                flow: Down
-                                align: {x: 0.5, y: 0.5}
-                                padding: {top: 50.0, left: 50.0, right: 50.0, bottom: 50.0}
-
-                                View {
-                                    width: 800.0
-                                    height: Fill
-                                    flow: Down
-                                    spacing: 20.0
-
-                                    dive_title := Label {
-                                        text: "ENTERING ORBIT..."
-                                        draw_text.color: #x666666
-                                        draw_text.text_style: {font_size: 10.0}
-                                    }
-
-                                    dive_text_input := TextInput {
-                                        width: Fill
-                                        height: Fill
-                                        is_read_only: true
-                                        empty_text: "Write to ignite the star..."
-                                        draw_text.color: #xE0E0E0
-                                        draw_text.text_style: {font_size: 14.0}
-                                        draw_bg.color: #x00000000
-                                    }
-                                }
+                            dive_title := Label {
+                                text: "ENTERING ORBIT..."
+                                draw_text.color: #x666666
+                                draw_text.text_style: {font_size: 10.0}
                             }
 
-                            // Close button (floating top-right)
-                            View {
-                                width: Fill
-                                height: Fit
-                                align: {x: 1.0, y: 0.0}
-                                padding: {top: 15.0, right: 15.0}
-                                eject_button := Button {
-                                    text: "EJECT [ESC]"
-                                    draw_text.color: #xDD0000
-                                    draw_bg.color: vec4(0.0, 0.0, 0.0, 0.0)
-                                }
+                            dive_text_input := TextInput {
+                                width: 800.0
+                                height: Fill
+                                is_read_only: true
+                                empty_text: "Write to ignite the star..."
+                                draw_text.color: #xE0E0E0
+                                draw_text.text_style: {font_size: 14.0}
+                                draw_bg.color: #x00000000
+                            }
+
+                            eject_button := Button {
+                                text: "EJECT [ESC]"
+                                draw_text.color: #xDD0000
+                                draw_bg.color: #x00000000
                             }
                         }
+
+                        // ── Editor Area (hidden placeholder) ──
                         editor_area := View {
                             width: Fill
                             height: Fill
                             visible: false
                         }
-                        // ── The Liquid Dock ──
-                        View {
-                            width: Fill
-                            height: Fill
-                            align: {x: 0.5, y: 1.0}
-                            padding: {bottom: 30.0}
 
-                            liquid_dock := View {
-                                width: Fit
-                                height: Fit
-                                flow: Right
-                                spacing: 15.0
-                                show_bg: true
-                                draw_bg.color: #x222222EE
-                                padding: {left: 20.0, right: 20.0, top: 10.0, bottom: 10.0}
+                        // ── WhiteHole Export Port (bottom-left, abs_pos) ──
+                        white_hole_port := View {
+                            width: Fit
+                            height: Fit
+                            abs_pos: vec2(20.0, 740.0)
+                            show_bg: true
+                            draw_bg.color: #x222222AA
+                            padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
+                            Label {
+                                text: "◉ EXPORT"
+                                draw_text.color: #xFFFFFF
+                                draw_text.text_style: {font_size: 9.0}
+                            }
+                        }
 
-                                dock_create := Button {
-                                    text: "SPAWN"
-                                    draw_bg.color: #x0000
-                                }
-                                dock_cosmos := Button {
-                                    text: "COSMOS"
-                                    draw_bg.color: #x0000
-                                }
-                                dock_reset := Button {
-                                    text: "RESET"
-                                    draw_bg.color: #x0000
-                                }
+                        // ── BlackHole Trash Port (bottom-right, abs_pos) ──
+                        black_hole_port := View {
+                            width: Fit
+                            height: Fit
+                            abs_pos: vec2(1180.0, 740.0)
+                            show_bg: true
+                            draw_bg.color: #x222222AA
+                            padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
+                            Label {
+                                text: "● TRASH"
+                                draw_text.color: #xFF0000
+                                draw_text.text_style: {font_size: 9.0}
+                            }
+                        }
+
+                        // ── Liquid Dock (bottom-center, abs_pos) ──
+                        liquid_dock := View {
+                            width: Fit
+                            height: Fit
+                            abs_pos: vec2(490.0, 740.0)
+                            flow: Right
+                            spacing: 15.0
+                            show_bg: true
+                            draw_bg.color: #x222222EE
+                            padding: {left: 20.0, right: 20.0, top: 10.0, bottom: 10.0}
+
+                            dock_create := Button {
+                                text: "SPAWN"
+                                draw_bg.color: #x0000
+                            }
+                            dock_cosmos := Button {
+                                text: "COSMOS"
+                                draw_bg.color: #x0000
+                            }
+                            dock_reset := Button {
+                                text: "RESET"
+                                draw_bg.color: #x0000
                             }
                         }
                     }
@@ -333,13 +342,13 @@ impl App {
         for node in &mut self.cosmos.nodes {
             match node.node_type {
                 NodeType::BlackHole => {
-                    node.spatial.pos[0] = cam_x + half_w - 100.0;
-                    node.spatial.pos[1] = cam_y + half_h - 100.0;
+                    node.spatial.pos[0] = cam_x + half_w - 150.0;
+                    node.spatial.pos[1] = cam_y + half_h - 150.0;
                     node.spatial.velocity = [0.0, 0.0, 0.0];
                 }
                 NodeType::WhiteHole => {
-                    node.spatial.pos[0] = cam_x - half_w + 100.0;
-                    node.spatial.pos[1] = cam_y + half_h - 100.0;
+                    node.spatial.pos[0] = cam_x - half_w + 150.0;
+                    node.spatial.pos[1] = cam_y + half_h - 150.0;
                     node.spatial.velocity = [0.0, 0.0, 0.0];
                 }
                 _ => {}

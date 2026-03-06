@@ -86,11 +86,11 @@ impl PhysicsEngine {
         for node in nodes.iter_mut() {
             match node.node_type {
                 NodeType::BlackHole => {
-                    node.position = [half_w - 100.0, -half_h + 100.0, 0.0];
+                    node.position = [half_w - 150.0, -half_h + 150.0, 0.0];
                     node.velocity = [0.0, 0.0, 0.0];
                 }
                 NodeType::WhiteHole => {
-                    node.position = [-half_w + 100.0, -half_h + 100.0, 0.0];
+                    node.position = [-half_w + 150.0, -half_h + 150.0, 0.0];
                     node.velocity = [0.0, 0.0, 0.0];
                 }
                 _ => {}

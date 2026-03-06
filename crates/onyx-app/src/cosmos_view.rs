@@ -182,13 +182,40 @@ script_mod! {
         }
     }
 
+    // DrawCosmosBg: Holodeck grid background shader (camera-aware)
+    set_type_default() do #(DrawCosmosBg::script_shader(vm)){
+        ..mod.draw.DrawQuad
+        cam_x: 0.0
+        cam_y: 0.0
+        cam_zoom: 1.0
+
+        pixel: fn() {
+            let screen_pos = self.pos * self.rect_size
+            let center = self.rect_size * 0.5
+            let zoom = max(self.cam_zoom, 0.1)
+            let world_x = (screen_pos.x - center.x) / zoom + self.cam_x
+            let world_y = (screen_pos.y - center.y) / zoom + self.cam_y
+
+            let grid_size = 100.0
+            let line_width = 1.0
+            let gx = abs(fract(world_x / grid_size - 0.5) - 0.5) / (line_width / grid_size)
+            let gy = abs(fract(world_y / grid_size - 0.5) - 0.5) / (line_width / grid_size)
+            let grid_line = 1.0 - min(min(gx, gy), 1.0)
+
+            // Deep space base (#050508) → grid lines (#1a1a2e)
+            let r = mix(0.02, 0.10, grid_line * 0.3)
+            let g = mix(0.02, 0.10, grid_line * 0.3)
+            let b = mix(0.03, 0.18, grid_line * 0.3)
+            return vec4(r, g, b, 1.0)
+        }
+    }
+
     // CosmosView widget base
     mod.widgets.CosmosViewBase = #(CosmosView::register_widget(vm))
 
     mod.widgets.CosmosView = set_type_default() do mod.widgets.CosmosViewBase {
         width: Fill
         height: Fill
-        draw_bg.color: #x0A0A14
         draw_text.text_style: theme.font_regular{font_size: 9.0}
         draw_text.color: #xCCCCDD
     }
@@ -215,6 +242,21 @@ pub struct DrawNodeBody {
     hover_expand: f32,
 }
 
+// ── DrawCosmosBg ────────────────────────────────────────────────
+
+#[derive(Script, ScriptHook)]
+#[repr(C)]
+pub struct DrawCosmosBg {
+    #[deref]
+    draw_super: DrawQuad,
+    #[live]
+    cam_x: f32,
+    #[live]
+    cam_y: f32,
+    #[live]
+    cam_zoom: f32,
+}
+
 // ── Colour palette for node types ───────────────────────────────
 
 fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
@@ -225,37 +267,37 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
             y: 0.41,
             z: 0.93,
             w: 1.0,
-        }, // Indigo
+        }, // Neon Indigo
         NodeType::RockyPlanet => Vec4 {
-            x: 0.44,
-            y: 0.50,
-            z: 0.56,
+            x: 0.0,
+            y: 1.0,
+            z: 1.0,
             w: 1.0,
-        }, // Slate
+        }, // #00FFFF Cyan
         NodeType::GasGiant => Vec4 {
-            x: 0.58,
-            y: 0.35,
-            z: 0.85,
+            x: 0.616,
+            y: 0.0,
+            z: 1.0,
             w: 1.0,
-        }, // Purple
+        }, // #9D00FF Neon Purple
         NodeType::Sun => Vec4 {
-            x: 0.93,
-            y: 0.80,
-            z: 0.20,
+            x: 1.0,
+            y: 0.843,
+            z: 0.0,
             w: 1.0,
-        }, // Gold
+        }, // #FFD700 Gold
         NodeType::BlackHole => Vec4 {
-            x: 0.15,
+            x: 1.0,
             y: 0.0,
             z: 0.0,
             w: 1.0,
-        }, // Black/Red
+        }, // #FF0000 Red Warning
         NodeType::WhiteHole => Vec4 {
             x: 1.0,
             y: 1.0,
             z: 1.0,
             w: 1.0,
-        }, // Brilliant radiance
+        }, // #FFFFFF Pure Light
     }
 }
 
@@ -283,7 +325,7 @@ pub struct CosmosView {
     source: ScriptObjectRef,
     #[redraw]
     #[live]
-    draw_bg: DrawQuad,
+    draw_bg: DrawCosmosBg,
     #[live]
     draw_node: DrawNodeBody,
     #[live]
@@ -514,7 +556,10 @@ impl Widget for CosmosView {
             self.cam_zoom = 1.0;
         }
 
-        // Draw background (deep space)
+        // Draw background (holodeck grid)
+        self.draw_bg.cam_x = self.cam_x as f32;
+        self.draw_bg.cam_y = self.cam_y as f32;
+        self.draw_bg.cam_zoom = self.cam_zoom as f32;
         self.draw_bg.draw_abs(cx, rect);
 
         // Animate hover_expand per node (snappy transitions)
