@@ -66,11 +66,12 @@ pub enum CosmosViewAction {
 script_mod! {
     use mod.prelude.widgets_internal.*
 
-    // DrawNodeBody: SDF circle shader with atmospheric effects (extends DrawQuad)
+    // DrawNodeBody: Matte SDF circle — Swiss Design. No glow. No bloom.
+    // Anti-aliased via sdf.fill_keep with strict sub-pixel AA.
     set_type_default() do #(DrawNodeBody::script_shader(vm)){
         ..mod.draw.DrawQuad
 
-        node_color: #x7B68EE
+        node_color: #x88C0D0
         heat: 1.0
         selected: 0.0
         node_type_id: 0.0
@@ -78,111 +79,53 @@ script_mod! {
         hover_expand: 0.0
 
         pixel: fn() {
-            let uv = (self.pos * 2.0 - 1.0) * 1.5
+            let uv = (self.pos * 2.0 - 1.0)
             let dist = length(uv)
 
-            // ── Early discard: expanded for 1.5× glow bleed room ──
-            // Quad is 50% larger than visual body; glow renders in the margin.
-            if dist > 1.5 {
+            // ── Early discard: kill pixels outside the circle ──
+            if dist > 1.0 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
-            // ── SDF anti-aliased circle (perfectly smooth edges) ──
-            let edge_width = 0.02 + 0.5 / max(self.zoom_level, 0.1)
-            let body = 1.0 - smoothstep(0.85 - edge_width, 0.85, dist)
-
-            // ── LOD: simplified path for tiny on-screen nodes ──
-            if self.zoom_level < 0.3 {
-                // Ultra-simplified: just a colored circle, no glow
-                let alpha = body
-                if alpha < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
-                let r = self.node_color.r * 0.8
-                let g = self.node_color.g * 0.8
-                let b = self.node_color.b * 0.8
-                return Pal.premul(vec4(r, g, b, alpha))
-            }
-
-            // ── Fresnel rim-lighting (atmospheric glow) ──
-            let fresnel = pow(smoothstep(0.45, 0.90, dist), 2.5)
-            let rim_strength = fresnel * (0.5 + self.heat * 0.5)
-
-            // ── Atmospheric halo (soft outer glow) ──
-            let glow_intensity = self.heat * 0.35 + 0.08
-            let glow = exp(-(dist - 0.75) * (dist - 0.75) * 10.0) * glow_intensity
-
-            // ── Node-type specific effects (Ignition Protocol taxonomy) ──
-            // Use `var` (mutable) since these are reassigned per node-type.
-            var type_mod_r = 0.0
-            var type_mod_g = 0.0
-            var type_mod_b = 0.0
-            var type_alpha_mod = 0.0
-
-            // RockyPlanet (0..1): fresnel atmosphere with rim-lighting
-            if self.node_type_id < 1.5 {
-                type_mod_r = rim_strength * 0.6
-                type_mod_g = rim_strength * 0.3
-                type_mod_b = rim_strength * 0.9
-                type_alpha_mod = glow * 1.5
-            }
-
-            // GasGiant (2): dramatic gas atmosphere with enhanced glow
-            if self.node_type_id > 1.5 && self.node_type_id < 2.5 {
-                type_mod_r = rim_strength * 0.7
-                type_mod_g = rim_strength * 0.5
-                type_mod_b = rim_strength * 0.3
-                type_alpha_mod = glow * 2.0
-            }
-
-            // Sun (3): golden ignited star with core ring
-            if self.node_type_id > 2.5 && self.node_type_id < 3.5 {
-                let shell_ring = smoothstep(0.03, 0.01, abs(dist - 0.7))
-                type_mod_r = rim_strength * 0.9 + shell_ring * 0.4
-                type_mod_g = rim_strength * 0.7 + shell_ring * 0.3
-                type_mod_b = rim_strength * 0.1
-                type_alpha_mod = glow * 1.2 + shell_ring * 0.5
-            }
-
-            // BlackHole (4): void body with red accretion disk
-            if self.node_type_id > 3.5 && self.node_type_id < 4.5 {
-                type_mod_r = rim_strength * 1.5 + glow * 3.0
-                type_mod_g = 0.0
-                type_mod_b = 0.0
-                type_alpha_mod = glow * 2.5 + rim_strength * 0.5
-            }
-
-            // WhiteHole (5): brilliant body with cyan radiance
-            if self.node_type_id > 4.5 {
-                type_mod_r = 0.0
-                type_mod_g = rim_strength * 0.8 + glow * 2.0
-                type_mod_b = rim_strength * 0.8 + glow * 2.0
-                type_alpha_mod = glow * 2.5
-            }
-
-            // ── Selection ring (uses planet body radius, not layout size) ──
-            let ring_dist = abs(dist - 0.88)
-            let ring = smoothstep(0.04, 0.01, ring_dist) * self.selected
-
-            let alpha = clamp(body + glow + ring + type_alpha_mod, 0.0, 1.0)
-            if alpha < 0.005 {
+            // ── BlackHole (4) and WhiteHole (5) are INVISIBLE gravity wells ──
+            // They do not render as circles. They are only interaction zones.
+            if self.node_type_id > 3.5 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
-            // ── Final colour: base tint + atmospheric modulation + inner glow ──
-            let brightness = 0.55 + self.heat * 0.45
-            var r = self.node_color.r * brightness + type_mod_r + ring * 0.3
-            var g = self.node_color.g * brightness + type_mod_g + ring * 0.3
-            var b = self.node_color.b * brightness + type_mod_b + ring * 0.3
+            // ── Crisp SDF circle with sub-pixel anti-aliasing ──
+            let aa = 0.01 + 0.3 / max(self.zoom_level, 0.1)
+            let body = 1.0 - smoothstep(0.92 - aa, 0.92, dist)
 
-            // Inner glow: lighten the body on hover (replaces stroke ring)
-            r = r + (1.0 - r) * self.hover_expand * 0.3
-            g = g + (1.0 - g) * self.hover_expand * 0.3
-            b = b + (1.0 - b) * self.hover_expand * 0.3
+            if body < 0.005 {
+                return vec4(0.0, 0.0, 0.0, 0.0)
+            }
 
+            // ── Flat matte colour — desaturated, crisp ──
+            let brightness = 0.7 + self.heat * 0.15
+            var r = self.node_color.r * brightness
+            var g = self.node_color.g * brightness
+            var b = self.node_color.b * brightness
+
+            // ── Hover: subtle lighten (no glow, just brightening) ──
+            r = r + (1.0 - r) * self.hover_expand * 0.15
+            g = g + (1.0 - g) * self.hover_expand * 0.15
+            b = b + (1.0 - b) * self.hover_expand * 0.15
+
+            // ── Selection ring: razor-thin 1.5px white ring ──
+            let ring_width = 0.025
+            let ring_dist = abs(dist - 0.95)
+            let ring = smoothstep(ring_width, ring_width * 0.3, ring_dist) * self.selected
+            r = r + ring * (1.0 - r)
+            g = g + ring * (1.0 - g)
+            b = b + ring * (1.0 - b)
+
+            let alpha = body
             return Pal.premul(vec4(r, g, b, alpha))
         }
     }
 
-    // DrawCosmosBg: Holodeck grid background shader (camera-aware)
+    // DrawCosmosBg: Matte grid background — Zinc-950 base, Zinc-900 lines
     set_type_default() do #(DrawCosmosBg::script_shader(vm)){
         ..mod.draw.DrawQuad
         cam_x: 0.0
@@ -196,16 +139,18 @@ script_mod! {
             let world_x = (screen_pos.x - center.x) / zoom + self.cam_x
             let world_y = (screen_pos.y - center.y) / zoom + self.cam_y
 
+            // Grid: 100px spacing, 1px lines
             let grid_size = 100.0
             let line_width = 1.0
             let gx = abs(fract(world_x / grid_size - 0.5) - 0.5) / (line_width / grid_size)
             let gy = abs(fract(world_y / grid_size - 0.5) - 0.5) / (line_width / grid_size)
             let grid_line = 1.0 - min(min(gx, gy), 1.0)
 
-            // Deep space base (#050508) → grid lines (#1a1a2e)
-            let r = mix(0.02, 0.10, grid_line * 0.3)
-            let g = mix(0.02, 0.10, grid_line * 0.3)
-            let b = mix(0.03, 0.18, grid_line * 0.3)
+            // Background: #09090b (Zinc-950)
+            // Grid lines: #18181b (Zinc-900)
+            let r = mix(0.035, 0.094, grid_line)
+            let g = mix(0.035, 0.094, grid_line)
+            let b = mix(0.043, 0.106, grid_line)
             return vec4(r, g, b, 1.0)
         }
     }
@@ -217,7 +162,7 @@ script_mod! {
         width: Fill
         height: Fill
         draw_text.text_style: theme.font_regular{font_size: 9.0}
-        draw_text.color: #xCCCCDD
+        draw_text.color: #x888888
     }
 }
 
@@ -261,43 +206,44 @@ pub struct DrawCosmosBg {
 
 fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
     use onyx_core::void_node::NodeType;
+    // Nord Palette — flat, desaturated pastels. Swiss Design.
     match nt {
         NodeType::Asteroid => Vec4 {
-            x: 0.48,
-            y: 0.41,
-            z: 0.93,
+            x: 0.514,
+            y: 0.580,
+            z: 0.588,
             w: 1.0,
-        }, // Neon Indigo
+        }, // Nord4 #D8DEE9 (scaled) — muted grey-blue
         NodeType::RockyPlanet => Vec4 {
-            x: 0.0,
-            y: 1.0,
-            z: 1.0,
+            x: 0.533,
+            y: 0.753,
+            z: 0.816,
             w: 1.0,
-        }, // #00FFFF Cyan
+        }, // Nord8 #88C0D0 — frost blue
         NodeType::GasGiant => Vec4 {
-            x: 0.616,
-            y: 0.0,
-            z: 1.0,
+            x: 0.506,
+            y: 0.631,
+            z: 0.757,
             w: 1.0,
-        }, // #9D00FF Neon Purple
+        }, // Nord9 #81A1C1 — muted indigo
         NodeType::Sun => Vec4 {
-            x: 1.0,
-            y: 0.843,
-            z: 0.0,
+            x: 0.922,
+            y: 0.796,
+            z: 0.545,
             w: 1.0,
-        }, // #FFD700 Gold
+        }, // Nord13 #EBCB8B — warm amber
         NodeType::BlackHole => Vec4 {
-            x: 1.0,
+            x: 0.0,
             y: 0.0,
             z: 0.0,
-            w: 1.0,
-        }, // #FF0000 Red Warning
+            w: 0.0,
+        }, // Invisible — gravity well only
         NodeType::WhiteHole => Vec4 {
-            x: 1.0,
-            y: 1.0,
-            z: 1.0,
-            w: 1.0,
-        }, // #FFFFFF Pure Light
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+        }, // Invisible — gravity well only
     }
 }
 
@@ -613,18 +559,15 @@ impl Widget for CosmosView {
             self.draw_node.zoom_level = self.cam_zoom as f32;
             self.draw_node.hover_expand = self.hover_anim.get(i).copied().unwrap_or(0.0);
 
-            // Draw the node body — quad is 50% larger than visual body
-            // so SDF glow can bleed without hitting the quad edge.
-            let quad_diameter = screen_diameter * 1.5;
-            let quad_radius = quad_diameter * 0.5;
+            // Draw the node body — no glow, crisp circle fills the quad exactly.
             let node_rect = Rect {
                 pos: DVec2 {
-                    x: screen_x - quad_radius,
-                    y: screen_y - quad_radius,
+                    x: screen_x - screen_radius,
+                    y: screen_y - screen_radius,
                 },
                 size: DVec2 {
-                    x: quad_diameter,
-                    y: quad_diameter,
+                    x: screen_diameter,
+                    y: screen_diameter,
                 },
             };
             self.draw_node.draw_abs(cx, node_rect);

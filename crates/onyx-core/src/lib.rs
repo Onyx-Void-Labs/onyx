@@ -8,6 +8,7 @@ pub mod document;
 pub mod error;
 pub mod id;
 pub mod identity;
+pub mod persistence;
 pub mod protocol;
 pub mod stellar_physics;
 pub mod void_node;

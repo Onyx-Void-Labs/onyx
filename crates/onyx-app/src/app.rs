@@ -5,9 +5,9 @@
 // Architecture:
 //   OnyxApp
 //     +-- Widget Tree (script_mod DSL)
-//           |-- Side Panel       (room code, join button, peer list)
-//           |-- Main Note Area   (editor_label -- text display)
-//           +-- Status Bar       (live char count + sync status)
+//           |-- Full-screen Cosmos Canvas
+//           |-- Dive Editor Overlay (Zen Mode — Pure Void)
+//           +-- Liquid Dock (bottom-center, frosted glass)
 //
 //   Keyboard -> EditorBuffer (onyx-editor) --+
 //                                            +-->  Label redraw
@@ -18,6 +18,7 @@
 
 use makepad_widgets::*;
 use onyx_core::id::OnyxId;
+use onyx_core::persistence::StorageEngine;
 use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
@@ -27,6 +28,57 @@ use crate::cosmos::Cosmos;
 use crate::cosmos_view::{CosmosViewAction, CosmosViewWidgetRefExt, NodeDrawData};
 use crate::media_engine::{MediaEngine, MediaEvent};
 use crate::net_bridge::{NetBridge, NetEvent};
+
+// ── Storage path helper ─────────────────────────────────────────
+
+/// Returns the platform-appropriate storage directory for Onyx state files.
+fn dirs_storage_path() -> std::path::PathBuf {
+    // Use the user's data directory, falling back to current dir.
+    if let Some(data_dir) = dirs_data_dir() {
+        data_dir.join("onyx-void")
+    } else {
+        std::path::PathBuf::from(".")
+    }
+}
+
+/// Cross-platform data directory (no external crate needed).
+fn dirs_data_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("APPDATA").ok().map(std::path::PathBuf::from)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs_home().map(|h| h.join("Library/Application Support"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("XDG_DATA_HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| dirs_home().map(|h| h.join(".local/share")))
+    }
+    #[cfg(target_os = "android")]
+    {
+        // Android apps use the app-specific directory
+        Some(std::path::PathBuf::from("/data/local/tmp"))
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        None
+    }
+}
+
+/// Home directory helper (no external dependency).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn dirs_home() -> Option<std::path::PathBuf> {
+    std::env::var("HOME").ok().map(std::path::PathBuf::from)
+}
 
 // ── Cosmos Camera ───────────────────────────────────────────────
 
@@ -67,7 +119,7 @@ script_mod! {
         ui: Root {
             main_window := Window {
                 window.inner_size: vec2(1280, 800)
-                pass.clear_color: vec4(0.02, 0.02, 0.03, 1.0)
+                pass.clear_color: vec4(0.035, 0.035, 0.043, 1.0)
                 body +: {
                     View {
                         width: Fill
@@ -80,42 +132,62 @@ script_mod! {
                             height: Fill
                         }
 
-                        // ── Dive Editor Overlay (flat — no nested wrappers) ──
+                        // ── Dive Editor Overlay (Zen Mode — Pure Void) ──
                         dive_editor := View {
                             visible: false
                             width: Fill
                             height: Fill
                             show_bg: true
-                            draw_bg.color: #x111111EE
+                            draw_bg.color: #x000000
                             flow: Down
-                            align: {x: 0.5, y: 0.3}
-                            padding: {top: 60.0, left: 80.0, right: 80.0, bottom: 60.0}
-                            spacing: 20.0
+                            align: {x: 0.5, y: 0.15}
+                            padding: {top: 80. left: 0. right: 0. bottom: 80.}
+                            spacing: 24.0
 
-                            dive_title := Label {
-                                text: "ENTERING ORBIT..."
-                                draw_text: {
-                                    color: #x666666
-                                    text_style: {font_size: 10.0}
+                            // Centered column container
+                            View {
+                                width: 850.0
+                                height: Fill
+                                flow: Down
+                                spacing: 16.0
+
+                                dive_title := Label {
+                                    text: "ORBIT ACTIVE"
+                                    draw_text.color: #x444444
+                                    draw_text.text_style.font_size: 9.0
+                                }
+
+                                dive_text_input := TextInput {
+                                    width: 850.0
+                                    height: Fill
+                                    is_read_only: true
+                                    empty_text: "Write to ignite the star..."
+                                    draw_text.color: #xD8DEE9
+                                    draw_text.text_style.font_size: 16.0
+                                    draw_bg.color: #x00000000
                                 }
                             }
 
-                            dive_text_input := TextInput {
-                                width: 800.0
-                                height: Fill
-                                is_read_only: true
-                                empty_text: "Write to ignite the star..."
-                                draw_text: {
-                                    color: #xE0E0E0
-                                    text_style: {font_size: 14.0}
+                            // ── Floating status bar (HUD) ──
+                            dive_status := View {
+                                width: Fit
+                                height: Fit
+                                show_bg: true
+                                draw_bg.color: #x111111CC
+                                padding: {left: 16. right: 16. top: 8. bottom: 8.}
+                                align: {x: 0.5, y: 1.0}
+
+                                dive_status_label := Label {
+                                    text: "0 Words | Orbit Stable | AI: Idle"
+                                    draw_text.color: #x666666
+                                    draw_text.text_style.font_size: 10.0
                                 }
-                                draw_bg: {color: #x00000000}
                             }
 
                             eject_button := Button {
                                 text: "EJECT [ESC]"
-                                draw_text: {color: #xDD0000}
-                                draw_bg: {color: #x00000000}
+                                draw_text.color: #xBF616A
+                                draw_bg.color: #x00000000
                             }
                         }
 
@@ -126,62 +198,31 @@ script_mod! {
                             visible: false
                         }
 
-                        // ── WhiteHole Export Port (bottom-left, abs_pos) ──
-                        white_hole_port := View {
-                            width: Fit
-                            height: Fit
-                            abs_pos: vec2(20.0, 740.0)
-                            show_bg: true
-                            draw_bg.color: #x222222AA
-                            padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
-                            Label {
-                                text: "◉ EXPORT"
-                                draw_text: {
-                                    color: #xFFFFFF
-                                    text_style: {font_size: 9.0}
-                                }
-                            }
-                        }
-
-                        // ── BlackHole Trash Port (bottom-right, abs_pos) ──
-                        black_hole_port := View {
-                            width: Fit
-                            height: Fit
-                            abs_pos: vec2(1180.0, 740.0)
-                            show_bg: true
-                            draw_bg.color: #x222222AA
-                            padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
-                            Label {
-                                text: "● TRASH"
-                                draw_text: {
-                                    color: #xFF0000
-                                    text_style: {font_size: 9.0}
-                                }
-                            }
-                        }
-
-                        // ── Liquid Dock (bottom-center, abs_pos) ──
+                        // ── Liquid Dock (bottom-center, frosted glass) ──
                         liquid_dock := View {
                             width: Fit
                             height: Fit
-                            abs_pos: vec2(490.0, 740.0)
+                            abs_pos: vec2(460.0, 730.0)
                             flow: Right
-                            spacing: 15.0
+                            spacing: 12.0
                             show_bg: true
-                            draw_bg.color: #x222222EE
-                            padding: {left: 20.0, right: 20.0, top: 10.0, bottom: 10.0}
+                            draw_bg.color: #x111111CC
+                            padding: {left: 24. right: 24. top: 12. bottom: 12.}
 
                             dock_create := Button {
-                                text: "SPAWN"
+                                text: "+ ATOM"
                                 draw_bg.color: #x0000
+                                draw_text.color: #x88C0D0
                             }
                             dock_cosmos := Button {
-                                text: "COSMOS"
+                                text: "✦ COSMOS"
                                 draw_bg.color: #x0000
+                                draw_text.color: #xD8DEE9
                             }
                             dock_reset := Button {
-                                text: "RESET"
+                                text: "⚠ PURGE"
                                 draw_bg.color: #x0000
+                                draw_text.color: #xBF616A
                             }
                         }
                     }
@@ -276,6 +317,9 @@ pub struct App {
     /// When Some, the editor reads/writes to `crdt.get_text_for(id)`.
     #[rust]
     active_node_id: Option<OnyxId>,
+    /// Persistence engine — atomic auto-save every 5 seconds.
+    #[rust]
+    storage: Option<StorageEngine>,
 }
 
 impl App {
@@ -304,30 +348,42 @@ impl App {
         app.cursor_broadcast_counter = 0;
         app.camera = CameraState::default();
 
-        // ── Cosmos initialisation ──
-        let mut cosmos = Cosmos::new();
-        // Spawn demo nodes with simulated content for Ignition Protocol.
-        // Taxonomy is emergent: mass determines type automatically.
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(10000, 8); // Sun (≥ 50.0)
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(3000, 2); // GasGiant
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(1500, 1); // RockyPlanet
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(800, 0); // Asteroid
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(200, 0); // Asteroid
-        let idx = cosmos.spawn_node();
-        cosmos.nodes[idx].calculate_mass_and_type(5000, 3); // GasGiant
+        // ── Persistence: Load saved state or create demo cosmos ──
+        let storage_dir = dirs_storage_path();
+        let storage = StorageEngine::new(&storage_dir);
+        let loaded_nodes = storage.load().unwrap_or_default();
 
-        // Spawn singularity demo nodes
-        cosmos.spawn_black_hole(-200.0, 150.0);
-        cosmos.spawn_white_hole(200.0, -150.0);
+        let cosmos = if !loaded_nodes.is_empty() {
+            tracing::info!("loaded {} nodes from disk", loaded_nodes.len());
+            let mut c = Cosmos::new();
+            c.nodes = loaded_nodes;
+            c
+        } else {
+            // ── Cosmos initialisation: fresh demo ──
+            let mut c = Cosmos::new();
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(10000, 8); // Sun
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(3000, 2); // GasGiant
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(1500, 1); // RockyPlanet
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(800, 0); // Asteroid
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(200, 0); // Asteroid
+            let idx = c.spawn_node();
+            c.nodes[idx].calculate_mass_and_type(5000, 3); // GasGiant
+
+            // Spawn singularity nodes
+            c.spawn_black_hole(-200.0, 150.0);
+            c.spawn_white_hole(200.0, -150.0);
+            c
+        };
 
         app.cosmos = cosmos;
-        app.cosmos_active = true; // start in cosmos view
+        app.cosmos_active = true;
         app.active_node_id = None;
+        app.storage = Some(storage);
         app
     }
 
@@ -372,6 +428,11 @@ impl App {
         cosmos_view.set_draw_data(draw_data);
         cosmos_view.set_camera(self.camera.x, self.camera.y, self.camera.z);
 
+        // ── Update persistence engine with current state ──
+        if let Some(ref storage) = self.storage {
+            storage.update_state(&self.cosmos.nodes);
+        }
+
         // Update status bar with cosmos info
         self.ui
             .label(cx, ids!(status_label))
@@ -390,7 +451,19 @@ impl App {
         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
         cv.set_visible(cx, true);
         self.ui.view(cx, ids!(editor_area)).set_visible(cx, false);
+        // Show dock again in cosmos view
+        self.ui.view(cx, ids!(liquid_dock)).set_visible(cx, true);
         cx.redraw_all();
+    }
+
+    /// Update the dive editor HUD status bar with word count.
+    fn update_dive_status(&self, cx: &mut Cx) {
+        let text = self.buffer.text();
+        let word_count = text.split_whitespace().count();
+        let status = format!("{word_count} Words | Orbit Stable | AI: Idle");
+        self.ui
+            .label(cx, ids!(dive_status_label))
+            .set_text(cx, &status);
     }
 
     /// Map HUD button clicks to a typed AeroHudAction.
@@ -461,6 +534,11 @@ impl App {
 
         // Update the visible cursor indicator in the status bar
         self.update_cursor_display(cx);
+
+        // Update dive editor HUD if in editor mode
+        if !self.cosmos_active {
+            self.update_dive_status(cx);
+        }
     }
 
     // ── Cursor animation ────────────────────────────────────────
@@ -1013,7 +1091,11 @@ impl MatchEvent for App {
                     self.cosmos.nodes[idx].calculate_mass_and_type(3000, 2);
                     self.cosmos.spawn_black_hole(-200.0, 150.0);
                     self.cosmos.spawn_white_hole(200.0, -150.0);
-                    tracing::info!("cosmos reset — {} nodes", self.cosmos.len());
+                    // Immediately persist the purged state
+                    if let Some(ref storage) = self.storage {
+                        let _ = storage.save_now(&self.cosmos.nodes);
+                    }
+                    tracing::info!("cosmos purged — {} nodes", self.cosmos.len());
                     cx.redraw_all();
                 }
                 AeroHudAction::ShowCosmos => {
@@ -1056,7 +1138,10 @@ impl MatchEvent for App {
                         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
                         cv.set_visible(cx, false);
 
-                        // ── Show dive editor overlay with fade-in ──
+                        // Hide the dock in editor mode
+                        self.ui.view(cx, ids!(liquid_dock)).set_visible(cx, false);
+
+                        // ── Show dive editor overlay ──
                         self.ui.view(cx, ids!(dive_editor)).set_visible(cx, true);
                         // Make text visible (opacity → 1.0)
                         let dive_input = self.ui.text_input(cx, ids!(dive_text_input));
