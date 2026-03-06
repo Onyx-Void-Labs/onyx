@@ -12,26 +12,79 @@ live_design! {
     use link::shaders::*;
     use link::widgets::*;
 
-    // 1. The Glass Dock
-    CommandDock = <View> {
+    // 1. Custom Button — flat matte SDF, no default Makepad chrome
+    OnyxButton = <View> {
         width: Fit, height: Fit
-        flow: Right, spacing: 10.0, padding: {top: 10.0, bottom: 10.0, left: 20.0, right: 20.0}
+        padding: {left: 12.0, right: 12.0, top: 8.0, bottom: 8.0}
         align: {x: 0.5, y: 0.5}
         show_bg: true
+
         draw_bg: {
-            color: #18181bC0
-            radius: 20.0
-            border_width: 1.0
-            border_color: #27272a
+            instance hover: 0.0
+            instance pressed: 0.0
+            instance radius: 6.0
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius);
+                let bg_color = mix(#18181b, #27272a, self.hover);
+                sdf.fill_keep(bg_color);
+                return sdf.result;
+            }
         }
 
-        <Button> { text: "✦ WRITE", draw_text: { text_style: {font_size: 11.0} } }
-        <Button> { text: "▨ PAINT", draw_text: { text_style: {font_size: 11.0} } }
-        <Button> { text: "✉ MAIL", draw_text: { text_style: {font_size: 11.0} } }
-        <Button> { text: "⚙ SETTINGS", draw_text: { text_style: {font_size: 11.0} } }
+        animator: {
+            hover = {
+                default: off
+                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {hover: 0.0}} }
+                on = { from: {all: Snap} apply: {draw_bg: {hover: 1.0}} }
+            }
+            pressed = {
+                default: off
+                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {pressed: 0.0}} }
+                on = { from: {all: Snap} apply: {draw_bg: {pressed: 1.0}} }
+            }
+        }
+
+        label = <Label> {
+            draw_text: { color: #a1a1aa, text_style: {font_size: 11.0, font: {path: dep("crate://makepad-widgets/resources/GoNotoKurrent-Regular.ttf")}} }
+        }
     }
 
-    // 2. The Path Bar (Breadcrumbs)
+    // 2. The Glass Dock — SDF pill shader with border stroke
+    CommandDock = <View> {
+        width: Fit, height: Fit
+        flow: Right, spacing: 10.0, padding: 8.0
+        align: {x: 0.5, y: 0.5}
+        show_bg: true
+
+        draw_bg: {
+            instance radius: 20.0
+            instance border_width: 1.0
+            instance border_color: #27272a
+            color: #09090bE6
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(
+                    self.border_width,
+                    self.border_width,
+                    self.rect_size.x - self.border_width * 2.0,
+                    self.rect_size.y - self.border_width * 2.0,
+                    self.radius
+                );
+                sdf.fill_keep(self.color);
+                sdf.stroke(self.border_color, self.border_width);
+                return sdf.result;
+            }
+        }
+
+        <OnyxButton> { label = { text: "✦ WRITE" } }
+        <OnyxButton> { label = { text: "▨ PAINT" } }
+        <OnyxButton> { label = { text: "✉ MAIL" } }
+        <OnyxButton> { label = { text: "⚙ SETTINGS" } }
+    }
+
+    // 3. The Path Bar (Breadcrumbs)
     PathBar = <View> {
         width: Fill, height: Fit
         flow: Right, spacing: 5.0, padding: {left: 30.0, top: 20.0, bottom: 20.0}
@@ -39,6 +92,27 @@ live_design! {
         <Label> { text: "Root", draw_text: { color: #a1a1aa, text_style: {font_size: 12.0} } }
         <Label> { text: "/", draw_text: { color: #3f3f46, text_style: {font_size: 12.0} } }
         <Label> { text: "Workspace", draw_text: { color: #f4f4f5, text_style: {font_size: 12.0} } }
+    }
+
+    // 4. A single document slot — transparent by default, SDF border in paint mode
+    OnyxSlot = <View> {
+        width: Fill, height: Fit
+        padding: 15.0
+        show_bg: true
+        draw_bg: {
+            color: #00000000
+            instance border_color: #27272a
+            instance border_width: 1.0
+            instance is_painting: 0.0
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 4.0);
+                sdf.stroke(self.border_color, self.border_width * self.is_painting);
+                return sdf.result;
+            }
+        }
+        <Label> { text: "Type here...", draw_text: { color: #52525b, text_style: {font_size: 14.0} } }
     }
 
     App = {{App}} {
@@ -57,13 +131,30 @@ live_design! {
 
                     <PathBar> {}
 
-                    // The Canvas / Editor Void
+                    // The Document Canvas
                     <View> {
                         width: Fill, height: Fill
-                        align: {x: 0.5, y: 0.5}
-                        <Label> {
-                            text: "[ Empty Slot ]"
-                            draw_text: { color: #27272a, text_style: {font_size: 16.0} }
+                        align: {x: 0.5, y: 0.0}
+                        padding: {top: 40.0, bottom: 100.0}
+
+                        // The Document Column (max width for readability)
+                        <View> {
+                            width: 850.0, height: Fit
+                            flow: Down, spacing: 10.0
+
+                            // Row 1 (Title)
+                            <View> {
+                                width: Fill, height: Fit
+                                padding: {bottom: 20.0}
+                                <Label> { text: "MATH2411: Calculus Matrix", draw_text: { color: #f4f4f5, text_style: {font_size: 28.0} } }
+                            }
+
+                            // Row 2 (Content)
+                            <View> {
+                                width: Fill, height: Fit
+                                flow: Right, spacing: 15.0
+                                <OnyxSlot> {}
+                            }
                         }
                     }
                 }
