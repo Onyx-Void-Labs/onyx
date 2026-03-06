@@ -36,6 +36,8 @@ pub enum NodeType {
     RockyPlanet,
     GasGiant,
     Sun,
+    BlackHole,
+    WhiteHole,
 }
 
 impl Default for NodeType {
@@ -79,6 +81,9 @@ pub struct VoidNode {
     /// Expansion factor for the Phase 4 "Dive" animation.
     /// 1.0 = normal size.  Animated toward target during transitions.
     pub expansion_factor: f32,
+
+    /// Tombstone flag — set when absorbed by a BlackHole.
+    pub tombstone: bool,
 }
 
 impl VoidNode {
@@ -93,6 +98,7 @@ impl VoidNode {
             node_type,
             embedding: None,
             expansion_factor: 1.0,
+            tombstone: false,
         }
     }
 
@@ -123,7 +129,10 @@ impl VoidNode {
     /// content length and incoming link count.
     /// Taxonomy is emergent — no manual type selection.
     pub fn calculate_mass_and_type(&mut self, content_length: usize, incoming_links: usize) {
-        let mass = 1.0 + (content_length as f32) * 0.001 + (incoming_links as f32) * 5.0;
+        if matches!(self.node_type, NodeType::BlackHole | NodeType::WhiteHole) {
+            return;
+        }
+        let mass = 1.0 + (content_length as f32) / 100.0 + (incoming_links as f32) * 5.0;
         self.mass = mass;
         self.node_type = if mass >= 50.0 {
             NodeType::Sun

@@ -30,6 +30,7 @@ pub struct NodeDrawData {
     pub node_type: onyx_core::void_node::NodeType,
     pub selected: bool,
     pub label: &'static str,
+    pub tombstone: bool,
 }
 
 // ── Widget actions emitted by CosmosView ────────────────────────
@@ -133,7 +134,7 @@ script_mod! {
             }
 
             // Sun (3): golden ignited star with core ring
-            if self.node_type_id > 2.5 {
+            if self.node_type_id > 2.5 && self.node_type_id < 3.5 {
                 let shell_ring = smoothstep(0.03, 0.01, abs(dist - 0.7))
                 type_mod_r = rim_strength * 0.9 + shell_ring * 0.4
                 type_mod_g = rim_strength * 0.7 + shell_ring * 0.3
@@ -141,26 +142,41 @@ script_mod! {
                 type_alpha_mod = glow * 1.2 + shell_ring * 0.5
             }
 
+            // BlackHole (4): void body with red accretion disk
+            if self.node_type_id > 3.5 && self.node_type_id < 4.5 {
+                type_mod_r = rim_strength * 1.5 + glow * 3.0
+                type_mod_g = 0.0
+                type_mod_b = 0.0
+                type_alpha_mod = glow * 2.5 + rim_strength * 0.5
+            }
+
+            // WhiteHole (5): brilliant body with cyan radiance
+            if self.node_type_id > 4.5 {
+                type_mod_r = 0.0
+                type_mod_g = rim_strength * 0.8 + glow * 2.0
+                type_mod_b = rim_strength * 0.8 + glow * 2.0
+                type_alpha_mod = glow * 2.5
+            }
+
             // ── Selection ring (uses planet body radius, not layout size) ──
             let ring_dist = abs(dist - 0.88)
             let ring = smoothstep(0.04, 0.01, ring_dist) * self.selected
 
-            // ── Hover highlight ring (hardcoded radius, not self.pos scaled) ──
-            let planet_radius = 0.85
-            let highlight_radius = planet_radius + 0.08
-            let hover_ring_dist = abs(dist - highlight_radius)
-            let hover_ring = smoothstep(0.03, 0.005, hover_ring_dist) * self.hover_expand
-
-            let alpha = clamp(body + glow + ring + hover_ring + type_alpha_mod, 0.0, 1.0)
+            let alpha = clamp(body + glow + ring + type_alpha_mod, 0.0, 1.0)
             if alpha < 0.005 {
                 return vec4(0.0, 0.0, 0.0, 0.0)
             }
 
-            // ── Final colour: base tint + atmospheric modulation ──
+            // ── Final colour: base tint + atmospheric modulation + inner glow ──
             let brightness = 0.55 + self.heat * 0.45
-            let r = self.node_color.r * brightness + type_mod_r + ring * 0.3 + hover_ring * 0.5
-            let g = self.node_color.g * brightness + type_mod_g + ring * 0.3 + hover_ring * 0.5
-            let b = self.node_color.b * brightness + type_mod_b + ring * 0.3 + hover_ring * 0.5
+            var r = self.node_color.r * brightness + type_mod_r + ring * 0.3
+            var g = self.node_color.g * brightness + type_mod_g + ring * 0.3
+            var b = self.node_color.b * brightness + type_mod_b + ring * 0.3
+
+            // Inner glow: lighten the body on hover (replaces stroke ring)
+            r = r + (1.0 - r) * self.hover_expand * 0.3
+            g = g + (1.0 - g) * self.hover_expand * 0.3
+            b = b + (1.0 - b) * self.hover_expand * 0.3
 
             return Pal.premul(vec4(r, g, b, alpha))
         }
@@ -228,6 +244,18 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
             z: 0.20,
             w: 1.0,
         }, // Gold
+        NodeType::BlackHole => Vec4 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        }, // #000 — Absolute void
+        NodeType::WhiteHole => Vec4 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+            w: 1.0,
+        }, // #FFF — Brilliant radiance
     }
 }
 
@@ -240,6 +268,8 @@ fn node_type_to_id(nt: onyx_core::void_node::NodeType) -> f32 {
         NodeType::RockyPlanet => 1.0,
         NodeType::GasGiant => 2.0,
         NodeType::Sun => 3.0,
+        NodeType::BlackHole => 4.0,
+        NodeType::WhiteHole => 5.0,
     }
 }
 
@@ -504,6 +534,10 @@ impl Widget for CosmosView {
 
         // Draw each node using world_to_screen mapping
         for (i, nd) in self.draw_data.iter().enumerate() {
+            // Skip tombstoned nodes — dead nodes are not rendered
+            if nd.tombstone {
+                continue;
+            }
             // Skip nodes with NaN positions to prevent layout crashes
             if nd.x.is_nan() || nd.y.is_nan() {
                 continue;

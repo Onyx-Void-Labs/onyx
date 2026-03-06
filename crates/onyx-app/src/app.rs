@@ -84,7 +84,7 @@ script_mod! {
                             width: Fill
                             height: Fill
                             show_bg: true
-                            draw_bg.color: #x080808
+                            draw_bg.color: #x080808D0
                             flow: Overlay
 
                             // Centered editor paper
@@ -113,7 +113,7 @@ script_mod! {
                                         is_read_only: true
                                         empty_message: "Write to ignite the star..."
                                         draw_text.color: #xE0E0E0
-                                        draw_bg.color: #x101010
+                                        draw_bg.color: #x00000000
                                         text_style: {font_size: 14.0}
                                     }
                                 }
@@ -137,15 +137,34 @@ script_mod! {
                             height: Fill
                             visible: false
                         }
-                        // Wrapper View to position HUD at bottom-center
+                        // ── The Liquid Dock ──
                         View {
                             width: Fill
                             height: Fill
-                            align: Align{x: 0.5, y: 1.0}
-                            padding: Inset{bottom: 40.0}
-                            aero_hud := AeroHud {
-                                width: 400.0
-                                height: 60.0
+                            align: {x: 0.5, y: 1.0}
+                            padding: {bottom: 30.0}
+
+                            liquid_dock := View {
+                                width: Fit
+                                height: Fit
+                                flow: Right
+                                spacing: 15.0
+                                show_bg: true
+                                draw_bg.color: #x222222EE
+                                padding: {left: 20.0, right: 20.0, top: 10.0, bottom: 10.0}
+
+                                dock_create := Button {
+                                    text: "CREATE"
+                                    draw_bg.color: #x0000
+                                }
+                                dock_reset := Button {
+                                    text: "RESET"
+                                    draw_bg.color: #x0000
+                                }
+                                dock_purge := Button {
+                                    text: "PURGE"
+                                    draw_bg.color: #x0000
+                                }
                             }
                         }
                     }
@@ -284,6 +303,11 @@ impl App {
         cosmos.nodes[idx].calculate_mass_and_type(200, 0); // Asteroid
         let idx = cosmos.spawn_node();
         cosmos.nodes[idx].calculate_mass_and_type(5000, 3); // GasGiant
+
+        // Spawn singularity demo nodes
+        cosmos.spawn_black_hole(-200.0, 150.0);
+        cosmos.spawn_white_hole(200.0, -150.0);
+
         app.cosmos = cosmos;
         app.cosmos_active = true; // start in cosmos view
         app.active_node_id = None;
@@ -313,6 +337,7 @@ impl App {
                 node_type: node.node_type,
                 selected: self.cosmos.selected == Some(i),
                 label: self.cosmos.node_label(i),
+                tombstone: node.tombstone,
             })
             .collect();
 
@@ -339,20 +364,17 @@ impl App {
         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
         cv.set_visible(cx, true);
         self.ui.view(cx, ids!(editor_area)).set_visible(cx, false);
-        self.ui
-            .button(cx, ids!(hud_view_toggle))
-            .set_text(cx, "\u{27C1} Editor");
         cx.redraw_all();
     }
 
     /// Map HUD button clicks to a typed AeroHudAction.
     fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
-        if self.ui.button(cx, ids!(hud_spawn)).clicked(actions) {
+        if self.ui.button(cx, ids!(dock_create)).clicked(actions) {
             AeroHudAction::SpawnNode
-        } else if self.ui.button(cx, ids!(hud_view_toggle)).clicked(actions) {
-            AeroHudAction::ToggleView
-        } else if self.ui.button(cx, ids!(hud_delete)).clicked(actions) {
-            AeroHudAction::DeleteSelected
+        } else if self.ui.button(cx, ids!(dock_reset)).clicked(actions) {
+            AeroHudAction::ResetCosmos
+        } else if self.ui.button(cx, ids!(dock_purge)).clicked(actions) {
+            AeroHudAction::PurgeTombstones
         } else {
             AeroHudAction::None
         }
@@ -958,39 +980,20 @@ impl MatchEvent for App {
                     tracing::info!("spawned node {idx} — {} nodes total", self.cosmos.len());
                     cx.redraw_all();
                 }
-                AeroHudAction::ToggleView => {
-                    self.cosmos_active = !self.cosmos_active;
-                    self.ui
-                        .view(cx, ids!(editor_area))
-                        .set_visible(cx, !self.cosmos_active);
-                    let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
-                    cv.set_visible(cx, self.cosmos_active);
-                    let label = if self.cosmos_active {
-                        "⟁ Editor"
-                    } else {
-                        "⟁ Cosmos"
-                    };
-                    self.ui
-                        .button(cx, ids!(hud_view_toggle))
-                        .set_text(cx, label);
-                    if self.cosmos_active {
-                        // Returning to cosmos — clear active node binding
-                        self.active_node_id = None;
-                        // Hide the dive editor overlay
-                        self.ui.view(cx, ids!(dive_editor)).set_visible(cx, false);
-                        let dive_input = self.ui.text_input(cx, ids!(dive_text_input));
-                        dive_input.set_is_read_only(cx, true);
-                    } else {
-                        self.sync_display(cx);
-                    }
+                AeroHudAction::ResetCosmos => {
+                    self.cosmos = Cosmos::new();
+                    // Re-spawn base demo nodes
+                    let idx = self.cosmos.spawn_node();
+                    self.cosmos.nodes[idx].calculate_mass_and_type(3000, 2);
+                    self.cosmos.spawn_black_hole(-200.0, 150.0);
+                    self.cosmos.spawn_white_hole(200.0, -150.0);
+                    tracing::info!("cosmos reset — {} nodes", self.cosmos.len());
                     cx.redraw_all();
                 }
-                AeroHudAction::DeleteSelected => {
-                    if let Some(idx) = self.cosmos.selected {
-                        tracing::info!("deleting node {idx}");
-                        self.cosmos.remove_node(idx);
-                        cx.redraw_all();
-                    }
+                AeroHudAction::PurgeTombstones => {
+                    self.cosmos.purge_tombstones();
+                    tracing::info!("purged tombstones — {} nodes remain", self.cosmos.len());
+                    cx.redraw_all();
                 }
                 AeroHudAction::None => {}
             }
@@ -1026,9 +1029,6 @@ impl MatchEvent for App {
                         self.ui.view(cx, ids!(editor_area)).set_visible(cx, true);
                         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
                         cv.set_visible(cx, false);
-                        self.ui
-                            .button(cx, ids!(hud_view_toggle))
-                            .set_text(cx, "⟁ Cosmos");
 
                         // ── Show dive editor overlay with fade-in ──
                         self.ui.view(cx, ids!(dive_editor)).set_visible(cx, true);

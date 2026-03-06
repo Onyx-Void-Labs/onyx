@@ -61,17 +61,19 @@ const OORT_DRIFT_FORCE: f32 = 8.0;
 /// Raised to accommodate throw inertia; damping brings it down.
 const MAX_SPEED: f32 = 200.0;
 
-/// Visual radius scale: radius = RADIUS_BASE + sqrt(mass) * RADIUS_SCALE.
-const RADIUS_BASE: f32 = 12.0;
+/// Visual radius scale: radius = mass.sqrt() * 10.0 (Ignition Protocol).
+const RADIUS_SINGULARITY: f32 = 25.0;
 
-/// Visual radius scale factor.
-const RADIUS_SCALE: f32 = 2.5;
-
-// ── Public API ──────────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────────────
 
 /// Compute the visual radius of a VoidNode based on its mass.
+/// Ignition Protocol: radius = mass.sqrt() * 10.0.
+/// BlackHole and WhiteHole use a fixed singularity radius.
 pub fn node_radius(node: &VoidNode) -> f32 {
-    RADIUS_BASE + node.spatial.mass.sqrt() * RADIUS_SCALE
+    match node.node_type {
+        NodeType::BlackHole | NodeType::WhiteHole => RADIUS_SINGULARITY,
+        _ => node.spatial.mass.sqrt() * 10.0,
+    }
 }
 
 /// Run one physics tick.  `dt` is the elapsed time in seconds
@@ -94,6 +96,14 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             // ── Kinematic lock: skip force accumulation for dragged nodes ──
             let i_dragged = nodes[i].spatial.is_dragged;
             let j_dragged = nodes[j].spatial.is_dragged;
+            let i_kinematic = matches!(
+                nodes[i].node_type,
+                NodeType::BlackHole | NodeType::WhiteHole
+            );
+            let j_kinematic = matches!(
+                nodes[j].node_type,
+                NodeType::BlackHole | NodeType::WhiteHole
+            );
 
             let dx = nodes[j].spatial.pos[0] - nodes[i].spatial.pos[0];
             let dy = nodes[j].spatial.pos[1] - nodes[i].spatial.pos[1];
@@ -118,20 +128,20 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             }
 
             // Newton's 3rd law: equal and opposite
-            // Skip force application for dragged nodes (kinematic lock)
-            if !i_dragged {
+            // Skip force application for dragged/kinematic nodes
+            if !i_dragged && !i_kinematic {
                 accel[i][0] += gx / mi.max(1.0);
                 accel[i][1] += gy / mi.max(1.0);
             }
-            if !j_dragged {
+            if !j_dragged && !j_kinematic {
                 accel[j][0] -= gx / mj.max(1.0);
                 accel[j][1] -= gy / mj.max(1.0);
             }
 
             // ── Surface-to-Surface Repulsion (rigid separation) ──
             // Uses actual visual radii + padding to prevent overlap.
-            let ri = RADIUS_BASE + nodes[i].spatial.mass.sqrt() * RADIUS_SCALE;
-            let rj = RADIUS_BASE + nodes[j].spatial.mass.sqrt() * RADIUS_SCALE;
+            let ri = node_radius(&nodes[i]);
+            let rj = node_radius(&nodes[j]);
             let min_dist = ri + rj + 10.0; // 10px padding
             if dist < min_dist {
                 let overlap = min_dist - dist;
@@ -139,11 +149,11 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
                 let sep_strength = 50.0 * overlap;
                 let nx = dx / dist;
                 let ny = dy / dist;
-                if !i_dragged {
+                if !i_dragged && !i_kinematic {
                     accel[i][0] -= sep_strength * nx / mi.max(1.0);
                     accel[i][1] -= sep_strength * ny / mi.max(1.0);
                 }
-                if !j_dragged {
+                if !j_dragged && !j_kinematic {
                     accel[j][0] += sep_strength * nx / mj.max(1.0);
                     accel[j][1] += sep_strength * ny / mj.max(1.0);
                 }
@@ -159,11 +169,11 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
                 let rep_mag = REPULSION_STRENGTH / (safe_dist * safe_dist);
                 let rx = rep_mag * (dx / dist);
                 let ry = rep_mag * (dy / dist);
-                if !i_dragged {
+                if !i_dragged && !i_kinematic {
                     accel[i][0] -= rx / mi.max(1.0);
                     accel[i][1] -= ry / mi.max(1.0);
                 }
-                if !j_dragged {
+                if !j_dragged && !j_kinematic {
                     accel[j][0] += rx / mj.max(1.0);
                     accel[j][1] += ry / mj.max(1.0);
                 }
@@ -205,7 +215,9 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         let node = &mut nodes[i];
 
         // ── Kinematic lock: dragged nodes get zero velocity, skip integration ──
-        if node.spatial.is_dragged {
+        if node.spatial.is_dragged
+            || matches!(node.node_type, NodeType::BlackHole | NodeType::WhiteHole)
+        {
             node.spatial.velocity = [0.0, 0.0, 0.0];
             // Still decay heat
             node.spatial.heat *= 1.0 - HEAT_DECAY * dt;
@@ -264,13 +276,68 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             node.spatial.velocity[1] = 0.0;
         }
     }
+
+    // ── 5. Singularity Collisions (BlackHole / WhiteHole) ────
+    let mut tombstone_indices: Vec<usize> = Vec::new();
+    let mut kick_list: Vec<(usize, f32, f32)> = Vec::new();
+
+    for i in 0..n {
+        if nodes[i].tombstone {
+            continue;
+        }
+        if matches!(
+            nodes[i].node_type,
+            NodeType::BlackHole | NodeType::WhiteHole
+        ) {
+            continue;
+        }
+
+        for j in 0..n {
+            if i == j || nodes[j].tombstone {
+                continue;
+            }
+
+            let dx = nodes[j].spatial.pos[0] - nodes[i].spatial.pos[0];
+            let dy = nodes[j].spatial.pos[1] - nodes[i].spatial.pos[1];
+            let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+
+            let ri = node_radius(&nodes[i]);
+            let rj = node_radius(&nodes[j]);
+            let radius_sum = ri + rj;
+
+            if dist < radius_sum {
+                match nodes[j].node_type {
+                    NodeType::BlackHole => {
+                        tombstone_indices.push(i);
+                    }
+                    NodeType::WhiteHole => {
+                        println!("EXPORTING NODE [{}]", nodes[i].id);
+                        let nx = dx / dist;
+                        let ny = dy / dist;
+                        kick_list.push((i, -nx * 500.0, -ny * 500.0));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    for idx in tombstone_indices {
+        nodes[idx].tombstone = true;
+    }
+    for (idx, vx, vy) in kick_list {
+        nodes[idx].spatial.velocity[0] += vx;
+        nodes[idx].spatial.velocity[1] += vy;
+    }
 }
 
 /// Effective mass for gravity calculations.
-/// Sun has dominant pull; GasGiant and RockyPlanet scale by type.
+/// Sun has dominant pull; BlackHole has infinite-equivalent mass.
 fn effective_mass(node: &VoidNode) -> f32 {
     match node.node_type {
         NodeType::Sun => node.spatial.mass * 5.0,
+        NodeType::BlackHole => 1_000_000.0,
+        NodeType::WhiteHole => 500_000.0,
         NodeType::GasGiant => node.spatial.mass * 3.0,
         NodeType::RockyPlanet => node.spatial.mass * 1.5,
         NodeType::Asteroid => node.spatial.mass * 0.3,

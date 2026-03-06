@@ -104,6 +104,8 @@ impl Cosmos {
             Some(NodeType::RockyPlanet) => "●",
             Some(NodeType::GasGiant) => "◎",
             Some(NodeType::Sun) => "☀",
+            Some(NodeType::BlackHole) => "⊗",
+            Some(NodeType::WhiteHole) => "⊙",
             None => "?",
         }
     }
@@ -141,6 +143,7 @@ impl Cosmos {
     }
 
     /// Delete a node by index (drag into Black Hole).
+    #[allow(dead_code)]
     pub fn remove_node(&mut self, idx: usize) {
         if idx < self.nodes.len() {
             self.nodes.remove(idx);
@@ -164,5 +167,36 @@ impl Cosmos {
                 }
             });
         }
+    }
+
+    /// Purge all tombstoned nodes from the cosmos.
+    pub fn purge_tombstones(&mut self) {
+        self.nodes.retain(|n| !n.tombstone);
+        self.selected = None;
+        self.dragged = None;
+    }
+
+    /// Spawn a BlackHole singularity at the given position.
+    pub fn spawn_black_hole(&mut self, x: f32, y: f32) -> usize {
+        let id = OnyxId::new();
+        let mut node = VoidNode::new(id, NodeType::BlackHole);
+        node.spatial.pos[0] = x;
+        node.spatial.pos[1] = y;
+        node.spatial.mass = 6.25; // visual radius = sqrt(6.25) * 10 = 25
+        node.spatial.heat = 0.8;
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    /// Spawn a WhiteHole singularity at the given position.
+    pub fn spawn_white_hole(&mut self, x: f32, y: f32) -> usize {
+        let id = OnyxId::new();
+        let mut node = VoidNode::new(id, NodeType::WhiteHole);
+        node.spatial.pos[0] = x;
+        node.spatial.pos[1] = y;
+        node.spatial.mass = 6.25;
+        node.spatial.heat = 0.8;
+        self.nodes.push(node);
+        self.nodes.len() - 1
     }
 }

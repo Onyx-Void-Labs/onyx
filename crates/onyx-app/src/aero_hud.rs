@@ -20,10 +20,10 @@ use makepad_widgets::*;
 pub enum AeroHudAction {
     /// User wants to spawn a new node (type is emergent).
     SpawnNode,
-    /// Toggle between Cosmos view and Editor view.
-    ToggleView,
-    /// Delete the currently selected node.
-    DeleteSelected,
+    /// Reset the cosmos to initial state.
+    ResetCosmos,
+    /// Purge all tombstoned nodes.
+    PurgeTombstones,
     #[default]
     None,
 }

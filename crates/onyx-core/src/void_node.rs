@@ -44,6 +44,10 @@ pub enum NodeType {
     GasGiant,
     /// System anchor — ignited! Massive gravitational pull. mass >= 50.0.
     Sun,
+    /// Singularity — infinite mass, absorbs nodes on contact (tombstones them).
+    BlackHole,
+    /// Singularity — emits massive repulsion, exports nodes on contact.
+    WhiteHole,
 }
 
 impl Default for NodeType {
@@ -126,6 +130,11 @@ pub struct VoidNode {
     /// A node appearing in multiple constellations gets a Wormhole
     /// orbital for each mirror link.
     pub mirrors: Vec<OnyxId>,
+
+    /// Tombstone flag — set to true when absorbed by a BlackHole.
+    /// Tombstoned nodes are skipped in rendering and physics.
+    #[serde(default)]
+    pub tombstone: bool,
 }
 
 impl VoidNode {
@@ -137,6 +146,7 @@ impl VoidNode {
             node_type,
             spatial: SpatialState::default(),
             mirrors: Vec::new(),
+            tombstone: false,
         }
     }
 
@@ -160,11 +170,25 @@ impl VoidNode {
         Self::new(id, NodeType::Sun)
     }
 
+    /// Create a BlackHole (absorption singularity).
+    pub fn black_hole(id: OnyxId) -> Self {
+        Self::new(id, NodeType::BlackHole)
+    }
+
+    /// Create a WhiteHole (emission singularity).
+    pub fn white_hole(id: OnyxId) -> Self {
+        Self::new(id, NodeType::WhiteHole)
+    }
+
     /// Ignition Protocol: Calculate mass and emergent node type from
     /// content length and incoming link count.
     /// Taxonomy is emergent — no manual type selection.
     pub fn calculate_mass_and_type(&mut self, content_length: usize, incoming_links: usize) {
-        let mass = 1.0 + (content_length as f32) * 0.001 + (incoming_links as f32) * 5.0;
+        // Singularity nodes are static anchors — never reclassify.
+        if matches!(self.node_type, NodeType::BlackHole | NodeType::WhiteHole) {
+            return;
+        }
+        let mass = 1.0 + (content_length as f32) / 100.0 + (incoming_links as f32) * 5.0;
         self.spatial.mass = mass;
         self.node_type = if mass >= 50.0 {
             NodeType::Sun

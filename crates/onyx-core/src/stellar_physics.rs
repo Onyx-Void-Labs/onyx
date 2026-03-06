@@ -236,13 +236,19 @@ impl PhysicsEngine {
 
         // ── 3. NaN Quarantine (recursive sanitization) ──────────
         Self::nan_quarantine(nodes);
+
+        // ── 4. Singularity Collisions (BlackHole / WhiteHole) ────
+        Self::singularity_collisions(nodes);
     }
 
     /// Returns `true` if this node type is kinematic (infinite mass, fixed).
     /// Sun nodes never move.
     #[inline]
     fn is_kinematic(node: &VoidNode) -> bool {
-        matches!(node.node_type, NodeType::Sun)
+        matches!(
+            node.node_type,
+            NodeType::Sun | NodeType::BlackHole | NodeType::WhiteHole
+        )
     }
 
     /// Effective mass for gravity calculations.
@@ -254,6 +260,8 @@ impl PhysicsEngine {
     fn effective_mass(node: &VoidNode) -> f32 {
         match node.node_type {
             NodeType::Sun => KINEMATIC_MASS,
+            NodeType::BlackHole => KINEMATIC_MASS,
+            NodeType::WhiteHole => KINEMATIC_MASS * 0.5,
             NodeType::GasGiant => node.mass * 3.0,
             NodeType::RockyPlanet => node.mass * 1.5,
             NodeType::Asteroid => node.mass * 0.3,
@@ -278,6 +286,71 @@ impl PhysicsEngine {
             if vel_corrupted {
                 node.velocity = [0.0, 0.0, 0.0];
             }
+        }
+    }
+
+    /// Singularity collision detection.
+    ///
+    /// - Normal node overlaps a **BlackHole** → `tombstone = true`.
+    /// - Normal node overlaps a **WhiteHole** → console log + massive repulsion kick.
+    fn singularity_collisions(nodes: &mut [VoidNode]) {
+        let n = nodes.len();
+
+        // Collect deferred mutations to avoid aliased &mut borrows.
+        let mut tombstone_indices: Vec<usize> = Vec::new();
+        let mut kick_list: Vec<(usize, f32, f32, f32)> = Vec::new();
+
+        for i in 0..n {
+            if nodes[i].tombstone {
+                continue;
+            }
+            // Only normal nodes can be affected
+            if matches!(
+                nodes[i].node_type,
+                NodeType::BlackHole | NodeType::WhiteHole
+            ) {
+                continue;
+            }
+
+            for j in 0..n {
+                if i == j || nodes[j].tombstone {
+                    continue;
+                }
+
+                let dx = nodes[j].position[0] - nodes[i].position[0];
+                let dy = nodes[j].position[1] - nodes[i].position[1];
+                let dz = nodes[j].position[2] - nodes[i].position[2];
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.1);
+
+                let ri = nodes[i].mass.sqrt() * 10.0;
+                let rj = nodes[j].mass.sqrt() * 10.0;
+                let radius_sum = ri + rj;
+
+                if dist < radius_sum {
+                    match nodes[j].node_type {
+                        NodeType::BlackHole => {
+                            tombstone_indices.push(i);
+                        }
+                        NodeType::WhiteHole => {
+                            println!("EXPORTING NODE [{}]", nodes[i].id);
+                            let nx = dx / dist;
+                            let ny = dy / dist;
+                            let nz = dz / dist;
+                            kick_list.push((i, -nx * 500.0, -ny * 500.0, -nz * 500.0));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        for idx in tombstone_indices {
+            nodes[idx].tombstone = true;
+        }
+        for (idx, vx, vy, vz) in kick_list {
+            nodes[idx].velocity[0] += vx;
+            nodes[idx].velocity[1] += vy;
+            nodes[idx].velocity[2] += vz;
         }
     }
 }
