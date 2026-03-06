@@ -32,11 +32,12 @@ const SOFT_REPULSION_DIST: f32 = 60.0;
 /// Minimum distance² to prevent division by zero.
 const MIN_DIST_SQ: f32 = 400.0;
 
-/// Velocity damping factor per tick.  Exactly 0.92 — non-negotiable.
+/// Velocity damping factor per tick (legacy — now using speed-threshold logic).
+#[allow(dead_code)]
 const DAMPING: f32 = 0.92;
 
-/// Throw damping — applied at high velocities so thrown nodes
-/// retain momentum longer before settling to normal DAMPING.
+/// Throw damping (legacy — now using speed-threshold logic).
+#[allow(dead_code)]
 const THROW_DAMPING: f32 = 0.98;
 
 /// Maximum velocity magnitude (speed limit).
@@ -133,6 +134,25 @@ impl PhysicsEngine {
                     accel[j][2] -= gz * inv_mj;
                 }
 
+                // ── Surface-to-Surface Repulsion (rigid separation) ──
+                let min_dist = 30.0 + 10.0; // base node diameter + padding
+                if dist < min_dist {
+                    let overlap = min_dist - dist;
+                    let sep_strength = 50.0 * overlap;
+                    if !i_kinematic {
+                        let inv_mi = 1.0 / mi.max(1.0);
+                        accel[i][0] -= sep_strength * nx * inv_mi;
+                        accel[i][1] -= sep_strength * ny * inv_mi;
+                        accel[i][2] -= sep_strength * nz * inv_mi;
+                    }
+                    if !j_kinematic {
+                        let inv_mj = 1.0 / mj.max(1.0);
+                        accel[j][0] += sep_strength * nx * inv_mj;
+                        accel[j][1] += sep_strength * ny * inv_mj;
+                        accel[j][2] += sep_strength * nz * inv_mj;
+                    }
+                }
+
                 // ── Soft Repulsion (short-range, prevents overlap) ──
                 if dist < SOFT_REPULSION_DIST {
                     let safe_dist = dist.max(5.0);
@@ -188,13 +208,11 @@ impl PhysicsEngine {
             node.velocity[1] += accel[i][1] * dt;
             node.velocity[2] += accel[i][2] * dt;
 
-            // Velocity-dependent damping: thrown nodes retain momentum longer
-            // (0.98 at high speed, settling to 0.92 when slow).
+            // Aero-friction damping: glides when thrown fast, stops firmly when slow.
             let speed_sq =
                 node.velocity[0].powi(2) + node.velocity[1].powi(2) + node.velocity[2].powi(2);
             let speed = speed_sq.sqrt();
-            let speed_factor = (speed / MAX_SPEED).clamp(0.0, 1.0);
-            let damp = DAMPING + (THROW_DAMPING - DAMPING) * speed_factor;
+            let damp = if speed > 50.0 { 0.99 } else { 0.92 };
             node.velocity[0] *= damp;
             node.velocity[1] *= damp;
             node.velocity[2] *= damp;

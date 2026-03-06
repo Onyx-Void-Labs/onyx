@@ -35,10 +35,12 @@ const MIN_DIST_SQ: f32 = 400.0;
 
 /// Velocity damping factor per frame (0.92 = "space friction").
 /// Lower = more viscous, more majestic orbital glide.
+#[allow(dead_code)]
 const DAMPING: f32 = 0.92;
 
 /// Throw damping — applied at high velocities so thrown nodes
 /// retain momentum longer before settling to normal DAMPING.
+#[allow(dead_code)]
 const THROW_DAMPING: f32 = 0.98;
 
 /// Hover arrest damping — applied when the user's cursor is over a node.
@@ -57,7 +59,7 @@ const OORT_DRIFT_FORCE: f32 = 8.0;
 
 /// Maximum velocity magnitude (speed limit).
 /// Raised to accommodate throw inertia; damping brings it down.
-const MAX_SPEED: f32 = 40.0;
+const MAX_SPEED: f32 = 200.0;
 
 /// Visual radius scale: radius = RADIUS_BASE + sqrt(mass) * RADIUS_SCALE.
 const RADIUS_BASE: f32 = 12.0;
@@ -124,6 +126,27 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
             if !j_dragged {
                 accel[j][0] -= gx / mj.max(1.0);
                 accel[j][1] -= gy / mj.max(1.0);
+            }
+
+            // ── Surface-to-Surface Repulsion (rigid separation) ──
+            // Uses actual visual radii + padding to prevent overlap.
+            let ri = RADIUS_BASE + nodes[i].spatial.mass.sqrt() * RADIUS_SCALE;
+            let rj = RADIUS_BASE + nodes[j].spatial.mass.sqrt() * RADIUS_SCALE;
+            let min_dist = ri + rj + 10.0; // 10px padding
+            if dist < min_dist {
+                let overlap = min_dist - dist;
+                // Rigid separation: force proportional to overlap
+                let sep_strength = 50.0 * overlap;
+                let nx = dx / dist;
+                let ny = dy / dist;
+                if !i_dragged {
+                    accel[i][0] -= sep_strength * nx / mi.max(1.0);
+                    accel[i][1] -= sep_strength * ny / mi.max(1.0);
+                }
+                if !j_dragged {
+                    accel[j][0] += sep_strength * nx / mj.max(1.0);
+                    accel[j][1] += sep_strength * ny / mj.max(1.0);
+                }
             }
 
             // ── Soft inverse-square repulsion (smooth push when close) ──
@@ -201,9 +224,12 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32) {
         let speed = speed_sq.sqrt();
         let damp = if node.spatial.hovered {
             HOVER_DAMPING
+        } else if speed > 50.0 {
+            // Aero-friction: glides when thrown fast
+            0.99
         } else {
-            let speed_factor = (speed / MAX_SPEED).clamp(0.0, 1.0);
-            DAMPING + (THROW_DAMPING - DAMPING) * speed_factor
+            // Stops firmly when slow
+            0.92
         };
         node.spatial.velocity[0] *= damp;
         node.spatial.velocity[1] *= damp;

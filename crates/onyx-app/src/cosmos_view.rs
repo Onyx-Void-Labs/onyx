@@ -115,20 +115,8 @@ script_mod! {
             var type_mod_b = 0.0
             var type_alpha_mod = 0.0
 
-            // Asteroid (0): darker, sharper, slightly translucent
-            if self.node_type_id < 0.5 {
-                let body2 = 1.0 - smoothstep(0.75, 0.78, dist)
-                let body_val = body2 * 0.75
-                let alpha2 = clamp(body_val + glow * 0.3, 0.0, 0.9)
-                if alpha2 < 0.005 { return vec4(0.0, 0.0, 0.0, 0.0) }
-                let r = self.node_color.r * 0.55
-                let g = self.node_color.g * 0.55
-                let b = self.node_color.b * 0.60
-                return Pal.premul(vec4(r, g, b, alpha2))
-            }
-
-            // RockyPlanet (1): fresnel atmosphere with rim-lighting
-            if self.node_type_id > 0.5 && self.node_type_id < 1.5 {
+            // RockyPlanet (0..1): fresnel atmosphere with rim-lighting
+            if self.node_type_id < 1.5 {
                 type_mod_r = rim_strength * 0.6
                 type_mod_g = rim_strength * 0.3
                 type_mod_b = rim_strength * 0.9
@@ -152,9 +140,9 @@ script_mod! {
                 type_alpha_mod = glow * 1.2 + shell_ring * 0.5
             }
 
-            // ── Selection ring ──
-            let ring_dist = abs(dist - 0.92)
-            let ring = smoothstep(0.05, 0.015, ring_dist) * self.selected
+            // ── Selection ring (uses planet body radius, not layout size) ──
+            let ring_dist = abs(dist - 0.88)
+            let ring = smoothstep(0.04, 0.01, ring_dist) * self.selected
 
             let alpha = clamp(body + glow + ring + type_alpha_mod, 0.0, 1.0)
             if alpha < 0.005 {
@@ -208,11 +196,11 @@ fn node_type_color(nt: onyx_core::void_node::NodeType) -> Vec4 {
     use onyx_core::void_node::NodeType;
     match nt {
         NodeType::Asteroid => Vec4 {
-            x: 0.55,
-            y: 0.65,
-            z: 0.75,
+            x: 0.48,
+            y: 0.41,
+            z: 0.93,
             w: 1.0,
-        }, // Blue-grey
+        }, // Purple (same visual treatment as RockyPlanet)
         NodeType::RockyPlanet => Vec4 {
             x: 0.48,
             y: 0.41,
@@ -399,6 +387,8 @@ impl Widget for CosmosView {
                         },
                     );
                 }
+                // Unconditional next-frame request prevents ghosting at 144Hz
+                cx.new_next_frame();
                 cx.redraw_all();
             }
             Hit::FingerUp(_) => {
@@ -418,6 +408,7 @@ impl Widget for CosmosView {
                 }
             }
             Hit::FingerScroll(fs) => {
+                // Consume scroll to suppress default view panning
                 // Zoom towards mouse position
                 let zoom_factor = if fs.scroll.y > 0.0 { 1.1 } else { 0.9 };
                 let old_zoom = self.cam_zoom;
@@ -447,8 +438,10 @@ impl Widget for CosmosView {
                 if hover_idx != self.hovered_node {
                     if let Some(idx) = hover_idx {
                         cx.widget_action(uid, CosmosViewAction::NodeHovered(idx));
+                        cx.set_cursor(MouseCursor::Hand);
                     } else {
                         cx.widget_action(uid, CosmosViewAction::NodeUnhovered);
+                        cx.set_cursor(MouseCursor::Default);
                     }
                     self.hovered_node = hover_idx;
                 }
@@ -458,6 +451,7 @@ impl Widget for CosmosView {
                     cx.widget_action(uid, CosmosViewAction::NodeUnhovered);
                     self.hovered_node = None;
                 }
+                cx.set_cursor(MouseCursor::Default);
             }
             _ => {}
         }

@@ -78,6 +78,22 @@ script_mod! {
                             width: Fill
                             height: Fill
                         }
+                        // Inline editor overlay — fades in on "Dive" (double-click)
+                        dive_editor := View {
+                            width: Fill
+                            height: Fill
+                            visible: false
+                            align: {x: 0.5, y: 0.5}
+                            padding: {top: 80.0, right: 80.0, bottom: 80.0, left: 80.0}
+                            dive_text_input := TextInput {
+                                width: Fill
+                                height: Fill
+                                is_read_only: true
+                                draw_text.color: vec4(0.8, 0.8, 0.9, 0.0)
+                                draw_bg.color: vec4(0.05, 0.05, 0.08, 0.0)
+                                text_style: {font_size: 14.0}
+                            }
+                        }
                         editor_area := View {
                             width: Fill
                             height: Fill
@@ -899,6 +915,10 @@ impl MatchEvent for App {
                     if self.cosmos_active {
                         // Returning to cosmos — clear active node binding
                         self.active_node_id = None;
+                        // Hide the dive editor overlay
+                        self.ui.view(cx, ids!(dive_editor)).set_visible(cx, false);
+                        let dive_input = self.ui.text_input(cx, ids!(dive_text_input));
+                        dive_input.set_is_read_only(cx, true);
                     } else {
                         self.sync_display(cx);
                     }
@@ -949,6 +969,17 @@ impl MatchEvent for App {
                             .button(cx, ids!(hud_view_toggle))
                             .set_text(cx, "⟁ Cosmos");
 
+                        // ── Show dive editor overlay with fade-in ──
+                        self.ui.view(cx, ids!(dive_editor)).set_visible(cx, true);
+                        // Make text visible (opacity → 1.0)
+                        let dive_input = self.ui.text_input(cx, ids!(dive_text_input));
+                        dive_input.set_text(cx, "");
+                        // Enable editing
+                        dive_input.set_is_read_only(cx, false);
+                        // Request focus so the user can start typing
+                        let area = dive_input.area();
+                        cx.set_key_focus(area);
+
                         // ── The Anvil: Load this VoidNode's Loro text ──
                         let node_id = self.cosmos.nodes[idx].id;
                         self.active_node_id = Some(node_id);
@@ -956,6 +987,9 @@ impl MatchEvent for App {
 
                         // Read existing text from the CRDT (or empty for new nodes)
                         let text = self.crdt.get_text_for(&key).unwrap_or_default();
+
+                        // Pre-fill the dive editor
+                        dive_input.set_text(cx, &text);
 
                         // Sync the editor buffer
                         let old_len = self.buffer.len_chars();

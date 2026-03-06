@@ -100,7 +100,7 @@ impl Cosmos {
     /// Get the content label for a node (for rendering text previews).
     pub fn node_label(&self, idx: usize) -> &'static str {
         match self.nodes.get(idx).map(|n| n.node_type) {
-            Some(NodeType::Asteroid) => "☄",
+            Some(NodeType::Asteroid) => "●",
             Some(NodeType::RockyPlanet) => "●",
             Some(NodeType::GasGiant) => "◎",
             Some(NodeType::Sun) => "☀",
@@ -130,7 +130,7 @@ impl Cosmos {
     /// Release a dragged node with throw velocity (inertia).
     /// Scales per-frame drag delta into physics velocity.
     pub fn release_throw(&mut self, vx: f32, vy: f32) {
-        const THROW_MULTIPLIER: f32 = 60.0;
+        const THROW_MULTIPLIER: f32 = 300.0;
         if let Some(idx) = self.dragged {
             if let Some(node) = self.nodes.get_mut(idx) {
                 node.spatial.velocity[0] = vx * THROW_MULTIPLIER;
