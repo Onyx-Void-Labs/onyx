@@ -44,6 +44,11 @@ use onyx_core::stellar_physics::PhysicsEngine;
 pub struct PhysicsBridge {
     pub engine: PhysicsEngine,
     pub nodes: Vec<VoidNode>,
+    pub view_center_x: f64,
+    pub view_center_y: f64,
+    pub view_zoom: f64,
+    pub screen_w: f32,
+    pub screen_h: f32,
     timer: Timer,
 }
 
@@ -52,6 +57,11 @@ impl PhysicsBridge {
         Self {
             engine: PhysicsEngine::new(),
             nodes: Vec::new(),
+            view_center_x: 0.0,
+            view_center_y: 0.0,
+            view_zoom: 1.0,
+            screen_w: 1920.0,
+            screen_h: 1080.0,
             timer: Timer::default(),
         }
     }
@@ -68,8 +78,15 @@ impl PhysicsBridge {
     pub fn handle_event(&mut self, cx: &mut Cx, event: &Event) -> bool {
         if self.timer.is_event(event).is_some() {
             let dt: f32 = 1.0 / 144.0;
-            self.engine
-                .tick(&mut self.nodes, dt, 1280.0, 800.0, 0.0, 0.0, 1.0);
+            self.engine.tick(
+                &mut self.nodes,
+                dt,
+                self.screen_w,
+                self.screen_h,
+                self.view_center_x,
+                self.view_center_y,
+                self.view_zoom,
+            );
 
             // Drive the next frame — Makepad redraws all widgets,
             // CosmosView picks up updated positions from draw_data.

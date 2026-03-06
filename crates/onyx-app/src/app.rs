@@ -338,8 +338,16 @@ impl App {
         }
 
         let dt = 1.0 / 60.0_f32; // fixed timestep at 60 fps
-        self.cosmos
-            .tick(dt, self.camera.x, self.camera.y, self.camera.z);
+        let screen_w = 1920.0_f32;
+        let screen_h = 1080.0_f32;
+        self.cosmos.tick(
+            dt,
+            screen_w,
+            screen_h,
+            self.camera.x,
+            self.camera.y,
+            self.camera.z,
+        );
 
         // Build draw data from current cosmos state
         let draw_data: Vec<NodeDrawData> = self

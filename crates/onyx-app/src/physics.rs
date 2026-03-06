@@ -78,11 +78,20 @@ pub fn node_radius(node: &VoidNode) -> f32 {
 
 /// Run one physics tick.  `dt` is the elapsed time in seconds
 /// since the last tick (typically ~0.016 for 60 fps).
+/// `screen_w` / `screen_h` are the viewport pixel dimensions.
 /// `view_center_x` / `view_center_y` are the camera center in world space.
 /// `zoom` is the camera zoom level (1.0 = default).
 ///
 /// Mutates all node positions and velocities in-place.
-pub fn tick(nodes: &mut [VoidNode], dt: f32, view_center_x: f32, view_center_y: f32, zoom: f32) {
+pub fn tick(
+    nodes: &mut [VoidNode],
+    dt: f32,
+    screen_w: f32,
+    screen_h: f32,
+    view_center_x: f32,
+    view_center_y: f32,
+    zoom: f32,
+) {
     let dt = dt.min(0.05); // clamp to prevent physics explosion on lag spikes
     let n = nodes.len();
     if n == 0 {
@@ -91,8 +100,8 @@ pub fn tick(nodes: &mut [VoidNode], dt: f32, view_center_x: f32, view_center_y: 
 
     // ── 0. Inverse Camera Projection — Tether Singularities ──────
     let zoom_safe = zoom.max(0.01);
-    let world_offset_x = 640.0 / zoom_safe;
-    let world_offset_y = 400.0 / zoom_safe;
+    let world_offset_x = (screen_w / 2.0) / zoom_safe;
+    let world_offset_y = (screen_h / 2.0) / zoom_safe;
     let margin = 150.0 / zoom_safe;
     for node in nodes.iter_mut() {
         match node.node_type {

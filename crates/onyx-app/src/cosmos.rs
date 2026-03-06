@@ -72,7 +72,15 @@ impl Cosmos {
     }
 
     /// Run one physics tick.
-    pub fn tick(&mut self, dt: f32, view_center_x: f32, view_center_y: f32, zoom: f32) {
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        screen_w: f32,
+        screen_h: f32,
+        view_center_x: f32,
+        view_center_y: f32,
+        zoom: f32,
+    ) {
         self.time += dt;
 
         // Sync the is_dragged flag on the actual node
@@ -81,7 +89,15 @@ impl Cosmos {
             node.spatial.is_dragged = self.dragged == Some(i);
         }
 
-        physics::tick(&mut self.nodes, dt, view_center_x, view_center_y, zoom);
+        physics::tick(
+            &mut self.nodes,
+            dt,
+            screen_w,
+            screen_h,
+            view_center_x,
+            view_center_y,
+            zoom,
+        );
     }
 
     /// Move the dragged node to the given world-space coordinates.
