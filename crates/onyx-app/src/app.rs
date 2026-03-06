@@ -21,12 +21,13 @@ live_design! {
 
         draw_bg: {
             instance hover: 0.0
-            instance pressed: 0.0
+            instance down: 0.0
             instance radius: 6.0
             fn pixel(self) -> vec4 {
                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                 sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius);
-                let bg_color = mix(#18181b, #27272a, self.hover);
+                // Mix default -> hover -> down
+                let bg_color = mix(#18181b, mix(#27272a, #3f3f46, self.down), self.hover);
                 sdf.fill_keep(bg_color);
                 return sdf.result;
             }
@@ -38,15 +39,15 @@ live_design! {
                 off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {hover: 0.0}} }
                 on = { from: {all: Snap} apply: {draw_bg: {hover: 1.0}} }
             }
-            pressed = {
+            down = {
                 default: off
-                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {pressed: 0.0}} }
-                on = { from: {all: Snap} apply: {draw_bg: {pressed: 1.0}} }
+                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {down: 0.0}} }
+                on = { from: {all: Snap} apply: {draw_bg: {down: 1.0}} }
             }
         }
 
         label = <Label> {
-            draw_text: { color: #a1a1aa, text_style: {font_size: 11.0, font: {path: dep("crate://makepad-widgets/resources/GoNotoKurrent-Regular.ttf")}} }
+            draw_text: { color: #a1a1aa, text_style: {font_size: 11.0} }
         }
     }
 
@@ -65,11 +66,11 @@ live_design! {
 
             fn pixel(self) -> vec4 {
                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                // Offset by 1.0px to prevent anti-alias clipping on the outer stroke
                 sdf.box(
-                    self.border_width,
-                    self.border_width,
-                    self.rect_size.x - self.border_width * 2.0,
-                    self.rect_size.y - self.border_width * 2.0,
+                    1.0, 1.0,
+                    self.rect_size.x - 2.0,
+                    self.rect_size.y - 2.0,
                     self.radius
                 );
                 sdf.fill_keep(self.color);
