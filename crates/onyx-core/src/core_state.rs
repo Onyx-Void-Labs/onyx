@@ -145,3 +145,127 @@ impl VoidNode {
         };
     }
 }
+
+// ── Lane & Slot System: LoroTree Document Topology ──────────────
+//
+// The document is NOT a list. It is a TREE.
+//
+// Topology:
+//   Document (LoroTree root)
+//   ├── Row (horizontal lane)
+//   │   ├── Slot (content container — text, widget, or node ref)
+//   │   └── Slot
+//   ├── Row
+//   │   └── Slot
+//   └── Row (collapsed: true — Ghost Box, skipped by renderer)
+//
+// Tree Node Metadata (LoroMap):
+//   kind: "row" | "slot"
+//   width_ratio: f64 (Slot only, 0.0..=1.0)
+//   widget_type: String (Slot only)
+//   collapsed: bool
+//   text_key: String (Slot only — LoroText container name)
+//
+// Empty slots/rows are NEVER structurally deleted.
+// They are marked collapsed: true (Ghost Box).
+// Garbage collection happens only on explicit document save.
+// ────────────────────────────────────────────────────────────────
+
+/// Classification of content within a Slot.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum SlotKind {
+    /// Editable rich text backed by a LoroText container.
+    Text,
+    /// Embedded reference to another VoidNode (preview card).
+    NodeReference { node_id: String },
+    /// Embedded widget (calendar, email preview, etc.).
+    Widget { widget_type: String },
+}
+
+impl Default for SlotKind {
+    fn default() -> Self {
+        SlotKind::Text
+    }
+}
+
+/// Structural classification of a LoroTree node in the document.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum TreeNodeKind {
+    /// A horizontal row containing one or more Slots.
+    Row,
+    /// A content container within a Row.
+    Slot,
+}
+
+impl Default for TreeNodeKind {
+    fn default() -> Self {
+        TreeNodeKind::Slot
+    }
+}
+
+/// Read-only snapshot of a Slot in the document tree.
+/// Used for rendering — NOT the CRDT source of truth.
+#[derive(Debug, Clone)]
+pub struct SlotSnapshot {
+    /// String representation of the LoroTree node ID.
+    pub id: String,
+    /// LoroText container key for this slot's content.
+    pub text_key: String,
+    /// Width ratio within the parent row (0.0..=1.0).
+    pub width_ratio: f32,
+    /// Content type.
+    pub slot_kind: SlotKind,
+    /// Ghost Box flag — true = collapsed, skip in renderer.
+    pub collapsed: bool,
+    /// Current text content snapshot (from LoroText).
+    pub text_content: String,
+}
+
+impl Default for SlotSnapshot {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            text_key: String::new(),
+            width_ratio: 1.0,
+            slot_kind: SlotKind::Text,
+            collapsed: false,
+            text_content: String::new(),
+        }
+    }
+}
+
+/// Read-only snapshot of a Row in the document tree.
+#[derive(Debug, Clone)]
+pub struct RowSnapshot {
+    /// String representation of the LoroTree node ID.
+    pub id: String,
+    /// Ghost Box flag.
+    pub collapsed: bool,
+    /// Ordered slots within this row.
+    pub slots: Vec<SlotSnapshot>,
+}
+
+/// Complete read-only snapshot of a Lane Document.
+/// Pushed from CrdtDoc to the LaneEditor each frame.
+#[derive(Debug, Clone, Default)]
+pub struct LaneDocSnapshot {
+    /// All rows (including collapsed Ghost Boxes).
+    pub rows: Vec<RowSnapshot>,
+}

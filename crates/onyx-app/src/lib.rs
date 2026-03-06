@@ -27,11 +27,13 @@ mod aero_hud;
 mod app;
 mod cosmos;
 mod cosmos_view;
+mod editor;
 mod makepad_integration;
 mod media_engine;
 mod net_bridge;
 mod physics;
 mod remote_cursor;
+mod ui;
 
 /// Global profile name parsed from `--profile <NAME>` CLI arg.
 /// On Android this stays uninitialized and defaults to the

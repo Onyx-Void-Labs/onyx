@@ -23,11 +23,13 @@ use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
 
-use crate::aero_hud::AeroHudAction;
 use crate::cosmos::Cosmos;
 use crate::cosmos_view::{CosmosViewAction, CosmosViewWidgetRefExt, NodeDrawData};
+use crate::editor::LaneEditorAction;
 use crate::media_engine::{MediaEngine, MediaEvent};
 use crate::net_bridge::{NetBridge, NetEvent};
+use crate::ui::glass_hud::GlassHudAction;
+use crate::ui::path_bar::BreadcrumbSegment;
 
 // ── Storage path helper ─────────────────────────────────────────
 
@@ -114,6 +116,9 @@ script_mod! {
     use mod.widgets.RemoteCursorWidget
     use mod.widgets.AeroHud
     use mod.widgets.CosmosView
+    use mod.widgets.LaneEditor
+    use mod.widgets.PathBar
+    use mod.widgets.GlassHud
 
     startup() do #(App::script_component(vm)) {
         ui: Root {
@@ -126,13 +131,27 @@ script_mod! {
                         height: Fill
                         layout: { flow: Overlay }
 
-                        // ── Full-screen Cosmos Canvas ──
+                        // ── Full-screen Cosmos Canvas (background: #09090b) ──
                         cosmos_view := CosmosView {
                             width: Fill
                             height: Fill
                         }
 
-                        // ── Dive Editor Overlay (Notion-Style Page) ──
+                        // ── Path Bar (top-left breadcrumb navigation) ──
+                        path_bar := PathBar {
+                            width: Fit
+                            height: Fit
+                            abs_pos: vec2(16.0, 16.0)
+                        }
+
+                        // ── Lane Editor (replaces dive_editor — Grid Document) ──
+                        lane_editor := LaneEditor {
+                            visible: false
+                            width: Fill
+                            height: Fill
+                        }
+
+                        // ── Dive Editor Overlay (legacy — Notion-Style Page) ──
                         dive_editor := View {
                             visible: false
                             width: Fill
@@ -206,30 +225,10 @@ script_mod! {
                             visible: false
                         }
 
-                        // ── Command Dock (bottom-center, pill shape) ──
-                        command_dock := View {
-                            width: Fit
-                            height: Fit
-                            abs_pos: vec2(460.0, 730.0)
-                            show_bg: true
-                            draw_bg.color: #x111111CC
-                            layout: { flow: Right, spacing: 12.0, padding: {left: 24. right: 24. top: 12. bottom: 12.} }
-
-                            dock_create := Button {
-                                text: "+ NEW NODE"
-                                draw_bg.color: #x0000
-                                draw_text.color: #x88C0D0
-                            }
-                            dock_search := Button {
-                                text: "🔍 SEARCH"
-                                draw_bg.color: #x0000
-                                draw_text.color: #xD8DEE9
-                            }
-                            dock_settings := Button {
-                                text: "⚙ SETTINGS"
-                                draw_bg.color: #x0000
-                                draw_text.color: #x4C566A
-                            }
+                        // ── Glass HUD (bottom-center pill + right side panel) ──
+                        glass_hud := GlassHud {
+                            width: Fill
+                            height: Fill
                         }
 
                         // ── Halo Menu (floating context menu near selected node) ──
@@ -259,7 +258,7 @@ script_mod! {
                             }
                         }
 
-                        // ── Search Modal Overlay (stub for Phase 3) ──
+                        // ── Search Modal Overlay ──
                         search_modal := View {
                             visible: false
                             width: Fill
@@ -403,6 +402,12 @@ impl App {
         crate::aero_hud::script_mod(vm);
         // Register the CosmosView spatial canvas widget.
         crate::cosmos_view::script_mod(vm);
+        // Register the Lane Editor (Row & Slot grid editor).
+        crate::editor::script_mod(vm);
+        // Register the Path Bar (fractal breadcrumb navigation).
+        crate::ui::path_bar::script_mod(vm);
+        // Register the Glass HUD (side-docked tools panel).
+        crate::ui::glass_hud::script_mod(vm);
         let mut app = App::from_script_mod(vm, self::script_mod);
         app.panel_open = true;
         app.last_display_hash = 0;
@@ -544,8 +549,8 @@ impl App {
         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
         cv.set_visible(cx, true);
         self.ui.view(cx, ids!(editor_area)).set_visible(cx, false);
-        // Show dock again in cosmos view
-        self.ui.view(cx, ids!(command_dock)).set_visible(cx, true);
+        // Show glass HUD dock again in cosmos view
+        self.ui.view(cx, ids!(glass_hud)).set_visible(cx, true);
         cx.redraw_all();
     }
 
@@ -558,15 +563,19 @@ impl App {
             .set_text(cx, &format!("{word_count} words"));
     }
 
-    /// Map HUD button clicks to a typed AeroHudAction.
-    fn poll_hud_action(&self, cx: &Cx, actions: &Actions) -> AeroHudAction {
-        if self.ui.button(cx, ids!(dock_create)).clicked(actions) {
-            AeroHudAction::SpawnNode
-        } else if self.ui.button(cx, ids!(dock_search)).clicked(actions) {
-            AeroHudAction::ShowCosmos // Reuse for search modal toggle
-        } else {
-            AeroHudAction::None
+    /// Map GlassHud widget actions to commands.
+    fn poll_glass_hud_action(&self, _cx: &Cx, actions: &Actions) -> GlassHudAction {
+        for action in actions {
+            if let Some(wa) = action.downcast_ref::<WidgetAction>() {
+                if let Some(a) = wa.action.downcast_ref::<GlassHudAction>() {
+                    match a {
+                        GlassHudAction::None => {}
+                        _ => return a.clone(),
+                    }
+                }
+            }
         }
+        GlassHudAction::None
     }
 
     /// Push the buffer text into the editor label + update status bar.
@@ -1114,36 +1123,26 @@ impl MatchEvent for App {
             }
         }
 
-        // ── Aero-HUD controls (dispatched via AeroHudAction) ──────
+        // ── Glass HUD controls ──────────────────────────────────────
         {
-            match self.poll_hud_action(cx, actions) {
-                AeroHudAction::SpawnNode => {
+            match self.poll_glass_hud_action(cx, actions) {
+                GlassHudAction::SpawnNode => {
                     let idx = self.cosmos.spawn_node();
                     tracing::info!("spawned node {idx} — {} nodes total", self.cosmos.len());
                     cx.redraw_all();
                 }
-                AeroHudAction::ShowCosmos => {
-                    // Toggle search modal
-                    self.search_modal_open = !self.search_modal_open;
-                    self.ui
-                        .view(cx, ids!(search_modal))
-                        .set_visible(cx, self.search_modal_open);
-                    if self.search_modal_open {
-                        let area = self.ui.text_input(cx, ids!(search_input)).area();
-                        cx.set_key_focus(area);
-                    }
+                GlassHudAction::ToolActivated(tool) => {
+                    tracing::info!("Glass HUD tool activated: {:?}", tool);
                     cx.redraw_all();
                 }
-                AeroHudAction::ResetCosmos => {
-                    // Removed — PURGE button destroyed
+                GlassHudAction::PanelClosed => {
+                    cx.redraw_all();
                 }
-                AeroHudAction::None => {}
+                GlassHudAction::BridgeDrop { item_id, drop_x, drop_y } => {
+                    tracing::info!("Bridge drop: {} at ({}, {})", item_id, drop_x, drop_y);
+                }
+                GlassHudAction::None => {}
             }
-        }
-
-        // ── Settings button (stub) ──
-        if self.ui.button(cx, ids!(dock_settings)).clicked(actions) {
-            tracing::info!("Settings button clicked (Phase 3 stub)");
         }
 
         // ── Halo menu button handlers ──
@@ -1202,8 +1201,8 @@ impl MatchEvent for App {
                         let cv = self.ui.cosmos_view(cx, ids!(cosmos_view));
                         cv.set_visible(cx, false);
 
-                        // Hide the dock in editor mode
-                        self.ui.view(cx, ids!(command_dock)).set_visible(cx, false);
+                        // Hide the glass HUD dock in editor mode
+                        self.ui.view(cx, ids!(glass_hud)).set_visible(cx, false);
                         // Hide halo when diving
                         self.ui.view(cx, ids!(halo_menu)).set_visible(cx, false);
 

@@ -12,10 +12,12 @@ mod aero_hud;
 mod app;
 mod cosmos;
 mod cosmos_view;
+mod editor;
 mod media_engine;
 mod net_bridge;
 mod physics;
 mod remote_cursor;
+mod ui;
 
 /// Global profile name parsed from `--profile <NAME>` CLI arg.
 /// Each profile gets its own identity key so multiple instances
