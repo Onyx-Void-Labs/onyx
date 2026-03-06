@@ -55,10 +55,7 @@ impl SemanticEngine {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.node_id == node_id) {
             entry.embedding = embedding;
         } else {
-            self.entries.push(SemanticEntry {
-                node_id,
-                embedding,
-            });
+            self.entries.push(SemanticEntry { node_id, embedding });
         }
     }
 

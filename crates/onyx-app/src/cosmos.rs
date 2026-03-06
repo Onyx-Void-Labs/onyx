@@ -118,11 +118,11 @@ impl Cosmos {
         match self.nodes.get(idx).map(|n| n.node_type) {
             Some(NodeType::Asteroid) => "●",
             Some(NodeType::RockyPlanet) => "●",
-            Some(NodeType::GasGiant) => "◎",
-            Some(NodeType::Sun) => "☀",
-            Some(NodeType::BlackHole) => "⊗",
-            Some(NodeType::WhiteHole) => "⊙",
-            None => "?",
+            Some(NodeType::GasGiant) => "●",
+            Some(NodeType::Sun) => "●",
+            Some(NodeType::BlackHole) => "",
+            Some(NodeType::WhiteHole) => "",
+            None => "",
         }
     }
 

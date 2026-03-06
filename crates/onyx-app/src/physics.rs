@@ -230,7 +230,8 @@ pub fn tick(
         }
 
         for i in 0..n {
-            let neighbours = grid.query_neighbours(nodes[i].spatial.pos[0], nodes[i].spatial.pos[1]);
+            let neighbours =
+                grid.query_neighbours(nodes[i].spatial.pos[0], nodes[i].spatial.pos[1]);
             for &j in &neighbours {
                 if j <= i {
                     continue; // avoid double-counting and self-interaction
@@ -376,12 +377,7 @@ pub fn tick(
 }
 
 /// Accumulate gravitational + repulsion forces for a single pair (i, j).
-fn accumulate_pair_forces(
-    nodes: &[VoidNode],
-    accel: &mut [[f32; 2]],
-    i: usize,
-    j: usize,
-) {
+fn accumulate_pair_forces(nodes: &[VoidNode], accel: &mut [[f32; 2]], i: usize, j: usize) {
     // ── Kinematic lock: skip force accumulation for dragged nodes ──
     let i_dragged = nodes[i].spatial.is_dragged;
     let j_dragged = nodes[j].spatial.is_dragged;
@@ -469,11 +465,7 @@ fn accumulate_pair_forces(
 }
 
 /// Accumulate single-node forces: Oort drift + anti-clump tangential.
-fn accumulate_single_forces(
-    nodes: &[VoidNode],
-    accel: &mut [[f32; 2]],
-    i: usize,
-) {
+fn accumulate_single_forces(nodes: &[VoidNode], accel: &mut [[f32; 2]], i: usize) {
     // ── Oort Cloud drift (cold nodes pushed outward) ──
     if nodes[i].spatial.heat < OORT_HEAT_THRESHOLD {
         let px = nodes[i].spatial.pos[0];

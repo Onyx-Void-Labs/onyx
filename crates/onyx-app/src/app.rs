@@ -124,7 +124,7 @@ script_mod! {
                     View {
                         width: Fill
                         height: Fill
-                        flow: Overlay
+                        layout: { flow: Overlay }
 
                         // ── Full-screen Cosmos Canvas ──
                         cosmos_view := CosmosView {
@@ -132,70 +132,69 @@ script_mod! {
                             height: Fill
                         }
 
-                        // ── Dive Editor Overlay (Zen Mode — Pure Void) ──
+                        // ── Dive Editor Overlay (Notion-Style Page) ──
                         dive_editor := View {
                             visible: false
                             width: Fill
                             height: Fill
                             show_bg: true
-                            draw_bg.color: #x000000
-                            flow: Down
-                            align: {x: 0.5, y: 0.15}
-                            padding: {top: 80. left: 0. right: 0. bottom: 80.}
-                            spacing: 24.0
+                            draw_bg.color: #x0A0A0C
+                            layout: { flow: Down, align: {x: 0.5, y: 0.0}, padding: {top: 60. left: 0. right: 0. bottom: 40.}, spacing: 16.0 }
 
-                            // Centered column container
+                            // ── Central Page ──
                             View {
-                                width: 850.0
+                                width: 800.0
                                 height: Fill
-                                flow: Down
-                                spacing: 16.0
+                                show_bg: true
+                                draw_bg.color: #x111113
+                                layout: { flow: Down, padding: {left: 48. right: 48. top: 48. bottom: 48.}, spacing: 24.0 }
 
-                                dive_title := Label {
-                                    text: "ORBIT ACTIVE"
-                                    draw_text.color: #x444444
-                                    draw_text.text_style.font_size: 9.0
-                                }
-
-                                dive_text_input := TextInput {
-                                    width: 850.0
-                                    height: Fill
-                                    is_read_only: true
-                                    empty_text: "Write to ignite the star..."
-                                    draw_text.color: #xD8DEE9
-                                    draw_text.text_style.font_size: 14.0
+                                dive_title_input := TextInput {
+                                    width: Fill
+                                    height: Fit
+                                    empty_text: "Untitled"
+                                    draw_text.color: #xECEFF4
+                                    draw_text.text_style.font_size: 28.0
                                     draw_bg.color: #x00000000
                                 }
 
-                                // ── Editor Status Bar (bottom of editor) ──
+                                dive_text_input := TextInput {
+                                    width: Fill
+                                    height: Fill
+                                    is_read_only: true
+                                    empty_text: "Start writing..."
+                                    draw_text.color: #xE0E0E0
+                                    draw_text.text_style.font_size: 15.0
+                                    draw_bg.color: #x00000000
+                                }
+
+                                // ── Editor Status Bar ──
                                 editor_status_bar := View {
                                     width: Fill
                                     height: Fit
-                                    flow: Right
                                     show_bg: true
-                                    draw_bg.color: #x111111AA
-                                    padding: {left: 16. right: 16. top: 8. bottom: 8.}
-                                    align: {y: 0.5}
+                                    draw_bg.color: #x0A0A0CEE
+                                    layout: { flow: Right, padding: {left: 16. right: 16. top: 8. bottom: 8.}, align: {y: 0.5} }
 
                                     editor_word_count := Label {
                                         width: Fill
-                                        text: "Word Count: 0"
-                                        draw_text.color: #x666666
+                                        text: "0 words"
+                                        draw_text.color: #x555555
                                         draw_text.text_style.font_size: 10.0
                                     }
 
                                     editor_autosave := Label {
                                         width: Fit
-                                        text: "Autosave: Active"
-                                        draw_text.color: #x4C566A
+                                        text: "Saved"
+                                        draw_text.color: #x444444
                                         draw_text.text_style.font_size: 10.0
                                     }
                                 }
                             }
 
                             eject_button := Button {
-                                text: "EJECT [ESC]"
-                                draw_text.color: #xBF616A
+                                text: "← Back"
+                                draw_text.color: #x666666
                                 draw_bg.color: #x00000000
                             }
                         }
@@ -212,14 +211,12 @@ script_mod! {
                             width: Fit
                             height: Fit
                             abs_pos: vec2(460.0, 730.0)
-                            flow: Right
-                            spacing: 12.0
                             show_bg: true
                             draw_bg.color: #x111111CC
-                            padding: {left: 24. right: 24. top: 12. bottom: 12.}
+                            layout: { flow: Right, spacing: 12.0, padding: {left: 24. right: 24. top: 12. bottom: 12.} }
 
                             dock_create := Button {
-                                text: "+ NEW"
+                                text: "+ NEW NODE"
                                 draw_bg.color: #x0000
                                 draw_text.color: #x88C0D0
                             }
@@ -235,157 +232,30 @@ script_mod! {
                             }
                         }
 
-                        // ── Inspector Panel (right side, slides in) ──
-                        inspector_panel := View {
+                        // ── Halo Menu (floating context menu near selected node) ──
+                        halo_menu := View {
                             visible: false
-                            width: 300.0
-                            height: Fill
+                            width: Fit
+                            height: Fit
+                            abs_pos: vec2(0.0, 0.0)
                             show_bg: true
-                            draw_bg.color: #x111111EE
-                            flow: Down
-                            spacing: 16.0
-                            padding: {left: 20. right: 20. top: 24. bottom: 24.}
-                            margin: {right: 0.0}
-                            align: {x: 1.0}
+                            draw_bg.color: #x1A1A1AEE
+                            layout: { flow: Right, spacing: 8.0, padding: {left: 12. right: 12. top: 8. bottom: 8.} }
 
-                            // ── Header ──
-                            inspector_id := Label {
-                                width: Fill
-                                text: "NODE"
+                            halo_palette := Button {
+                                text: "Palette"
+                                draw_bg.color: #x2A2A2A
                                 draw_text.color: #xECEFF4
-                                draw_text.text_style.font_size: 12.0
                             }
-                            inspector_created := Label {
-                                width: Fill
-                                text: "Created: Just now"
-                                draw_text.color: #x4C566A
-                                draw_text.text_style.font_size: 9.0
+                            halo_link := Button {
+                                text: "Link"
+                                draw_bg.color: #x2A2A2A
+                                draw_text.color: #xECEFF4
                             }
-
-                            // ── Divider ──
-                            View {
-                                width: Fill
-                                height: 1.0
-                                show_bg: true
-                                draw_bg.color: #x333333
-                            }
-
-                            // ── Color Swatches (Nord Palette) ──
-                            Label {
-                                text: "COLOR"
-                                draw_text.color: #x666666
-                                draw_text.text_style.font_size: 9.0
-                            }
-                            View {
-                                width: Fill
-                                height: Fit
-                                flow: Right
-                                spacing: 8.0
-
-                                swatch_0 := Button {
-                                    width: 28.0
-                                    height: 28.0
-                                    text: ""
-                                    draw_bg.color: #x88C0D0
-                                }
-                                swatch_1 := Button {
-                                    width: 28.0
-                                    height: 28.0
-                                    text: ""
-                                    draw_bg.color: #x81A1C1
-                                }
-                                swatch_2 := Button {
-                                    width: 28.0
-                                    height: 28.0
-                                    text: ""
-                                    draw_bg.color: #xA3BE8C
-                                }
-                                swatch_3 := Button {
-                                    width: 28.0
-                                    height: 28.0
-                                    text: ""
-                                    draw_bg.color: #xEBCB8B
-                                }
-                                swatch_4 := Button {
-                                    width: 28.0
-                                    height: 28.0
-                                    text: ""
-                                    draw_bg.color: #xBF616A
-                                }
-                            }
-
-                            // ── Divider ──
-                            View {
-                                width: Fill
-                                height: 1.0
-                                show_bg: true
-                                draw_bg.color: #x333333
-                            }
-
-                            // ── Mass Control (visual stub) ──
-                            Label {
-                                text: "MASS"
-                                draw_text.color: #x666666
-                                draw_text.text_style.font_size: 9.0
-                            }
-                            inspector_mass := Label {
-                                width: Fill
-                                text: "Mass: 1.0kg"
-                                draw_text.color: #xD8DEE9
-                                draw_text.text_style.font_size: 11.0
-                            }
-                            // Simulated slider track
-                            View {
-                                width: Fill
-                                height: 4.0
-                                show_bg: true
-                                draw_bg.color: #x333333
-                            }
-
-                            // ── Divider ──
-                            View {
-                                width: Fill
-                                height: 1.0
-                                show_bg: true
-                                draw_bg.color: #x333333
-                            }
-
-                            // ── Tags ──
-                            Label {
-                                text: "TAGS"
-                                draw_text.color: #x666666
-                                draw_text.text_style.font_size: 9.0
-                            }
-                            View {
-                                width: Fill
-                                height: Fit
-                                flow: Right
-                                spacing: 6.0
-
-                                View {
-                                    width: Fit
-                                    height: Fit
-                                    show_bg: true
-                                    draw_bg.color: #x2E3440
-                                    padding: {left: 8. right: 8. top: 4. bottom: 4.}
-                                    Label {
-                                        text: "#idea"
-                                        draw_text.color: #x88C0D0
-                                        draw_text.text_style.font_size: 9.0
-                                    }
-                                }
-                                View {
-                                    width: Fit
-                                    height: Fit
-                                    show_bg: true
-                                    draw_bg.color: #x2E3440
-                                    padding: {left: 8. right: 8. top: 4. bottom: 4.}
-                                    Label {
-                                        text: "#urgent"
-                                        draw_text.color: #xBF616A
-                                        draw_text.text_style.font_size: 9.0
-                                    }
-                                }
+                            halo_delete := Button {
+                                text: "Delete"
+                                draw_bg.color: #x2A2A2A
+                                draw_text.color: #xBF616A
                             }
                         }
 
@@ -394,19 +264,16 @@ script_mod! {
                             visible: false
                             width: Fill
                             height: Fill
-                            flow: Overlay
                             show_bg: true
                             draw_bg.color: #x000000AA
-                            align: {x: 0.5, y: 0.35}
+                            layout: { flow: Overlay, align: {x: 0.5, y: 0.35} }
 
                             View {
                                 width: 500.0
                                 height: Fit
-                                flow: Down
                                 show_bg: true
                                 draw_bg.color: #x1A1A1A
-                                padding: {left: 20. right: 20. top: 16. bottom: 16.}
-                                spacing: 12.0
+                                layout: { flow: Down, padding: {left: 20. right: 20. top: 16. bottom: 16.}, spacing: 12.0 }
 
                                 Label {
                                     text: "SEARCH THE VOID"
@@ -639,14 +506,29 @@ impl App {
             storage.update_state(&self.cosmos.nodes);
         }
 
-        // ── Update inspector if visible ──
-        if self.inspector_open {
-            if let Some(sel) = self.cosmos.selected {
-                if let Some(node) = self.cosmos.nodes.get(sel) {
-                    self.ui.label(cx, ids!(inspector_mass))
-                        .set_text(cx, &format!("Mass: {:.1}kg", node.spatial.mass));
+        // ── Position halo menu near selected node ──
+        if let Some(sel) = self.cosmos.selected {
+            if let Some(node) = self.cosmos.nodes.get(sel) {
+                let wx = node.spatial.pos[0] as f64;
+                let wy = node.spatial.pos[1] as f64;
+                let cam_z = self.camera.z as f64;
+                let cx_pos = 640.0_f64;
+                let cy_pos = 400.0_f64;
+                let sx = (wx - self.camera.x as f64) * cam_z + cx_pos;
+                let sy = (wy - self.camera.y as f64) * cam_z + cy_pos;
+                let halo_x = sx - 70.0;
+                let halo_y = sy - 50.0;
+                let halo = self.ui.view(cx, ids!(halo_menu));
+                if let Some(mut inner) = halo.borrow_mut() {
+                    inner.walk.abs_pos = Some(Vec2d {
+                        x: halo_x,
+                        y: halo_y,
+                    });
                 }
+                halo.set_visible(cx, true);
             }
+        } else {
+            self.ui.view(cx, ids!(halo_menu)).set_visible(cx, false);
         }
 
         cx.redraw_all();
@@ -673,7 +555,7 @@ impl App {
         let word_count = text.split_whitespace().count();
         self.ui
             .label(cx, ids!(editor_word_count))
-            .set_text(cx, &format!("Word Count: {word_count}"));
+            .set_text(cx, &format!("{word_count} words"));
     }
 
     /// Map HUD button clicks to a typed AeroHudAction.
@@ -1243,7 +1125,9 @@ impl MatchEvent for App {
                 AeroHudAction::ShowCosmos => {
                     // Toggle search modal
                     self.search_modal_open = !self.search_modal_open;
-                    self.ui.view(cx, ids!(search_modal)).set_visible(cx, self.search_modal_open);
+                    self.ui
+                        .view(cx, ids!(search_modal))
+                        .set_visible(cx, self.search_modal_open);
                     if self.search_modal_open {
                         let area = self.ui.text_input(cx, ids!(search_input)).area();
                         cx.set_key_focus(area);
@@ -1262,25 +1146,27 @@ impl MatchEvent for App {
             tracing::info!("Settings button clicked (Phase 3 stub)");
         }
 
-        // ── Inspector color swatches ──
-        {
-            let swatch_ids = [
-                ids!(swatch_0),
-                ids!(swatch_1),
-                ids!(swatch_2),
-                ids!(swatch_3),
-                ids!(swatch_4),
-            ];
-            for (i, sw_id) in swatch_ids.iter().enumerate() {
-                if self.ui.button(cx, *sw_id).clicked(actions) {
-                    if let Some(sel) = self.cosmos.selected {
-                        if let Some(node) = self.cosmos.nodes.get_mut(sel) {
-                            // Heat pulse on color change (visual feedback)
-                            node.spatial.heat = 1.0;
-                            tracing::info!("swatch {i} applied to node {sel}");
-                        }
-                    }
+        // ── Halo menu button handlers ──
+        if self.ui.button(cx, ids!(halo_palette)).clicked(actions) {
+            if let Some(sel) = self.cosmos.selected {
+                if let Some(node) = self.cosmos.nodes.get_mut(sel) {
+                    node.spatial.heat = 1.0;
+                    tracing::info!("palette action on node {sel}");
                 }
+            }
+        }
+        if self.ui.button(cx, ids!(halo_link)).clicked(actions) {
+            tracing::info!("link action (Phase 3 stub)");
+        }
+        if self.ui.button(cx, ids!(halo_delete)).clicked(actions) {
+            if let Some(sel) = self.cosmos.selected {
+                if let Some(node) = self.cosmos.nodes.get_mut(sel) {
+                    node.tombstone = true;
+                    tracing::info!("deleted node {sel}");
+                }
+                self.cosmos.selected = None;
+                self.ui.view(cx, ids!(halo_menu)).set_visible(cx, false);
+                cx.redraw_all();
             }
         }
 
@@ -1304,18 +1190,6 @@ impl MatchEvent for App {
                 match action {
                     CosmosViewAction::NodeClicked(idx) => {
                         self.cosmos.selected = Some(idx);
-                        // Open inspector panel
-                        self.inspector_open = true;
-                        self.ui.view(cx, ids!(inspector_panel)).set_visible(cx, true);
-                        // Update inspector content
-                        if let Some(node) = self.cosmos.nodes.get(idx) {
-                            let id_str = format!("{}", node.id);
-                            let short_id = if id_str.len() > 8 { &id_str[..8] } else { &id_str };
-                            self.ui.label(cx, ids!(inspector_id))
-                                .set_text(cx, &format!("NODE {short_id}…"));
-                            self.ui.label(cx, ids!(inspector_mass))
-                                .set_text(cx, &format!("Mass: {:.1}kg", node.spatial.mass));
-                        }
                         cx.redraw_all();
                     }
                     CosmosViewAction::NodeDoubleClicked(idx) => {
@@ -1330,9 +1204,8 @@ impl MatchEvent for App {
 
                         // Hide the dock in editor mode
                         self.ui.view(cx, ids!(command_dock)).set_visible(cx, false);
-                        // Close inspector when diving
-                        self.inspector_open = false;
-                        self.ui.view(cx, ids!(inspector_panel)).set_visible(cx, false);
+                        // Hide halo when diving
+                        self.ui.view(cx, ids!(halo_menu)).set_visible(cx, false);
 
                         // ── Show dive editor overlay ──
                         self.ui.view(cx, ids!(dive_editor)).set_visible(cx, true);
@@ -1371,9 +1244,8 @@ impl MatchEvent for App {
                     }
                     CosmosViewAction::Deselect => {
                         self.cosmos.selected = None;
-                        // Close inspector panel
-                        self.inspector_open = false;
-                        self.ui.view(cx, ids!(inspector_panel)).set_visible(cx, false);
+                        // Hide halo menu
+                        self.ui.view(cx, ids!(halo_menu)).set_visible(cx, false);
                         // Close search modal if open
                         if self.search_modal_open {
                             self.search_modal_open = false;
@@ -1384,19 +1256,6 @@ impl MatchEvent for App {
                     CosmosViewAction::NodeDragStart(idx) => {
                         self.cosmos.dragged = Some(idx);
                         self.cosmos.selected = Some(idx);
-                        // Open inspector on drag start too
-                        if !self.inspector_open {
-                            self.inspector_open = true;
-                            self.ui.view(cx, ids!(inspector_panel)).set_visible(cx, true);
-                            if let Some(node) = self.cosmos.nodes.get(idx) {
-                                let id_str = format!("{}", node.id);
-                                let short_id = if id_str.len() > 8 { &id_str[..8] } else { &id_str };
-                                self.ui.label(cx, ids!(inspector_id))
-                                    .set_text(cx, &format!("NODE {short_id}…"));
-                                self.ui.label(cx, ids!(inspector_mass))
-                                    .set_text(cx, &format!("Mass: {:.1}kg", node.spatial.mass));
-                            }
-                        }
                     }
                     CosmosViewAction::NodeDragging { x, y } => {
                         self.cosmos.drag_to(x, y);
