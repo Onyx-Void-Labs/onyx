@@ -172,15 +172,7 @@ impl VoidNode {
 // ────────────────────────────────────────────────────────────────
 
 /// Classification of content within a Slot.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SlotKind {
     /// Editable rich text backed by a LoroText container.
     Text,
@@ -197,16 +189,7 @@ impl Default for SlotKind {
 }
 
 /// Structural classification of a LoroTree node in the document.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TreeNodeKind {
     /// A horizontal row containing one or more Slots.
     Row,

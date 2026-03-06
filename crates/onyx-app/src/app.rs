@@ -129,7 +129,7 @@ script_mod! {
                     View {
                         width: Fill
                         height: Fill
-                        layout: { flow: Overlay }
+                        flow: Overlay
 
                         // ── Full-screen Cosmos Canvas (background: #09090b) ──
                         cosmos_view := CosmosView {
@@ -158,7 +158,10 @@ script_mod! {
                             height: Fill
                             show_bg: true
                             draw_bg.color: #x0A0A0C
-                            layout: { flow: Down, align: {x: 0.5, y: 0.0}, padding: {top: 60. left: 0. right: 0. bottom: 40.}, spacing: 16.0 }
+                            flow: Down
+                            align: {x: 0.5, y: 0.0}
+                            padding: {top: 60. left: 0. right: 0. bottom: 40.}
+                            spacing: 16.0
 
                             // ── Central Page ──
                             View {
@@ -166,7 +169,9 @@ script_mod! {
                                 height: Fill
                                 show_bg: true
                                 draw_bg.color: #x111113
-                                layout: { flow: Down, padding: {left: 48. right: 48. top: 48. bottom: 48.}, spacing: 24.0 }
+                                flow: Down
+                                padding: {left: 48. right: 48. top: 48. bottom: 48.}
+                                spacing: 24.0
 
                                 dive_title_input := TextInput {
                                     width: Fill
@@ -193,7 +198,9 @@ script_mod! {
                                     height: Fit
                                     show_bg: true
                                     draw_bg.color: #x0A0A0CEE
-                                    layout: { flow: Right, padding: {left: 16. right: 16. top: 8. bottom: 8.}, align: {y: 0.5} }
+                                    flow: Right
+                                    padding: {left: 16. right: 16. top: 8. bottom: 8.}
+                                    align: {y: 0.5}
 
                                     editor_word_count := Label {
                                         width: Fill
@@ -239,7 +246,9 @@ script_mod! {
                             abs_pos: vec2(0.0, 0.0)
                             show_bg: true
                             draw_bg.color: #x1A1A1AEE
-                            layout: { flow: Right, spacing: 8.0, padding: {left: 12. right: 12. top: 8. bottom: 8.} }
+                            flow: Right
+                            spacing: 8.0
+                            padding: {left: 12. right: 12. top: 8. bottom: 8.}
 
                             halo_palette := Button {
                                 text: "Palette"
@@ -265,14 +274,17 @@ script_mod! {
                             height: Fill
                             show_bg: true
                             draw_bg.color: #x000000AA
-                            layout: { flow: Overlay, align: {x: 0.5, y: 0.35} }
+                            flow: Overlay
+                            align: {x: 0.5, y: 0.35}
 
                             View {
                                 width: 500.0
                                 height: Fit
                                 show_bg: true
                                 draw_bg.color: #x1A1A1A
-                                layout: { flow: Down, padding: {left: 20. right: 20. top: 16. bottom: 16.}, spacing: 12.0 }
+                                flow: Down
+                                padding: {left: 20. right: 20. top: 16. bottom: 16.}
+                                spacing: 12.0
 
                                 Label {
                                     text: "SEARCH THE VOID"
@@ -1138,7 +1150,11 @@ impl MatchEvent for App {
                 GlassHudAction::PanelClosed => {
                     cx.redraw_all();
                 }
-                GlassHudAction::BridgeDrop { item_id, drop_x, drop_y } => {
+                GlassHudAction::BridgeDrop {
+                    item_id,
+                    drop_x,
+                    drop_y,
+                } => {
                     tracing::info!("Bridge drop: {} at ({}, {})", item_id, drop_x, drop_y);
                 }
                 GlassHudAction::None => {}

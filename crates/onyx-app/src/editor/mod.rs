@@ -116,8 +116,11 @@ pub struct LaneEditor {
     walk: Walk,
     #[layout]
     layout: Layout,
+    #[live]
+    pub show_bg: bool,
+    #[live]
     #[visible]
-    visible: bool,
+    pub visible: bool,
 
     // ── Document state ──
     #[rust]
@@ -329,19 +332,12 @@ impl Widget for LaneEditor {
                         if skey == &key {
                             let rel_x = (fd.abs.x - rect.pos.x - 16.0).max(0.0);
                             let char_width = 8.5; // approximate glyph width at 15pt
-                            self.cursor_pos =
-                                (rel_x / char_width) as usize;
-                            self.cursor_pos =
-                                self.cursor_pos.min(slot_char_count);
+                            self.cursor_pos = (rel_x / char_width) as usize;
+                            self.cursor_pos = self.cursor_pos.min(slot_char_count);
                             break;
                         }
                     }
-                    cx.widget_action(
-                        uid,
-                        LaneEditorAction::SlotFocused {
-                            text_key: key,
-                        },
-                    );
+                    cx.widget_action(uid, LaneEditorAction::SlotFocused { text_key: key });
                     cx.set_key_focus(self.draw_bg.area());
                 } else {
                     // Clicked background → exit Focus Mode
@@ -373,63 +369,61 @@ impl Widget for LaneEditor {
 
         // ── Keyboard interception ──
         match event {
-            Event::KeyDown(ke) if self.focused_slot.is_some() => {
-                match ke.key_code {
-                    KeyCode::Backspace => {
-                        self.handle_backspace(cx);
-                        cx.redraw_all();
-                    }
-                    KeyCode::Delete => {
-                        if let Some(ref key) = self.focused_slot {
-                            let text = self.slot_text(key);
-                            if self.cursor_pos < text.chars().count() {
-                                cx.widget_action(
-                                    uid,
-                                    LaneEditorAction::TextDeleted {
-                                        text_key: key.clone(),
-                                        pos: self.cursor_pos,
-                                        len: 1,
-                                    },
-                                );
-                            }
-                        }
-                        cx.redraw_all();
-                    }
-                    KeyCode::ReturnKey => {
-                        self.handle_enter(cx);
-                        cx.redraw_all();
-                    }
-                    KeyCode::ArrowLeft => {
-                        if self.cursor_pos > 0 {
-                            self.cursor_pos -= 1;
-                        }
-                        cx.redraw_all();
-                    }
-                    KeyCode::ArrowRight => {
-                        if let Some(ref key) = self.focused_slot {
-                            let max = self.slot_text(key).chars().count();
-                            if self.cursor_pos < max {
-                                self.cursor_pos += 1;
-                            }
-                        }
-                        cx.redraw_all();
-                    }
-                    KeyCode::Home => {
-                        self.cursor_pos = 0;
-                        cx.redraw_all();
-                    }
-                    KeyCode::End => {
-                        if let Some(ref key) = self.focused_slot {
-                            self.cursor_pos = self.slot_text(key).chars().count();
-                        }
-                        cx.redraw_all();
-                    }
-                    KeyCode::Escape => {
-                        cx.widget_action(uid, LaneEditorAction::CloseEditor);
-                    }
-                    _ => {}
+            Event::KeyDown(ke) if self.focused_slot.is_some() => match ke.key_code {
+                KeyCode::Backspace => {
+                    self.handle_backspace(cx);
+                    cx.redraw_all();
                 }
-            }
+                KeyCode::Delete => {
+                    if let Some(ref key) = self.focused_slot {
+                        let text = self.slot_text(key);
+                        if self.cursor_pos < text.chars().count() {
+                            cx.widget_action(
+                                uid,
+                                LaneEditorAction::TextDeleted {
+                                    text_key: key.clone(),
+                                    pos: self.cursor_pos,
+                                    len: 1,
+                                },
+                            );
+                        }
+                    }
+                    cx.redraw_all();
+                }
+                KeyCode::ReturnKey => {
+                    self.handle_enter(cx);
+                    cx.redraw_all();
+                }
+                KeyCode::ArrowLeft => {
+                    if self.cursor_pos > 0 {
+                        self.cursor_pos -= 1;
+                    }
+                    cx.redraw_all();
+                }
+                KeyCode::ArrowRight => {
+                    if let Some(ref key) = self.focused_slot {
+                        let max = self.slot_text(key).chars().count();
+                        if self.cursor_pos < max {
+                            self.cursor_pos += 1;
+                        }
+                    }
+                    cx.redraw_all();
+                }
+                KeyCode::Home => {
+                    self.cursor_pos = 0;
+                    cx.redraw_all();
+                }
+                KeyCode::End => {
+                    if let Some(ref key) = self.focused_slot {
+                        self.cursor_pos = self.slot_text(key).chars().count();
+                    }
+                    cx.redraw_all();
+                }
+                KeyCode::Escape => {
+                    cx.widget_action(uid, LaneEditorAction::CloseEditor);
+                }
+                _ => {}
+            },
             Event::TextInput(e) if self.focused_slot.is_some() => {
                 if !e.input.is_empty() {
                     self.handle_text_input(cx, &e.input);
@@ -455,8 +449,7 @@ impl Widget for LaneEditor {
 
         // ── Layout constants ──
         let page_width = 800.0_f64;
-        let page_x = self.widget_rect.pos.x
-            + (self.widget_rect.size.x - page_width).max(0.0) * 0.5;
+        let page_x = self.widget_rect.pos.x + (self.widget_rect.size.x - page_width).max(0.0) * 0.5;
         let mut y = self.widget_rect.pos.y + 60.0; // top padding
         let row_spacing = 4.0_f64;
         let slot_padding_x = 16.0_f64;
@@ -484,8 +477,7 @@ impl Widget for LaneEditor {
             // First pass: calculate max height in this row
             for slot in &visible_slots {
                 let line_count = slot.text.matches('\n').count() + 1;
-                let height =
-                    (line_count as f64) * 22.0 + slot_padding_y * 2.0;
+                let height = (line_count as f64) * 22.0 + slot_padding_y * 2.0;
                 if height > row_height {
                     row_height = height;
                 }
@@ -516,8 +508,7 @@ impl Widget for LaneEditor {
 
                 // ── Draw slot background ──
                 // 1px border for Architect Mode, subtle highlight for focused
-                let is_focused =
-                    self.focused_slot.as_deref() == Some(&slot.text_key);
+                let is_focused = self.focused_slot.as_deref() == Some(&slot.text_key);
                 let bg_color = if is_focused {
                     Vec4 {
                         x: 0.08,
@@ -596,18 +587,14 @@ impl Widget for LaneEditor {
                     let blink = (self.cursor_time * 3.5).sin();
                     if blink > 0.0 {
                         let char_width = 8.5_f64;
-                        let cursor_x =
-                            text_x + (self.cursor_pos as f64) * char_width;
+                        let cursor_x = text_x + (self.cursor_pos as f64) * char_width;
                         let cursor_y = text_y;
                         let cursor_rect = Rect {
                             pos: DVec2 {
                                 x: cursor_x,
                                 y: cursor_y,
                             },
-                            size: DVec2 {
-                                x: 2.0,
-                                y: 18.0,
-                            },
+                            size: DVec2 { x: 2.0, y: 18.0 },
                         };
                         // Draw cursor using draw_bg (white bar)
                         self.draw_bg.draw_abs(cx, cursor_rect);
@@ -615,9 +602,7 @@ impl Widget for LaneEditor {
                 }
 
                 // ── Draw + split button (right edge, on hover) ──
-                if is_focused
-                    && self.hover_split_slot.as_deref() == Some(&slot.text_key)
-                {
+                if is_focused && self.hover_split_slot.as_deref() == Some(&slot.text_key) {
                     let plus_x = x + slot_width - 24.0;
                     let plus_y = y + (row_height - 24.0) * 0.5;
                     self.draw_text.color = Vec4 {
@@ -667,4 +652,3 @@ impl Widget for LaneEditor {
         DrawStep::done()
     }
 }
-

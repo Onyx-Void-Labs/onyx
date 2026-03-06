@@ -66,8 +66,11 @@ pub struct PathBar {
     walk: Walk,
     #[layout]
     layout: Layout,
+    #[live]
+    pub show_bg: bool,
+    #[live]
     #[visible]
-    visible: bool,
+    pub visible: bool,
 
     /// Breadcrumb segments (Root → current).
     #[rust]
@@ -123,10 +126,7 @@ impl Widget for PathBar {
                             self.expanded = false;
                         } else {
                             // Navigate to breadcrumb
-                            cx.widget_action(
-                                uid,
-                                PathBarAction::Navigate { depth: i },
-                            );
+                            cx.widget_action(uid, PathBarAction::Navigate { depth: i });
                         }
                         cx.redraw_all();
                         return;
@@ -219,11 +219,8 @@ impl Widget for PathBar {
                         z: 0.3,
                         w: 1.0,
                     };
-                    self.draw_text.draw_abs(
-                        cx,
-                        DVec2 { x, y: start_y },
-                        separator,
-                    );
+                    self.draw_text
+                        .draw_abs(cx, DVec2 { x, y: start_y }, separator);
                     x += 24.0; // approx separator width
                 }
 
@@ -256,11 +253,8 @@ impl Widget for PathBar {
                 };
                 self.segment_rects.push((seg.id.clone(), seg_rect));
 
-                self.draw_text.draw_abs(
-                    cx,
-                    DVec2 { x, y: start_y },
-                    &seg.label,
-                );
+                self.draw_text
+                    .draw_abs(cx, DVec2 { x, y: start_y }, &seg.label);
 
                 x += label_width + 4.0;
             }
@@ -270,4 +264,3 @@ impl Widget for PathBar {
         DrawStep::done()
     }
 }
-

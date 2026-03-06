@@ -284,11 +284,7 @@ impl CrdtDoc {
 
     /// Ghost Box: mark a tree node as collapsed (render-layer only).
     /// NEVER structurally delete nodes reactively.
-    pub fn collapse_tree_node(
-        &self,
-        node_id: &str,
-        tree_node_id: loro::TreeID,
-    ) -> OnyxResult<()> {
+    pub fn collapse_tree_node(&self, node_id: &str, tree_node_id: loro::TreeID) -> OnyxResult<()> {
         let tree = self.doc_tree(node_id);
         let meta = tree
             .get_meta(tree_node_id)
@@ -334,12 +330,7 @@ impl CrdtDoc {
     }
 
     /// Insert text at position `pos` in the slot's LoroText container.
-    pub fn insert_slot_text(
-        &self,
-        text_key: &str,
-        pos: usize,
-        s: &str,
-    ) -> OnyxResult<()> {
+    pub fn insert_slot_text(&self, text_key: &str, pos: usize, s: &str) -> OnyxResult<()> {
         let text = self.doc.get_text(text_key);
         text.insert(pos, s)
             .map_err(|e| OnyxError::Crdt(e.to_string()))?;
@@ -349,12 +340,7 @@ impl CrdtDoc {
     }
 
     /// Delete `len` characters at position `pos` in the slot's LoroText.
-    pub fn delete_slot_text(
-        &self,
-        text_key: &str,
-        pos: usize,
-        len: usize,
-    ) -> OnyxResult<()> {
+    pub fn delete_slot_text(&self, text_key: &str, pos: usize, len: usize) -> OnyxResult<()> {
         let text = self.doc.get_text(text_key);
         text.delete(pos, len)
             .map_err(|e| OnyxError::Crdt(e.to_string()))?;

@@ -83,8 +83,11 @@ pub struct GlassHud {
     walk: Walk,
     #[layout]
     layout: Layout,
+    #[live]
+    pub show_bg: bool,
+    #[live]
     #[visible]
-    visible: bool,
+    pub visible: bool,
 
     /// Currently active tool (if side panel is open).
     #[rust]
@@ -131,10 +134,7 @@ impl Widget for GlassHud {
                         } else {
                             // Activate tool
                             self.active_tool = Some(*tool);
-                            cx.widget_action(
-                                uid,
-                                GlassHudAction::ToolActivated(*tool),
-                            );
+                            cx.widget_action(uid, GlassHudAction::ToolActivated(*tool));
                         }
                         cx.redraw_all();
                         return;
@@ -367,4 +367,3 @@ impl Widget for GlassHud {
         DrawStep::done()
     }
 }
-
