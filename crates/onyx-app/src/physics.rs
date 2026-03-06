@@ -78,13 +78,36 @@ pub fn node_radius(node: &VoidNode) -> f32 {
 
 /// Run one physics tick.  `dt` is the elapsed time in seconds
 /// since the last tick (typically ~0.016 for 60 fps).
+/// `view_center_x` / `view_center_y` are the camera center in world space.
+/// `zoom` is the camera zoom level (1.0 = default).
 ///
 /// Mutates all node positions and velocities in-place.
-pub fn tick(nodes: &mut [VoidNode], dt: f32) {
+pub fn tick(nodes: &mut [VoidNode], dt: f32, view_center_x: f32, view_center_y: f32, zoom: f32) {
     let dt = dt.min(0.05); // clamp to prevent physics explosion on lag spikes
     let n = nodes.len();
     if n == 0 {
         return;
+    }
+
+    // ── 0. Inverse Camera Projection — Tether Singularities ──────
+    let zoom_safe = zoom.max(0.01);
+    let world_offset_x = 640.0 / zoom_safe;
+    let world_offset_y = 400.0 / zoom_safe;
+    let margin = 150.0 / zoom_safe;
+    for node in nodes.iter_mut() {
+        match node.node_type {
+            NodeType::BlackHole => {
+                node.spatial.pos[0] = view_center_x + world_offset_x - margin;
+                node.spatial.pos[1] = view_center_y - world_offset_y + margin;
+                node.spatial.velocity = [0.0, 0.0, 0.0];
+            }
+            NodeType::WhiteHole => {
+                node.spatial.pos[0] = view_center_x - world_offset_x + margin;
+                node.spatial.pos[1] = view_center_y - world_offset_y + margin;
+                node.spatial.velocity = [0.0, 0.0, 0.0];
+            }
+            _ => {}
+        }
     }
 
     // ── 1. Accumulate forces ─────────────────────────────────────

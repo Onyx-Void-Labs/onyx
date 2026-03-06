@@ -18,7 +18,6 @@
 
 use makepad_widgets::*;
 use onyx_core::id::OnyxId;
-use onyx_core::void_node::NodeType;
 use onyx_editor::{Cursor, EditorBuffer};
 use onyx_store::CrdtDoc;
 use std::collections::HashMap;
@@ -95,8 +94,10 @@ script_mod! {
 
                             dive_title := Label {
                                 text: "ENTERING ORBIT..."
-                                draw_text.color: #x666666
-                                draw_text.text_style: {font_size: 10.0}
+                                draw_text: {
+                                    color: #x666666
+                                    text_style: {font_size: 10.0}
+                                }
                             }
 
                             dive_text_input := TextInput {
@@ -104,15 +105,17 @@ script_mod! {
                                 height: Fill
                                 is_read_only: true
                                 empty_text: "Write to ignite the star..."
-                                draw_text.color: #xE0E0E0
-                                draw_text.text_style: {font_size: 14.0}
-                                draw_bg.color: #x00000000
+                                draw_text: {
+                                    color: #xE0E0E0
+                                    text_style: {font_size: 14.0}
+                                }
+                                draw_bg: {color: #x00000000}
                             }
 
                             eject_button := Button {
                                 text: "EJECT [ESC]"
-                                draw_text.color: #xDD0000
-                                draw_bg.color: #x00000000
+                                draw_text: {color: #xDD0000}
+                                draw_bg: {color: #x00000000}
                             }
                         }
 
@@ -133,8 +136,10 @@ script_mod! {
                             padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
                             Label {
                                 text: "◉ EXPORT"
-                                draw_text.color: #xFFFFFF
-                                draw_text.text_style: {font_size: 9.0}
+                                draw_text: {
+                                    color: #xFFFFFF
+                                    text_style: {font_size: 9.0}
+                                }
                             }
                         }
 
@@ -148,8 +153,10 @@ script_mod! {
                             padding: {left: 12.0, right: 12.0, top: 6.0, bottom: 6.0}
                             Label {
                                 text: "● TRASH"
-                                draw_text.color: #xFF0000
-                                draw_text.text_style: {font_size: 9.0}
+                                draw_text: {
+                                    color: #xFF0000
+                                    text_style: {font_size: 9.0}
+                                }
                             }
                         }
 
@@ -331,29 +338,8 @@ impl App {
         }
 
         let dt = 1.0 / 60.0_f32; // fixed timestep at 60 fps
-        self.cosmos.tick(dt);
-
-        // Anchor singularities to screen corners (world-space)
-        let zoom = (self.camera.z as f64).max(0.1);
-        let half_w = (640.0 / zoom) as f32;
-        let half_h = (400.0 / zoom) as f32;
-        let cam_x = self.camera.x;
-        let cam_y = self.camera.y;
-        for node in &mut self.cosmos.nodes {
-            match node.node_type {
-                NodeType::BlackHole => {
-                    node.spatial.pos[0] = cam_x + half_w - 150.0;
-                    node.spatial.pos[1] = cam_y + half_h - 150.0;
-                    node.spatial.velocity = [0.0, 0.0, 0.0];
-                }
-                NodeType::WhiteHole => {
-                    node.spatial.pos[0] = cam_x - half_w + 150.0;
-                    node.spatial.pos[1] = cam_y + half_h - 150.0;
-                    node.spatial.velocity = [0.0, 0.0, 0.0];
-                }
-                _ => {}
-            }
-        }
+        self.cosmos
+            .tick(dt, self.camera.x, self.camera.y, self.camera.z);
 
         // Build draw data from current cosmos state
         let draw_data: Vec<NodeDrawData> = self

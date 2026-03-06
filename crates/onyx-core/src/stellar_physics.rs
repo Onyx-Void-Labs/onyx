@@ -65,32 +65,53 @@ impl PhysicsEngine {
     ///
     /// `dt` is elapsed time in seconds since the last tick.
     /// Clamped internally to 0.05s to prevent physics explosion on lag.
-    /// `screen_w` and `screen_h` are the world-space viewport dimensions
-    /// used for anchoring singularity nodes to screen corners.
+    /// `screen_w` and `screen_h` are the pixel viewport dimensions.
+    /// `view_center_x` / `view_center_y` are the camera center in world space.
+    /// `zoom` is the camera zoom level (1.0 = default).
     ///
     /// # Algorithm
-    /// 1. Force singularity positions to screen corners
+    /// 1. Inverse camera projection — tether singularities to screen corners
     /// 2. O(N²) pairwise force accumulation (gravity + repulsion)
     /// 3. Semi-implicit Euler integration with 0.92 damping
     /// 4. Recursive NaN quarantine on all position/velocity vectors
-    pub fn tick(&mut self, nodes: &mut [VoidNode], dt: f32, screen_w: f32, screen_h: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn tick(
+        &mut self,
+        nodes: &mut [VoidNode],
+        dt: f32,
+        screen_w: f32,
+        screen_h: f32,
+        view_center_x: f64,
+        view_center_y: f64,
+        zoom: f64,
+    ) {
         let dt = dt.min(0.05);
         let n = nodes.len();
         if n == 0 {
             return;
         }
 
-        // ── 0. Force Singularity Positions to Screen Corners ─────
-        let half_w = screen_w / 2.0;
-        let half_h = screen_h / 2.0;
+        // ── 0. Inverse Camera Projection — Tether Singularities ────
+        let zoom_safe = zoom.max(0.01);
+        let world_offset_x = (screen_w as f64 / 2.0) / zoom_safe;
+        let world_offset_y = (screen_h as f64 / 2.0) / zoom_safe;
+        let margin = 150.0 / zoom_safe;
         for node in nodes.iter_mut() {
             match node.node_type {
                 NodeType::BlackHole => {
-                    node.position = [half_w - 150.0, -half_h + 150.0, 0.0];
+                    node.position = [
+                        (view_center_x + world_offset_x - margin) as f32,
+                        (view_center_y - world_offset_y + margin) as f32,
+                        0.0,
+                    ];
                     node.velocity = [0.0, 0.0, 0.0];
                 }
                 NodeType::WhiteHole => {
-                    node.position = [-half_w + 150.0, -half_h + 150.0, 0.0];
+                    node.position = [
+                        (view_center_x - world_offset_x + margin) as f32,
+                        (view_center_y - world_offset_y + margin) as f32,
+                        0.0,
+                    ];
                     node.velocity = [0.0, 0.0, 0.0];
                 }
                 _ => {}

@@ -68,7 +68,8 @@ impl PhysicsBridge {
     pub fn handle_event(&mut self, cx: &mut Cx, event: &Event) -> bool {
         if self.timer.is_event(event).is_some() {
             let dt: f32 = 1.0 / 144.0;
-            self.engine.tick(&mut self.nodes, dt, 1280.0, 800.0);
+            self.engine
+                .tick(&mut self.nodes, dt, 1280.0, 800.0, 0.0, 0.0, 1.0);
 
             // Drive the next frame — Makepad redraws all widgets,
             // CosmosView picks up updated positions from draw_data.
