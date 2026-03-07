@@ -1,5 +1,7 @@
 // ─── Onyx App — Widget Framework (Trait + SlotRenderer) ─────────────
 
+pub mod text;
+
 use vello::Scene;
 
 use onyx_core::grid_layout::{resolve_layout, GridRow, Rect};
@@ -120,14 +122,18 @@ mod tests {
 
     #[test]
     fn slot_renderer_layout() {
-        let widgets: Vec<Box<dyn Widget>> = vec![
-            Box::new(TestWidget::new()),
-            Box::new(TestWidget::new()),
-        ];
+        let widgets: Vec<Box<dyn Widget>> =
+            vec![Box::new(TestWidget::new()), Box::new(TestWidget::new())];
         let grid = GridRow {
             slots: vec![
-                Slot { col_span: 6, widget_id: "a".into() },
-                Slot { col_span: 6, widget_id: "b".into() },
+                Slot {
+                    col_span: 6,
+                    widget_id: "a".into(),
+                },
+                Slot {
+                    col_span: 6,
+                    widget_id: "b".into(),
+                },
             ],
         };
         let mut renderer = SlotRenderer::new(widgets, grid);
@@ -141,7 +147,10 @@ mod tests {
     fn slot_renderer_draw() {
         let widgets: Vec<Box<dyn Widget>> = vec![Box::new(TestWidget::new())];
         let grid = GridRow {
-            slots: vec![Slot { col_span: 12, widget_id: "w".into() }],
+            slots: vec![Slot {
+                col_span: 12,
+                widget_id: "w".into(),
+            }],
         };
         let renderer = SlotRenderer::new(widgets, grid);
         let mut scene = Scene::new();

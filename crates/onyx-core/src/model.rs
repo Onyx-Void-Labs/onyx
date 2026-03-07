@@ -9,6 +9,7 @@ pub enum NodeType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum PropertyType {
     Text,
     Select(Vec<String>),
@@ -17,6 +18,7 @@ pub enum PropertyType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PropertyDefinition {
     pub name: String,
     pub kind: PropertyType,

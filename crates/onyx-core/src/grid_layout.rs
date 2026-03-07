@@ -1,5 +1,7 @@
 // ─── Onyx Core — Grid Engine (12-Column Layout System) ──────────────
 
+use serde::{Deserialize, Serialize};
+
 /// A slot within a grid row, spanning some number of columns.
 #[derive(Clone, Debug)]
 pub struct Slot {
@@ -30,26 +32,26 @@ const TOTAL_COLUMNS: u8 = 12;
 /// All rects share `y = 0.0` and a default height equal to the container width / 4.
 /// Slots that would exceed 12 columns are clamped.
 pub fn resolve_layout(container_w: f32, grid: &GridRow) -> Vec<Rect> {
+    if grid.collapsed {
+        return Vec::new();
+    }
     let col_w = container_w / TOTAL_COLUMNS as f32;
     let row_h = container_w / 4.0; // default aspect ratio
     let mut rects = Vec::new();
-    let mut col_offset: u8 = 0;
 
     for slot in &grid.slots {
-        let span = slot.col_span.min(TOTAL_COLUMNS - col_offset);
+        // ensure the slot fits within bounds
+        let start = slot.col_start.min(TOTAL_COLUMNS);
+        let span = slot.col_span.min(TOTAL_COLUMNS.saturating_sub(start));
         if span == 0 {
-            break;
+            continue;
         }
         rects.push(Rect {
-            x: col_offset as f32 * col_w,
+            x: start as f32 * col_w,
             y: 0.0,
             width: span as f32 * col_w,
             height: row_h,
         });
-        col_offset += span;
-        if col_offset >= TOTAL_COLUMNS {
-            break;
-        }
     }
 
     rects
@@ -84,8 +86,14 @@ mod tests {
     fn two_equal_halves() {
         let grid = GridRow {
             slots: vec![
-                Slot { col_span: 6, widget_id: "a".into() },
-                Slot { col_span: 6, widget_id: "b".into() },
+                Slot {
+                    col_span: 6,
+                    widget_id: "a".into(),
+                },
+                Slot {
+                    col_span: 6,
+                    widget_id: "b".into(),
+                },
             ],
         };
         let rects = resolve_layout(1200.0, &grid);
@@ -100,8 +108,14 @@ mod tests {
     fn overflow_clamped() {
         let grid = GridRow {
             slots: vec![
-                Slot { col_span: 8, widget_id: "a".into() },
-                Slot { col_span: 8, widget_id: "b".into() }, // exceeds 12
+                Slot {
+                    col_span: 8,
+                    widget_id: "a".into(),
+                },
+                Slot {
+                    col_span: 8,
+                    widget_id: "b".into(),
+                }, // exceeds 12
             ],
         };
         let rects = resolve_layout(1200.0, &grid);
@@ -113,9 +127,18 @@ mod tests {
     fn three_column_layout() {
         let grid = GridRow {
             slots: vec![
-                Slot { col_span: 4, widget_id: "a".into() },
-                Slot { col_span: 4, widget_id: "b".into() },
-                Slot { col_span: 4, widget_id: "c".into() },
+                Slot {
+                    col_span: 4,
+                    widget_id: "a".into(),
+                },
+                Slot {
+                    col_span: 4,
+                    widget_id: "b".into(),
+                },
+                Slot {
+                    col_span: 4,
+                    widget_id: "c".into(),
+                },
             ],
         };
         let rects = resolve_layout(1200.0, &grid);
@@ -127,7 +150,24 @@ mod tests {
 
     #[test]
     fn empty_grid() {
-        let grid = GridRow { slots: vec![] };
+        let grid = GridRow {
+            slots: vec![],
+            collapsed: false,
+        };
+        let rects = resolve_layout(1200.0, &grid);
+        assert!(rects.is_empty());
+    }
+
+    #[test]
+    fn collapsed_row_skips_layout() {
+        let grid = GridRow {
+            slots: vec![Slot {
+                col_start: 0,
+                col_span: 12,
+                widget_id: "w".into(),
+            }],
+            collapsed: true,
+        };
         let rects = resolve_layout(1200.0, &grid);
         assert!(rects.is_empty());
     }

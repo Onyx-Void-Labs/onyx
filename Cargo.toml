@@ -58,6 +58,12 @@ base64  = "0.21"
 regex   = "1.10"
 similar = "2.4"
 
+# ── Phase 2.9 Performance & Security ──
+argon2           = "0.5"
+chacha20poly1305 = "0.10"
+rand             = "0.8"
+dirs             = "5"
+
 # ── Phase 4 Six-Fold Foundation ──
 pulldown-latex = "0.1"
 roxmltree      = "0.20"

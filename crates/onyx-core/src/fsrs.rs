@@ -36,6 +36,7 @@ const DESIRED_RETENTION: f64 = 0.9;
 
 /// The state of a flashcard's memory schedule.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CardState {
     pub stability: f64,
     pub difficulty: f64,
@@ -59,6 +60,7 @@ impl CardState {
 
 /// Full flashcard data stored in the workspace.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FlashcardData {
     pub front: String,
     pub back: String,

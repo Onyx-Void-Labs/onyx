@@ -3,6 +3,7 @@
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::grid_layout::{GridRow, Slot};
+use anyhow::{Context, Result};
 
 /// Persists GridRow layouts into a LoroMap within a LoroDoc.
 /// Each row is keyed by a `row_id` and stored as JSON.
@@ -18,21 +19,13 @@ impl LayoutState {
         }
     }
 
-    /// Save a grid row to the CRDT map. Serializes slots as JSON.
-    pub fn save_row(&self, doc: &LoroDoc, row_id: &str, row: &GridRow) {
-        let slots_json: Vec<serde_json::Value> = row
-            .slots
-            .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "col_span": s.col_span,
-                    "widget_id": s.widget_id,
-                })
-            })
-            .collect();
-        let json = serde_json::to_string(&slots_json).expect("serialize grid row");
-        self.map.insert(row_id, json).expect("insert layout row");
+    /// Save a grid row to the CRDT map. Serializes the entire GridRow (includes
+    /// `collapsed` flag).
+    pub fn save_row(&self, doc: &LoroDoc, row_id: &str, row: &GridRow) -> Result<()> {
+        let json = serde_json::to_string(row).context("serialize grid row")?;
+        self.map.insert(row_id, json).context("insert layout row")?;
         doc.commit();
+        Ok(())
     }
 
     /// Load a grid row from the CRDT map.
@@ -40,25 +33,19 @@ impl LayoutState {
         match self.map.get(row_id) {
             Some(ValueOrContainer::Value(v)) => {
                 let s = v.as_string()?;
-                let arr: Vec<serde_json::Value> = serde_json::from_str(s).ok()?;
-                let slots = arr
-                    .iter()
-                    .filter_map(|item| {
-                        let col_span = item.get("col_span")?.as_u64()? as u8;
-                        let widget_id = item.get("widget_id")?.as_str()?.to_string();
-                        Some(Slot { col_span, widget_id })
-                    })
-                    .collect();
-                Some(GridRow { slots })
+                serde_json::from_str(s).ok()
             }
             _ => None,
         }
     }
 
-    /// Remove a grid row from the CRDT map.
+    /// Mark a grid row as collapsed instead of deleting it.  This implements the
+    /// "ghost row" behaviour requested by the audit.
     pub fn remove_row(&self, doc: &LoroDoc, row_id: &str) {
-        self.map.delete(row_id).ok();
-        doc.commit();
+        if let Some(mut row) = self.load_row(row_id) {
+            row.collapsed = true;
+            let _ = self.save_row(doc, row_id, &row);
+        }
     }
 
     /// List all stored row IDs.
@@ -77,23 +64,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_save_load() {
+    fn round_trip_save_load() -> Result<()> {
         let doc = LoroDoc::new();
         let state = LayoutState::new(&doc);
         let row = GridRow {
             slots: vec![
-                Slot { col_span: 6, widget_id: "widget-a".into() },
-                Slot { col_span: 6, widget_id: "widget-b".into() },
+                Slot {
+                    col_span: 6,
+                    widget_id: "widget-a".into(),
+                },
+                Slot {
+                    col_span: 6,
+                    widget_id: "widget-b".into(),
+                },
             ],
+            collapsed: false,
         };
-        state.save_row(&doc, "row-1", &row);
+        state.save_row(&doc, "row-1", &row)?;
 
-        let loaded = state.load_row("row-1").expect("row should exist");
-        assert_eq!(loaded.slots.len(), 2);
-        assert_eq!(loaded.slots[0].col_span, 6);
-        assert_eq!(loaded.slots[0].widget_id, "widget-a");
-        assert_eq!(loaded.slots[1].col_span, 6);
-        assert_eq!(loaded.slots[1].widget_id, "widget-b");
+        if let Some(loaded) = state.load_row("row-1") {
+            assert_eq!(loaded.slots.len(), 2);
+            assert_eq!(loaded.slots[0].col_span, 6);
+            assert_eq!(loaded.slots[0].widget_id, "widget-a");
+            assert_eq!(loaded.slots[1].col_span, 6);
+            assert_eq!(loaded.slots[1].widget_id, "widget-b");
+            assert!(!loaded.collapsed);
+        } else {
+            panic!("row should exist");
+        }
+        Ok(())
     }
 
     #[test]
@@ -104,31 +103,45 @@ mod tests {
     }
 
     #[test]
-    fn remove_row() {
+    fn remove_row() -> Result<()> {
         let doc = LoroDoc::new();
         let state = LayoutState::new(&doc);
         let row = GridRow {
-            slots: vec![Slot { col_span: 12, widget_id: "w".into() }],
+            slots: vec![Slot {
+                col_span: 12,
+                widget_id: "w".into(),
+            }],
+            collapsed: false,
         };
-        state.save_row(&doc, "r1", &row);
+        state.save_row(&doc, "r1", &row)?;
         assert!(state.load_row("r1").is_some());
 
         state.remove_row(&doc, "r1");
-        assert!(state.load_row("r1").is_none());
+        if let Some(loaded) = state.load_row("r1") {
+            assert!(loaded.collapsed);
+        } else {
+            panic!("row should still exist (collapsed)");
+        }
+        Ok(())
     }
 
     #[test]
-    fn all_row_ids() {
+    fn all_row_ids() -> Result<()> {
         let doc = LoroDoc::new();
         let state = LayoutState::new(&doc);
         let row = GridRow {
-            slots: vec![Slot { col_span: 12, widget_id: "w".into() }],
+            slots: vec![Slot {
+                col_span: 12,
+                widget_id: "w".into(),
+            }],
+            collapsed: false,
         };
-        state.save_row(&doc, "row-a", &row);
-        state.save_row(&doc, "row-b", &row);
+        state.save_row(&doc, "row-a", &row)?;
+        state.save_row(&doc, "row-b", &row)?;
 
         let mut ids = state.all_row_ids();
         ids.sort();
         assert_eq!(ids, vec!["row-a", "row-b"]);
+        Ok(())
     }
 }

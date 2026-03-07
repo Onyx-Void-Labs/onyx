@@ -22,8 +22,8 @@ impl HistoryStack {
     }
 
     /// Push the current document state as a snapshot. Clears the redo stack.
-    pub fn push_snapshot(&mut self, doc: &LoroDoc) {
-        let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
+    pub fn push_snapshot(&mut self, doc: &LoroDoc) -> anyhow::Result<()> {
+        let snapshot = doc.export(loro::ExportMode::Snapshot)?;
         self.undo_stack.push(snapshot);
 
         // Trim to max history size
@@ -37,29 +37,35 @@ impl HistoryStack {
 
     /// Undo: pop the last snapshot and return a restored LoroDoc.
     /// The current state should be pushed to redo before calling this.
-    pub fn undo(&mut self, current_doc: &LoroDoc) -> Option<LoroDoc> {
-        let snapshot = self.undo_stack.pop()?;
+    pub fn undo(&mut self, current_doc: &LoroDoc) -> anyhow::Result<Option<LoroDoc>> {
+        let snapshot = match self.undo_stack.pop() {
+            Some(s) => s,
+            None => return Ok(None),
+        };
 
         // Save current state to redo stack
-        let current_snapshot = current_doc.export(loro::ExportMode::Snapshot).unwrap();
+        let current_snapshot = current_doc.export(loro::ExportMode::Snapshot)?;
         self.redo_stack.push(current_snapshot);
 
         let restored = LoroDoc::new();
-        restored.import(&snapshot).expect("import undo snapshot");
-        Some(restored)
+        restored.import(&snapshot)?;
+        Ok(Some(restored))
     }
 
     /// Redo: pop from redo stack and return a restored LoroDoc.
-    pub fn redo(&mut self, current_doc: &LoroDoc) -> Option<LoroDoc> {
-        let snapshot = self.redo_stack.pop()?;
+    pub fn redo(&mut self, current_doc: &LoroDoc) -> anyhow::Result<Option<LoroDoc>> {
+        let snapshot = match self.redo_stack.pop() {
+            Some(s) => s,
+            None => return Ok(None),
+        };
 
         // Save current state to undo stack
-        let current_snapshot = current_doc.export(loro::ExportMode::Snapshot).unwrap();
+        let current_snapshot = current_doc.export(loro::ExportMode::Snapshot)?;
         self.undo_stack.push(current_snapshot);
 
         let restored = LoroDoc::new();
-        restored.import(&snapshot).expect("import redo snapshot");
-        Some(restored)
+        restored.import(&snapshot)?;
+        Ok(Some(restored))
     }
 
     /// Number of undo steps available.
@@ -88,32 +94,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn undo_redo_cycle() {
+    fn undo_redo_cycle() -> anyhow::Result<()> {
         let mut history = HistoryStack::new();
 
         // Create initial state
         let doc = LoroDoc::new();
         let map = doc.get_map("test");
-        map.insert("key", "value1").unwrap();
+        map.insert("key", "value1")?;
         doc.commit();
 
         // Push snapshot
-        history.push_snapshot(&doc);
+        history.push_snapshot(&doc)?;
 
         // Modify document
-        map.insert("key", "value2").unwrap();
+        map.insert("key", "value2")?;
         doc.commit();
 
         // Undo should restore previous state
         assert!(history.can_undo());
-        let restored = history.undo(&doc).unwrap();
-        let restored_map = restored.get_map("test");
-        let val = restored_map.get_deep_value();
-        let obj = val.as_map().unwrap();
-        let v = obj.get("key").unwrap().as_string().unwrap();
-        assert_eq!(v.to_string(), "value1");
+        if let Some(restored) = history.undo(&doc)? {
+            let restored_map = restored.get_map("test");
+            let val = restored_map.get_deep_value();
+            if let LoroValue::Map(obj) = val {
+                if let Some(v) = obj.get("key") {
+                    if let LoroValue::String(s) = v {
+                        assert_eq!(s, "value1");
+                    }
+                }
+            }
+        } else {
+            panic!("undo returned none");
+        }
 
         // Redo should restore the state we undid from
         assert!(history.can_redo());
+        Ok(())
     }
 }

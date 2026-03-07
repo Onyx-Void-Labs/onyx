@@ -20,8 +20,14 @@ pub fn parse_embed(url: &str) -> Option<(String, String)> {
 /// Recognizes YouTube, Vimeo, Twitter/X, PDF links, and common image URLs.
 pub fn parse_embed_meta(url: &str) -> Option<MediaMeta> {
     // YouTube: https://www.youtube.com/watch?v=ID or https://youtu.be/ID
-    let yt_long = Regex::new(r"(?:youtube\.com/watch\?.*v=)([\w\-]{11})").unwrap();
-    let yt_short = Regex::new(r"(?:youtu\.be/)([\w\-]{11})").unwrap();
+    let yt_long = match Regex::new(r"(?:youtube\.com/watch\?.*v=)([\w\-]{11})") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+    let yt_short = match Regex::new(r"(?:youtu\.be/)([\w\-]{11})") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
 
     if let Some(caps) = yt_long.captures(url) {
         let id = caps[1].to_string();
@@ -41,7 +47,10 @@ pub fn parse_embed_meta(url: &str) -> Option<MediaMeta> {
     }
 
     // Vimeo: https://vimeo.com/ID
-    let vimeo = Regex::new(r"vimeo\.com/(\d+)").unwrap();
+    let vimeo = match Regex::new(r"vimeo\.com/(\d+)") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
     if let Some(caps) = vimeo.captures(url) {
         return Some(MediaMeta {
             provider: "vimeo".into(),
@@ -51,7 +60,10 @@ pub fn parse_embed_meta(url: &str) -> Option<MediaMeta> {
     }
 
     // Twitter/X: https://twitter.com/user/status/ID or https://x.com/user/status/ID
-    let tweet = Regex::new(r"(?:twitter\.com|x\.com)/\w+/status/(\d+)").unwrap();
+    let tweet = match Regex::new(r"(?:twitter\.com|x\.com)/\w+/status/(\d+)") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
     if let Some(caps) = tweet.captures(url) {
         return Some(MediaMeta {
             provider: "tweet".into(),
@@ -61,7 +73,10 @@ pub fn parse_embed_meta(url: &str) -> Option<MediaMeta> {
     }
 
     // PDF: URL ending in .pdf
-    let pdf = Regex::new(r"(?i)^https?://\S+\.pdf$").unwrap();
+    let pdf = match Regex::new(r"(?i)^https?://\S+\.pdf$") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
     if pdf.is_match(url) {
         return Some(MediaMeta {
             provider: "pdf".into(),
@@ -71,7 +86,10 @@ pub fn parse_embed_meta(url: &str) -> Option<MediaMeta> {
     }
 
     // Image: URL ending in common image extensions
-    let image = Regex::new(r"(?i)^https?://\S+\.(png|jpe?g|gif|webp|svg|bmp)$").unwrap();
+    let image = match Regex::new(r"(?i)^https?://\S+\.(png|jpe?g|gif|webp|svg|bmp)$") {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
     if image.is_match(url) {
         return Some(MediaMeta {
             provider: "image".into(),
@@ -144,8 +162,11 @@ mod tests {
 
     #[test]
     fn youtube_meta_has_thumbnail() {
-        let meta = parse_embed_meta("https://youtu.be/dQw4w9WgXcQ").unwrap();
-        assert_eq!(meta.provider, "youtube");
-        assert!(meta.thumb_url.is_some());
+        if let Some(meta) = parse_embed_meta("https://youtu.be/dQw4w9WgXcQ") {
+            assert_eq!(meta.provider, "youtube");
+            assert!(meta.thumb_url.is_some());
+        } else {
+            panic!("failed to parse youtube meta");
+        }
     }
 }

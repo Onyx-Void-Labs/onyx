@@ -1,24 +1,33 @@
 // ─── Onyx Core — Tantivy Full-Text Search Index ────────────────────
-// In-memory Tantivy index for fast full-text search across notes.
+// MmapDirectory-backed Tantivy index for memory-efficient full-text search.
 // ───────────────────────────────────────────────────────────────────
 
-use anyhow::Result;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
+use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Schema, Value, STORED, TEXT};
 use tantivy::{doc, Index, IndexWriter, ReloadPolicy};
 
 use crate::blocks::Block;
 
-/// Full-text search index backed by Tantivy.
+/// Full-text search index backed by Tantivy (MmapDirectory).
 pub struct SearchIndex {
     index: Index,
     writer: IndexWriter,
     schema: Schema,
 }
 
+/// Return the on-disk search index path (~/.onyx/search/).
+fn search_index_dir() -> PathBuf {
+    let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join(".onyx").join("search")
+}
+
 impl SearchIndex {
-    /// Create a new in-memory search index.
+    /// Create or open the MmapDirectory-backed search index.
     pub fn new() -> Result<Self> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("title", TEXT | STORED);
@@ -27,7 +36,12 @@ impl SearchIndex {
         schema_builder.add_text_field("note_id", TEXT | STORED);
         let schema = schema_builder.build();
 
-        let index = Index::create_in_ram(schema.clone());
+        let dir_path = search_index_dir();
+        std::fs::create_dir_all(&dir_path).context("create search index directory")?;
+        let mmap_dir = MmapDirectory::open(&dir_path).context("open MmapDirectory")?;
+
+        let index = Index::open_or_create(mmap_dir, schema.clone())
+            .context("open or create tantivy index")?;
         let writer = index.writer(15_000_000)?; // 15 MB heap
 
         Ok(Self {
@@ -45,10 +59,22 @@ impl SearchIndex {
         title: &str,
         blocks: &[Block],
     ) -> Result<()> {
-        let title_field = self.schema.get_field("title").unwrap();
-        let content_field = self.schema.get_field("content").unwrap();
-        let void_id_field = self.schema.get_field("void_id").unwrap();
-        let note_id_field = self.schema.get_field("note_id").unwrap();
+        let title_field = self
+            .schema
+            .get_field("title")
+            .context("title field missing from schema")?;
+        let content_field = self
+            .schema
+            .get_field("content")
+            .context("content field missing from schema")?;
+        let void_id_field = self
+            .schema
+            .get_field("void_id")
+            .context("void_id field missing from schema")?;
+        let note_id_field = self
+            .schema
+            .get_field("note_id")
+            .context("note_id field missing from schema")?;
 
         // Remove previous version of this note
         let term = tantivy::Term::from_field_text(note_id_field, note_id);
@@ -81,9 +107,18 @@ impl SearchIndex {
             .try_into()?;
         let searcher = reader.searcher();
 
-        let title_field = self.schema.get_field("title").unwrap();
-        let content_field = self.schema.get_field("content").unwrap();
-        let note_id_field = self.schema.get_field("note_id").unwrap();
+        let title_field = self
+            .schema
+            .get_field("title")
+            .context("title field missing from schema")?;
+        let content_field = self
+            .schema
+            .get_field("content")
+            .context("content field missing from schema")?;
+        let note_id_field = self
+            .schema
+            .get_field("note_id")
+            .context("note_id field missing from schema")?;
 
         let query_parser = QueryParser::for_index(&self.index, vec![title_field, content_field]);
         let parsed = query_parser.parse_query(query)?;
@@ -105,7 +140,10 @@ impl SearchIndex {
 
     /// Remove a note from the index.
     pub fn remove_note(&mut self, note_id: &str) -> Result<()> {
-        let note_id_field = self.schema.get_field("note_id").unwrap();
+        let note_id_field = self
+            .schema
+            .get_field("note_id")
+            .context("note_id field missing from schema")?;
         let term = tantivy::Term::from_field_text(note_id_field, note_id);
         self.writer.delete_term(term);
         self.writer.commit()?;
@@ -128,20 +166,21 @@ mod tests {
     }
 
     #[test]
-    fn index_and_search() {
-        let mut idx = SearchIndex::new().unwrap();
+    fn index_and_search() -> Result<()> {
+        let mut idx = SearchIndex::new()?;
         let blocks = vec![make_block("Rust is a systems programming language")];
-        idx.index_note("note-1", "void-1", "Rust Notes", &blocks)
-            .unwrap();
+        idx.index_note("note-1", "void-1", "Rust Notes", &blocks)?;
 
-        let results = idx.search("rust", 10).unwrap();
+        let results = idx.search("rust", 10)?;
         assert!(results.contains(&"note-1".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn search_no_results() {
-        let idx = SearchIndex::new().unwrap();
-        let results = idx.search("nonexistent", 10).unwrap();
+    fn search_no_results() -> Result<()> {
+        let idx = SearchIndex::new()?;
+        let results = idx.search("nonexistent", 10)?;
         assert!(results.is_empty());
+        Ok(())
     }
 }

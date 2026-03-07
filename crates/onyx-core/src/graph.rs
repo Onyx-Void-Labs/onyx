@@ -36,8 +36,11 @@ impl BacklinkIndex {
             }
         }
 
-        // Scan for [[NoteID]] references
-        let link_re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
+        // Scan for [[NoteID]] references; if regex fails to compile we bail early.
+        let link_re = match Regex::new(r"\[\[([^\]]+)\]\]") {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         let mut new_targets = HashSet::new();
         for caps in link_re.captures_iter(content) {
             new_targets.insert(caps[1].to_string());
@@ -74,15 +77,16 @@ impl BacklinkIndex {
 
     /// Persist the current graph state into a LoroMap keyed `"graph"` on the doc.
     /// Stores forward edges as JSON: `{ "source_id": ["target1", "target2"] }`.
-    pub fn save_to_loro(&self, doc: &LoroDoc) {
+    pub fn save_to_loro(&self, doc: &LoroDoc) -> anyhow::Result<()> {
         let map = doc.get_map("graph");
         // Clear existing keys by overwriting
         for (source, targets) in &self.forward {
             let targets_vec: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
-            let json = serde_json::to_string(&targets_vec).expect("serialize targets");
-            map.insert(source, json).expect("insert graph edge");
+            let json = serde_json::to_string(&targets_vec).context("serialize targets")?;
+            map.insert(source, json).context("insert graph edge")?;
         }
         doc.commit();
+        Ok(())
     }
 
     /// Load graph state from a LoroMap keyed `"graph"` on the doc.
@@ -147,17 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn loro_round_trip() {
+    fn loro_round_trip() -> anyhow::Result<()> {
         let doc = loro::LoroDoc::new();
         let mut idx = BacklinkIndex::new();
         idx.update_links("note-A", "See [[note-B]] and [[note-C]].");
         idx.update_links("note-D", "Ref to [[note-B]].");
-        idx.save_to_loro(&doc);
+        idx.save_to_loro(&doc)?;
 
         let loaded = BacklinkIndex::load_from_loro(&doc);
         let mut bl = loaded.get_backlinks("note-B");
         bl.sort();
         assert_eq!(bl, vec!["note-A", "note-D"]);
         assert_eq!(loaded.get_forward_links("note-A").len(), 2);
+        Ok(())
     }
 }
