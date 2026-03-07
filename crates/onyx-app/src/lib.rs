@@ -18,7 +18,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
 use widgets::text::SimpleText;
-use widgets::titlebar::TitleBar;
+use widgets::titlebar;
+use widgets::Widget;
 
 /// Onyx Black — #09090b
 const ONYX_BLACK: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
@@ -68,7 +69,6 @@ pub struct OnyxApp {
     layout_cx: LayoutContext<Brush>,
     title_text: SimpleText,
     dock: widgets::dock::CommandDock,
-    titlebar: TitleBar,
     /// When true, `RedrawRequested` will continuously schedule redraws.
     is_animating: bool,
     /// Last known cursor position (logical pixels).
@@ -77,6 +77,8 @@ pub struct OnyxApp {
     window_size: (f32, f32),
     /// Display scale factor (physical / logical).
     scale_factor: f64,
+    /// Which titlebar button is currently hovered.
+    hover_button: Option<titlebar::HoveredButton>,
     /// For double-click detection on the title bar.
     last_click_time: Option<std::time::Instant>,
 }
@@ -94,11 +96,11 @@ impl Default for OnyxApp {
                 peniko::Color::from_rgba8(228, 228, 231, 255),
             ),
             dock: widgets::dock::CommandDock::new(),
-            titlebar: TitleBar::new(),
             is_animating: false,
             cursor_pos: (0.0, 0.0),
             window_size: (1280.0, 800.0),
             scale_factor: 1.0,
+            hover_button: None,
             last_click_time: None,
         }
     }
@@ -161,23 +163,33 @@ impl OnyxApp {
     /// Build the vello Scene for the current frame.
     fn render_scene(
         scene: &mut Scene,
-        width: f32,
-        height: f32,
+        width: f64,
+        height: f64,
         title: &SimpleText,
         dock: &widgets::dock::CommandDock,
-        titlebar: &TitleBar,
+        hover_button: Option<titlebar::HoveredButton>,
     ) {
         scene.reset();
 
         // --- Title bar chrome (logical coords) ---
-        titlebar.paint(scene, width, height);
+        let mut paint_cx = widgets::PaintCtx { scene };
+        titlebar::paint(
+            &mut paint_cx,
+            0.0,
+            0.0,
+            width as f32,
+            height as f32,
+            hover_button,
+        );
+        let scene = paint_cx.scene;
 
         // "Onyx Void" text centered horizontally, below the title bar.
-        let center_x = width as f64 / 2.0;
-        title.draw(scene, center_x - 80.0, height as f64 / 2.0 + 48.0);
+        let center_x = width / 2.0;
+        title.draw(scene, center_x - 80.0, height / 2.0 + 48.0);
 
         // Draw the command dock.
-        dock.paint(scene, width, height);
+        let mut paint_cx = widgets::PaintCtx { scene };
+        dock.paint(&mut paint_cx, 0.0, 0.0);
     }
 }
 
@@ -272,6 +284,9 @@ impl ApplicationHandler for OnyxApp {
         // Store scale factor and physical window size.
         self.scale_factor = window.scale_factor();
         self.window_size = (size.width.max(1) as f32, size.height.max(1) as f32);
+        let s = self.scale_factor as f32;
+        self.dock.window_width = (self.window_size.0 / s) as f64;
+        self.dock.window_height = (self.window_size.1 / s) as f64;
 
         self.state = Some(RenderState {
             window,
@@ -313,6 +328,9 @@ impl ApplicationHandler for OnyxApp {
                 // Store PHYSICAL size; derive logical via scale_factor.
                 self.scale_factor = state.window.scale_factor();
                 self.window_size = (w as f32, h as f32);
+                let s = self.scale_factor as f32;
+                self.dock.window_width = (w as f32 / s) as f64;
+                self.dock.window_height = (h as f32 / s) as f64;
                 state.window.request_redraw();
             }
 
@@ -325,16 +343,15 @@ impl ApplicationHandler for OnyxApp {
                 let lw = self.window_size.0 / s;
                 let lh = self.window_size.1 / s;
 
-                // Set cursor icon and hover state based on hit-test region.
-                let region = hit_test_region(self.cursor_pos.0, self.cursor_pos.1, lw, lh);
-                let new_hover = match region {
-                    HitRegion::Close | HitRegion::Maximise | HitRegion::Minimise => Some(region),
-                    _ => None,
-                };
-                if new_hover != self.titlebar.hover {
-                    self.titlebar.hover = new_hover;
+                // Update hover state for title-bar buttons.
+                let new_hover = titlebar::hovered_button(self.cursor_pos.0, self.cursor_pos.1, lw);
+                if new_hover != self.hover_button {
+                    self.hover_button = new_hover;
                     state.window.request_redraw();
                 }
+
+                // Set cursor icon based on hit-test region.
+                let region = hit_test_region(self.cursor_pos.0, self.cursor_pos.1, lw, lh);
                 let icon = match region {
                     HitRegion::ResizeN => CursorIcon::NResize,
                     HitRegion::ResizeS => CursorIcon::SResize,
@@ -442,9 +459,11 @@ impl ApplicationHandler for OnyxApp {
             }
 
             WindowEvent::RedrawRequested => {
+                let phys_w = state.config.width;
+                let phys_h = state.config.height;
                 let s = self.scale_factor as f32;
-                let lw = self.window_size.0 / s;
-                let lh = self.window_size.1 / s;
+                let logical_w = (phys_w as f32 / s) as u32;
+                let logical_h = (phys_h as f32 / s) as u32;
 
                 // Build text layout if needed (first frame or after changes).
                 if self.title_text.layout.is_none() {
@@ -454,11 +473,11 @@ impl ApplicationHandler for OnyxApp {
 
                 Self::render_scene(
                     &mut self.scene,
-                    lw,
-                    lh,
+                    logical_w as f64,
+                    logical_h as f64,
                     &self.title_text,
                     &self.dock,
-                    &self.titlebar,
+                    self.hover_button,
                 );
 
                 let surface_texture = match state.surface.get_current_texture() {
@@ -483,8 +502,8 @@ impl ApplicationHandler for OnyxApp {
                         &state.target_view,
                         &vello::RenderParams {
                             base_color: ONYX_BLACK,
-                            width: lw as u32,
-                            height: lh as u32,
+                            width: logical_w,
+                            height: logical_h,
                             antialiasing_method: AaConfig::Msaa16,
                         },
                     )

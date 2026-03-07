@@ -1,49 +1,66 @@
 use vello::kurbo::{Affine, Circle, RoundedRect};
-use vello::peniko::{Color, Fill};
-use vello::Scene;
+use vello::peniko::{self, Fill};
+
+use super::{LayoutCtx, PaintCtx, Widget};
+
+const DOCK_WIDTH: f64 = 320.0;
+const DOCK_HEIGHT: f64 = 52.0;
+const CORNER_RADIUS: f64 = 26.0;
+const BUTTON_RADIUS: f64 = 20.0;
+const BUTTON_SPACING: f64 = 48.0;
+
+/// Semi-transparent zinc-900 pill: rgba(24, 24, 27, 0.8).
+const DOCK_COLOR: peniko::Color = peniko::Color::from_rgba8(24, 24, 27, 204);
+/// Zinc-700 circle placeholders.
+const BUTTON_COLOR: peniko::Color = peniko::Color::from_rgba8(0x3f, 0x3f, 0x46, 0xff);
 
 /// A rounded-rect command dock pinned to the bottom-center of the window.
-pub struct CommandDock;
+pub struct CommandDock {
+    pub window_height: f64,
+    pub window_width: f64,
+}
 
 impl CommandDock {
     pub fn new() -> Self {
-        Self
+        Self {
+            window_height: 800.0,
+            window_width: 1280.0,
+        }
+    }
+}
+
+impl Widget for CommandDock {
+    fn layout(&mut self, _cx: &mut LayoutCtx, _max_width: f32) -> (f32, f32) {
+        (DOCK_WIDTH as f32, DOCK_HEIGHT as f32)
     }
 
-    /// Paint the dock pill and its three placeholder circles.
-    /// `window_w` / `window_h` are **logical** pixels.
-    pub fn paint(&self, scene: &mut Scene, window_w: f32, window_h: f32) {
-        let pill_w: f64 = 320.;
-        let pill_h: f64 = 52.;
-        let pill_x = (window_w as f64 - pill_w) / 2.;
-        let pill_y = window_h as f64 - 72.;
+    fn paint(&self, cx: &mut PaintCtx, _x: f32, _y: f32) {
+        let dock_x = (self.window_width - DOCK_WIDTH) / 2.0;
+        let dock_y = self.window_height - 72.0;
 
-        // Three circles CENTERED inside pill:
-        // Total span of 3 circles at 48px spacing = 96px
-        // Center of pill = pill_x + 160.
-        // circle centers: pill_x+112, pill_x+160, pill_x+208
-        let cy = pill_y + pill_h / 2.;
-        let c1x = pill_x + 112.;
-        let c2x = pill_x + 160.;
-        let c3x = pill_x + 208.;
-        let cr = 10_f64; // radius
-
-        // Draw pill first, then circles on top
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(24, 24, 27, 204),
-            None,
-            &RoundedRect::new(pill_x, pill_y, pill_x + pill_w, pill_y + pill_h, 26.),
+        // Pill background.
+        let pill = RoundedRect::new(
+            dock_x,
+            dock_y,
+            dock_x + DOCK_WIDTH,
+            dock_y + DOCK_HEIGHT,
+            CORNER_RADIUS,
         );
+        cx.scene
+            .fill(Fill::NonZero, Affine::IDENTITY, DOCK_COLOR, None, &pill);
 
-        for cx in [c1x, c2x, c3x] {
-            scene.fill(
+        // Three placeholder circle buttons centered inside the pill.
+        let center_y = dock_y + DOCK_HEIGHT / 2.0;
+        let center_x = self.window_width / 2.0;
+
+        for i in [-1i32, 0, 1] {
+            let bx = center_x + (i as f64) * BUTTON_SPACING;
+            cx.scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
-                Color::from_rgba8(63, 63, 70, 255),
+                BUTTON_COLOR,
                 None,
-                &Circle::new((cx, cy), cr),
+                &Circle::new((bx, center_y), BUTTON_RADIUS),
             );
         }
     }
