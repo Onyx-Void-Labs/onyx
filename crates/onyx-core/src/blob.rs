@@ -51,9 +51,15 @@ impl BlobStore {
     /// Store a blob and return its SHA-256 hex hash.
     pub fn store_blob(&mut self, data: &[u8], mime: &str) -> String {
         // encrypt blob with workspace key
-        let key = crate::persistence::dev_encryption_key()
-            .expect("dev key");
-        let encrypted = crate::crypto::encrypt_data(data, &*key).expect("encrypt blob");
+        let key = crate::persistence::dev_encryption_key().expect("dev key");
+        let key = match crate::persistence::dev_encryption_key() {
+            Ok(k) => k,
+            Err(_) => return String::new(),
+        };
+        let encrypted = match crate::crypto::encrypt_data(data, &*key) {
+            Ok(e) => e,
+            Err(_) => return String::new(),
+        };
         let hash = Self::sha256_hex(&encrypted);
         self.blobs
             .entry(hash.clone())
@@ -86,14 +92,22 @@ impl BlobStore {
                     return Err(BlobError::Corruption);
                 }
                 // decrypt
-                let key = crate::persistence::dev_encryption_key()
-                    .expect("dev key");
+                let key =
+                    crate::persistence::dev_encryption_key().map_err(|_| BlobError::Corruption)?;
                 let data = crate::crypto::decrypt_data(encrypted, &*key)
                     .map_err(|_| BlobError::Corruption)?;
                 Ok(data)
             }
             None => Err(BlobError::NotFound),
         }
+    }
+
+    /// Delete a blob by its hash.
+    pub fn delete_blob(&mut self, hash: &str) -> anyhow::Result<()> {
+        self.blobs.remove(hash);
+        self.metadata.remove(hash);
+        self.refcounts.remove(hash);
+        Ok(())
     }
 
     /// Check if a blob exists.

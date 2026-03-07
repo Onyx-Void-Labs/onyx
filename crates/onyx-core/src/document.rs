@@ -1,3 +1,17 @@
+impl OnyxWorkspace {
+    /// Delete a node from the tree and remove from search index.
+    pub fn delete_node(&mut self, node_id: &str) -> anyhow::Result<()> {
+        // Remove from tree (actual logic may mark as deleted/collapsed)
+        if let Some(tree_id) = self.id_map.get(node_id) {
+            self.tree.delete(*tree_id)?;
+        }
+        // Remove from search index to prevent drift
+        if let Some(idx) = self.search_index.as_mut() {
+            idx.remove_note(node_id)?;
+        }
+        Ok(())
+    }
+}
 // ─── Onyx Core — Workspace Document (LoroTree + LoroMap) ───────────
 
 use std::collections::HashMap;

@@ -44,8 +44,14 @@ fn save_snapshot_bytes(snapshot: &[u8], path: &str) -> Result<()> {
     let tmp_path = format!("{}.tmp", path);
     let mut file = File::create(&tmp_path).context("create tmp file")?;
     file.write_all(&encrypted).context("write tmp file")?;
-    file.sync_all().context("fsync tmp file")?;
-    std::fs::rename(&tmp_path, dest).context("atomic rename")?;
+    if let Err(e) = file.sync_all() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, dest) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
 
     Ok(())
 }

@@ -1,3 +1,16 @@
+impl SearchIndex {
+    /// Remove a note from the index by note_id.
+    pub fn remove_note(&mut self, note_id: &str) -> anyhow::Result<()> {
+        let note_id_field = self
+            .schema
+            .get_field("note_id")
+            .context("note_id field missing from schema")?;
+        let term = tantivy::Term::from_field_text(note_id_field, note_id);
+        self.writer.delete_term(term);
+        self.writer.commit()?;
+        Ok(())
+    }
+}
 // ─── Onyx Core — Tantivy Full-Text Search Index ────────────────────
 // MmapDirectory-backed Tantivy index for memory-efficient full-text search.
 // EXCLUDED FROM ENCRYPTION: Tantivy manages its own mmap files and cannot
@@ -145,18 +158,6 @@ impl SearchIndex {
         }
 
         Ok(results)
-    }
-
-    /// Remove a note from the index.
-    pub fn remove_note(&mut self, note_id: &str) -> Result<()> {
-        let note_id_field = self
-            .schema
-            .get_field("note_id")
-            .context("note_id field missing from schema")?;
-        let term = tantivy::Term::from_field_text(note_id_field, note_id);
-        self.writer.delete_term(term);
-        self.writer.commit()?;
-        Ok(())
     }
 
     /// Rebuild the entire index from a workspace. This clears the index and

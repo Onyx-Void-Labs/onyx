@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // ── FSRS Constants ──────────────────────────────────────────────────
 
 const DECAY: f64 = -0.5;
-const FACTOR: f64 = 19.0 / 81.0; // 0.9^(1/DECAY) - 1
+const FACTOR: f64 = 1.0; // -0.5 / DECAY where DECAY is -0.5
 
 /// Default FSRS-4.5 parameters (w0..w16).
 const W: [f64; 17] = [
@@ -96,9 +96,7 @@ fn interval_for_retention(stability: f64) -> u32 {
     // R_target = DESIRED_RETENTION = 0.9
     // interval = stability * (ln(R_target) / ln(0.9))
     let interval = stability * (DESIRED_RETENTION.ln() / 0.9_f64.ln());
-    let days = interval.round().max(1.0);
-    let days_clamped = days.max(1.0).min(u32::MAX as f64);
-    days_clamped as u32
+    interval.round().max(1.0) as u32
 }
 
 /// Update difficulty after a review.
