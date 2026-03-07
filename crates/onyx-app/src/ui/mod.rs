@@ -1,9 +1,5 @@
 // ─── UI Module ─────────────────────────────────────────────────────
-// Houses the overlay UI components for the Singularity Engine.
-//
-//   • PathBar — fractal breadcrumb navigation (replaces sidebars)
-//   • GlassHud — side-docked tools with frosted glass panel
+// Overlay chrome components rendered with pure Vello vectors.
 // ────────────────────────────────────────────────────────────────────
 
-pub mod glass_hud;
-pub mod path_bar;
+pub mod chrome;

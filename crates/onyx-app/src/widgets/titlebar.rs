@@ -3,8 +3,8 @@ use vello::peniko::{self, Fill};
 
 use super::PaintCtx;
 
-const TITLE_H: f64 = 40.0;
-const BTN_W: f64 = 46.0;
+const TITLE_H: f64 = 54.0;
+const BTN_W: f64 = 58.0;
 
 /// Background — matches ONYX_BLACK so the seam is invisible.
 const BG_COLOR: peniko::Color = peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
@@ -31,13 +31,13 @@ pub fn hovered_button(cursor_x: f32, cursor_y: f32, window_w: f32) -> Option<Hov
         return None;
     }
     let w = window_w;
-    if cursor_x >= w - 46.0 {
+    if cursor_x >= w - BTN_W as f32 {
         return Some(HoveredButton::Close);
     }
-    if cursor_x >= w - 92.0 && cursor_x < w - 46.0 {
+    if cursor_x >= w - (BTN_W * 2.0) as f32 && cursor_x < w - BTN_W as f32 {
         return Some(HoveredButton::Maximise);
     }
-    if cursor_x >= w - 138.0 && cursor_x < w - 92.0 {
+    if cursor_x >= w - (BTN_W * 3.0) as f32 && cursor_x < w - (BTN_W * 2.0) as f32 {
         return Some(HoveredButton::Minimise);
     }
     None
@@ -54,6 +54,7 @@ pub fn paint(
     window_w: f32,
     _window_h: f32,
     hover: Option<HoveredButton>,
+    is_maximized: bool,
 ) {
     let window_w = window_w as f64;
 
@@ -79,27 +80,27 @@ pub fn paint(
         );
     }
     {
-        let cx_icon = close_x + 23.0;
-        let cy_icon = 20.0;
+        let cx_icon = close_x + BTN_W / 2.0;
+        let cy_icon = TITLE_H / 2.0;
         let color = if close_hover { ICON_WHITE } else { ICON_COLOR };
         cx.scene.stroke(
-            &Stroke::new(1.1),
+            &Stroke::new(1.3),
             Affine::IDENTITY,
             color,
             None,
             &Line::new(
-                (cx_icon - 5.5, cy_icon - 5.5),
-                (cx_icon + 5.5, cy_icon + 5.5),
+                (cx_icon - 7.0, cy_icon - 7.0),
+                (cx_icon + 7.0, cy_icon + 7.0),
             ),
         );
         cx.scene.stroke(
-            &Stroke::new(1.1),
+            &Stroke::new(1.3),
             Affine::IDENTITY,
             color,
             None,
             &Line::new(
-                (cx_icon + 5.5, cy_icon - 5.5),
-                (cx_icon - 5.5, cy_icon + 5.5),
+                (cx_icon + 7.0, cy_icon - 7.0),
+                (cx_icon - 7.0, cy_icon + 7.0),
             ),
         );
     }
@@ -116,15 +117,43 @@ pub fn paint(
         );
     }
     {
-        let cx_icon = max_x + 23.0;
-        let cy_icon = 20.0;
-        cx.scene.stroke(
-            &Stroke::new(1.0),
-            Affine::IDENTITY,
-            ICON_COLOR,
-            None,
-            &Rect::new(cx_icon - 9.0, cy_icon - 8.0, cx_icon + 9.0, cy_icon + 8.0),
-        );
+        let cx_icon = max_x + BTN_W / 2.0;
+        let cy_icon = TITLE_H / 2.0;
+        if is_maximized {
+            // Windows-style: two overlapping rectangles
+            // Back rectangle (offset up/left)
+            cx.scene.stroke(
+                &Stroke::new(1.1),
+                Affine::IDENTITY,
+                ICON_COLOR,
+                None,
+                &Rect::new(cx_icon - 8.0, cy_icon - 6.0, cx_icon + 2.0, cy_icon + 8.0),
+            );
+            // Front rectangle (offset down/right, filled background)
+            cx.scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                BG_COLOR,
+                None,
+                &Rect::new(cx_icon - 2.0, cy_icon - 2.0, cx_icon + 8.0, cy_icon + 12.0),
+            );
+            cx.scene.stroke(
+                &Stroke::new(1.1),
+                Affine::IDENTITY,
+                ICON_COLOR,
+                None,
+                &Rect::new(cx_icon - 2.0, cy_icon - 2.0, cx_icon + 8.0, cy_icon + 12.0),
+            );
+        } else {
+            // Windows-style: single outlined square
+            cx.scene.stroke(
+                &Stroke::new(1.1),
+                Affine::IDENTITY,
+                ICON_COLOR,
+                None,
+                &Rect::new(cx_icon - 10.0, cy_icon - 10.0, cx_icon + 10.0, cy_icon + 10.0),
+            );
+        }
     }
 
     // --- Minimise button ---
@@ -139,16 +168,16 @@ pub fn paint(
         );
     }
     {
-        let cx_icon = min_x + 23.0;
-        let cy_icon = 20.0;
+        let cx_icon = min_x + BTN_W / 2.0;
+        let cy_icon = TITLE_H / 2.0;
         cx.scene.stroke(
-            &Stroke::new(1.0),
+            &Stroke::new(1.1),
             Affine::IDENTITY,
             ICON_COLOR,
             None,
             &Line::new(
-                (cx_icon - 6.0, cy_icon + 3.0),
-                (cx_icon + 6.0, cy_icon + 3.0),
+                (cx_icon - 8.0, cy_icon + 6.0),
+                (cx_icon + 8.0, cy_icon + 6.0),
             ),
         );
     }

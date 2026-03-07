@@ -1,195 +1,459 @@
-﻿// --- Makepad Application Shell ---
-// Minimal live_design! skeleton - proves upstream Makepad compiles.
-// Backend modules (Cosmos, Physics, CRDT, Net) are preserved but
-// not wired to the UI until the rendering layer is rebuilt.
+// ─── Onyx Void — Application Orchestrator ──────────────────────────
+// Initialises Parley fonts, wgpu, Vello renderer, and the custom
+// borderless window.  Drives the render loop:
+//
+//   Background → Spine → Document rows → GlassHUD → WindowControls → Dock
+// ────────────────────────────────────────────────────────────────────
 
-use makepad_widgets::*;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 
-// -- Live Design --
+use parley::{FontContext, LayoutContext};
+use vello::kurbo::{Affine, Rect, RoundedRect, Size, Stroke};
+use vello::peniko::{self, Brush, Fill};
+use vello::wgpu;
+use vello::{AaConfig, Renderer, RendererOptions, Scene};
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{Window, WindowId};
 
-live_design! {
-    use link::theme::*;
-    use link::shaders::*;
-    use link::widgets::*;
+use crate::ui::chrome::{CommandDock, HoveredButton, PathBar, WindowControls};
+use crate::widgets::text::TextWidget;
+use crate::widgets::{LayoutContext as OnyxLayoutCtx, Widget};
+use crate::window::WindowContext;
 
-    // 1. Custom Button — flat matte SDF, no default Makepad chrome
-    OnyxButton = <View> {
-        width: Fit, height: Fit
-        padding: {left: 12.0, right: 12.0, top: 8.0, bottom: 8.0}
-        align: {x: 0.5, y: 0.5}
-        show_bg: true
+// ─── Palette ───────────────────────────────────────────────────────
 
-        draw_bg: {
-            instance hover: 0.0
-            instance down: 0.0
-            instance radius: 6.0
-            fn pixel(self) -> vec4 {
-                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius);
-                // Mix default -> hover -> down
-                let bg_color = mix(#18181b, mix(#27272a, #3f3f46, self.down), self.hover);
-                sdf.fill_keep(bg_color);
-                return sdf.result;
-            }
-        }
+/// Background — #09090b.
+const ONYX_BLACK: peniko::Color = peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
+/// Spine panel — slightly lighter.
+const SPINE_BG: peniko::Color = peniko::Color::from_rgba8(0x0f, 0x0f, 0x12, 0x60);
+/// Spine border — zinc-800.
+const SPINE_BORDER: peniko::Color = peniko::Color::from_rgba8(0x27, 0x27, 0x2a, 0x40);
+/// Primary text — zinc-200.
+const ZINC_200: peniko::Color = peniko::Color::from_rgba8(228, 228, 231, 255);
+/// Accent — blue-600.
+const BLUE_600: peniko::Color = peniko::Color::from_rgba8(0x25, 0x63, 0xeb, 0xff);
 
-        animator: {
-            hover = {
-                default: off
-                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {hover: 0.0}} }
-                on = { from: {all: Snap} apply: {draw_bg: {hover: 1.0}} }
-            }
-            down = {
-                default: off
-                off = { from: {all: Forward {duration: 0.1}} apply: {draw_bg: {down: 0.0}} }
-                on = { from: {all: Snap} apply: {draw_bg: {down: 1.0}} }
-            }
-        }
+// ─── Render State ──────────────────────────────────────────────────
 
-        label = <Label> {
-            draw_text: { color: #a1a1aa, text_style: {font_size: 11.0} }
+/// Live GPU state, created once the surface is ready.
+struct RenderState {
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: Renderer,
+    target_texture: wgpu::Texture,
+    target_view: wgpu::TextureView,
+    blitter: wgpu::util::TextureBlitter,
+}
+
+// ─── OnyxApp ───────────────────────────────────────────────────────
+
+/// Top-level application driven by `winit`.
+pub struct OnyxApp {
+    render: Option<RenderState>,
+    wctx: Option<WindowContext>,
+    scene: Scene,
+
+    // Typography
+    font_cx: FontContext,
+    layout_cx: LayoutContext<Brush>,
+
+    // Chrome
+    dock: CommandDock,
+    path_bar: PathBar,
+    hover_button: Option<HoveredButton>,
+
+    // Document content
+    title_text: TextWidget,
+    body_texts: Vec<TextWidget>,
+
+    // Flags
+    is_animating: bool,
+    layouts_dirty: bool,
+}
+
+impl Default for OnyxApp {
+    fn default() -> Self {
+        Self {
+            render: None,
+            wctx: None,
+            scene: Scene::new(),
+            font_cx: FontContext::new(),
+            layout_cx: LayoutContext::new(),
+            dock: CommandDock::new(),
+            path_bar: PathBar::new(&["Root", "Workspace"]),
+            hover_button: None,
+            title_text: TextWidget::new("Onyx Void", 28.0, ZINC_200),
+            body_texts: vec![TextWidget::new(
+                "Welcome to the void. Start typing to create.",
+                14.0,
+                peniko::Color::from_rgba8(0xa1, 0xa1, 0xaa, 0xff),
+            )],
+            is_animating: false,
+            layouts_dirty: true,
         }
     }
+}
 
-    // 2. The Glass Dock — SDF pill shader with border stroke
-    CommandDock = <View> {
-        width: Fit, height: Fit
-        flow: Right, spacing: 10.0, padding: 8.0
-        align: {x: 0.5, y: 0.5}
-        show_bg: true
+impl OnyxApp {
+    /// Run all text layout passes when dirty.
+    fn build_layouts(&mut self) {
+        if !self.layouts_dirty {
+            return;
+        }
+        let mut cx = OnyxLayoutCtx {
+            font_cx: &mut self.font_cx,
+            layout_cx: &mut self.layout_cx,
+            scale: 1.0,
+        };
+        let wide = Size::new(850.0, 2000.0);
+        self.title_text.layout(&mut cx, wide);
+        for t in &mut self.body_texts {
+            t.layout(&mut cx, wide);
+        }
+        self.dock.layout_labels(&mut cx);
+        self.path_bar.layout_all(&mut cx);
+        self.layouts_dirty = false;
+    }
 
-        draw_bg: {
-            instance radius: 20.0
-            instance border_width: 1.0
-            instance border_color: #27272a
-            color: #09090bE6
+    /// Build the complete frame scene.
+    fn render_scene(
+        scene: &mut Scene,
+        phys_w: f64,
+        phys_h: f64,
+        title: &TextWidget,
+        body: &[TextWidget],
+        dock: &CommandDock,
+        path_bar: &PathBar,
+        hover_button: Option<HoveredButton>,
+        is_maximized: bool,
+    ) {
+        scene.reset();
 
-            fn pixel(self) -> vec4 {
-                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                // Offset by 1.0px to prevent anti-alias clipping on the outer stroke
-                sdf.box(
-                    1.0, 1.0,
-                    self.rect_size.x - 2.0,
-                    self.rect_size.y - 2.0,
-                    self.radius
+        // 1. Background
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            ONYX_BLACK,
+            None,
+            &Rect::new(0.0, 0.0, phys_w, phys_h),
+        );
+
+        // 2. Window Controls (top)
+        WindowControls::draw(scene, phys_w, hover_button, is_maximized);
+
+        // 3. PathBar (top-left, below title bar)
+        path_bar.draw(scene, 54.0);
+
+        // 4. Spine — 850px centered rect
+        let spine_w = 850.0_f64.min(phys_w - 60.0);
+        let spine_x = (phys_w - spine_w) / 2.0;
+        let spine_y = 110.0;
+        let spine_h = phys_h - 200.0;
+        let spine_rect =
+            RoundedRect::new(spine_x, spine_y, spine_x + spine_w, spine_y + spine_h, 8.0);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, SPINE_BG, None, &spine_rect);
+        scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            SPINE_BORDER,
+            None,
+            &spine_rect,
+        );
+
+        // 5. Document title
+        let title_x = spine_x + 40.0;
+        let title_y = spine_y + 40.0;
+        let title_sz = title.cached_size();
+        title.draw(
+            scene,
+            Rect::new(
+                title_x,
+                title_y,
+                title_x + title_sz.width,
+                title_y + title_sz.height,
+            ),
+        );
+
+        // 6. Document body rows
+        let mut row_y = title_y + title_sz.height + 24.0;
+        for text in body {
+            let sz = text.cached_size();
+            text.draw(
+                scene,
+                Rect::new(title_x, row_y, title_x + sz.width, row_y + sz.height),
+            );
+            row_y += sz.height + 12.0;
+        }
+
+        // 7. CommandDock (bottom)
+        dock.draw(scene, phys_w, phys_h);
+    }
+}
+
+// ─── ApplicationHandler ────────────────────────────────────────────
+
+impl ApplicationHandler for OnyxApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.render.is_some() {
+            return;
+        }
+
+        let window_attrs = Window::default_attributes()
+            .with_title("Onyx Void")
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_inner_size(LogicalSize::new(1280.0_f64, 800.0));
+
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .expect("failed to create window"),
+        );
+
+        // Windows OS drop-shadow for borderless windows.
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowExtWindows;
+            window.set_undecorated_shadow(true);
+        }
+
+        // ── wgpu bootstrap ──
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(Arc::clone(&window))
+            .expect("failed to create surface");
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
+        .expect("no suitable GPU adapter");
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("onyx-device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
+        .expect("failed to create wgpu device");
+
+        let size = window.inner_size();
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| {
+                matches!(
+                    f,
+                    wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm
+                )
+            })
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let (target_texture, target_view) =
+            create_target_texture(&device, config.width, config.height);
+        let blitter = wgpu::util::TextureBlitter::new(&device, surface_format);
+
+        let renderer = Renderer::new(
+            &device,
+            RendererOptions {
+                use_cpu: false,
+                antialiasing_support: vello::AaSupport::all(),
+                num_init_threads: NonZeroUsize::new(1),
+                ..Default::default()
+            },
+        )
+        .expect("failed to create vello renderer");
+
+        self.wctx = Some(WindowContext::new(Arc::clone(&window)));
+
+        self.render = Some(RenderState {
+            surface,
+            config,
+            device,
+            queue,
+            renderer,
+            target_texture,
+            target_view,
+            blitter,
+        });
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if self.render.is_none() || self.wctx.is_none() {
+            return;
+        }
+
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+
+            WindowEvent::Resized(new_size) => {
+                let rs = self.render.as_mut().unwrap();
+                let wctx = self.wctx.as_mut().unwrap();
+                let w = new_size.width.max(1);
+                let h = new_size.height.max(1);
+                rs.config.width = w;
+                rs.config.height = h;
+                rs.surface.configure(&rs.device, &rs.config);
+                let (tex, view) = create_target_texture(&rs.device, w, h);
+                rs.target_texture = tex;
+                rs.target_view = view;
+                wctx.resize(w, h);
+                wctx.window.request_redraw();
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                let wctx = self.wctx.as_mut().unwrap();
+                wctx.update_cursor(position.x as f32, position.y as f32);
+
+                let new_hover = WindowControls::hovered_button(
+                    wctx.cursor_pos.0,
+                    wctx.cursor_pos.1,
+                    wctx.window_size.0,
                 );
-                sdf.fill_keep(self.color);
-                sdf.stroke(self.border_color, self.border_width);
-                return sdf.result;
+                if new_hover != self.hover_button {
+                    self.hover_button = new_hover;
+                    wctx.window.request_redraw();
+                }
             }
-        }
 
-        <OnyxButton> { label = { text: "✦ WRITE" } }
-        <OnyxButton> { label = { text: "▨ PAINT" } }
-        <OnyxButton> { label = { text: "✉ MAIL" } }
-        <OnyxButton> { label = { text: "⚙ SETTINGS" } }
-    }
-
-    // 3. The Path Bar (Breadcrumbs)
-    PathBar = <View> {
-        width: Fill, height: Fit
-        flow: Right, spacing: 5.0, padding: {left: 30.0, top: 20.0, bottom: 20.0}
-
-        <Label> { text: "Root", draw_text: { color: #a1a1aa, text_style: {font_size: 12.0} } }
-        <Label> { text: "/", draw_text: { color: #3f3f46, text_style: {font_size: 12.0} } }
-        <Label> { text: "Workspace", draw_text: { color: #f4f4f5, text_style: {font_size: 12.0} } }
-    }
-
-    // 4. A single document slot — transparent by default, SDF border in paint mode
-    OnyxSlot = <View> {
-        width: Fill, height: Fit
-        padding: 15.0
-        show_bg: true
-        draw_bg: {
-            color: #00000000
-            instance border_color: #27272a
-            instance border_width: 1.0
-            instance is_painting: 0.0
-
-            fn pixel(self) -> vec4 {
-                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 4.0);
-                sdf.stroke(self.border_color, self.border_width * self.is_painting);
-                return sdf.result;
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                let wctx = self.wctx.as_mut().unwrap();
+                wctx.scale_factor = scale_factor;
+                self.layouts_dirty = true;
+                wctx.window.request_redraw();
             }
-        }
-        <Label> { text: "Type here...", draw_text: { color: #52525b, text_style: {font_size: 14.0} } }
-    }
 
-    App = {{App}} {
-        ui: <Window> {
-            window: { inner_size: vec2(1280, 800) },
-            pass: { clear_color: #09090b },
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                let wctx = self.wctx.as_mut().unwrap();
+                wctx.handle_click(event_loop);
+                wctx.window.request_redraw();
+            }
 
-            body = <View> {
-                width: Fill, height: Fill
-                flow: Overlay
+            WindowEvent::RedrawRequested => {
+                // Build text layouts before borrowing render state.
+                self.build_layouts();
 
-                // MAIN CONTENT LAYER
-                <View> {
-                    width: Fill, height: Fill
-                    flow: Down
+                let rs = self.render.as_mut().unwrap();
+                let wctx = self.wctx.as_ref().unwrap();
+                let phys_w = rs.config.width;
+                let phys_h = rs.config.height;
 
-                    <PathBar> {}
+                Self::render_scene(
+                    &mut self.scene,
+                    phys_w as f64,
+                    phys_h as f64,
+                    &self.title_text,
+                    &self.body_texts,
+                    &self.dock,
+                    &self.path_bar,
+                    self.hover_button,
+                    wctx.window.is_maximized(),
+                );
 
-                    // The Document Canvas
-                    <View> {
-                        width: Fill, height: Fill
-                        align: {x: 0.5, y: 0.0}
-                        padding: {top: 40.0, bottom: 100.0}
-
-                        // The Document Column (max width for readability)
-                        <View> {
-                            width: 850.0, height: Fit
-                            flow: Down, spacing: 10.0
-
-                            // Row 1 (Title)
-                            <View> {
-                                width: Fill, height: Fit
-                                padding: {bottom: 20.0}
-                                <Label> { text: "MATH2411: Calculus Matrix", draw_text: { color: #f4f4f5, text_style: {font_size: 28.0} } }
-                            }
-
-                            // Row 2 (Content)
-                            <View> {
-                                width: Fill, height: Fit
-                                flow: Right, spacing: 15.0
-                                <OnyxSlot> {}
-                            }
-                        }
+                let surface_texture = match rs.surface.get_current_texture() {
+                    Ok(t) => t,
+                    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                        rs.surface.configure(&rs.device, &rs.config);
+                        return;
                     }
-                }
+                    Err(e) => {
+                        tracing::error!("surface error: {e}");
+                        return;
+                    }
+                };
 
-                // HUD LAYER (Floating at bottom)
-                <View> {
-                    width: Fill, height: Fill
-                    align: {x: 0.5, y: 1.0}
-                    padding: {bottom: 30.0}
-                    <CommandDock> {}
+                rs.renderer
+                    .render_to_texture(
+                        &rs.device,
+                        &rs.queue,
+                        &self.scene,
+                        &rs.target_view,
+                        &vello::RenderParams {
+                            base_color: ONYX_BLACK,
+                            width: phys_w,
+                            height: phys_h,
+                            antialiasing_method: AaConfig::Area,
+                        },
+                    )
+                    .expect("vello render failed");
+
+                let surface_view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let mut encoder =
+                    rs.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("blit"),
+                        });
+                rs.blitter
+                    .copy(&rs.device, &mut encoder, &rs.target_view, &surface_view);
+                rs.queue.submit(Some(encoder.finish()));
+
+                surface_texture.present();
+
+                if self.is_animating {
+                    wctx.window.request_redraw();
                 }
             }
+
+            _ => {}
         }
     }
 }
 
-// -- App Struct --
+// ─── Helpers ───────────────────────────────────────────────────────
 
-app_main!(App);
-
-#[derive(Live, LiveHook)]
-pub struct App {
-    #[live]
-    ui: WidgetRef,
-}
-
-impl LiveRegister for App {
-    fn live_register(cx: &mut Cx) {
-        makepad_widgets::live_design(cx);
-    }
-}
-
-impl AppMain for App {
-    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
-        self.ui.handle_event(cx, event, &mut Scope::empty());
-    }
+/// Create an intermediate Rgba8Unorm texture for vello's compute pipeline.
+fn create_target_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("vello-target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }

@@ -1,23 +1,51 @@
-pub mod dock;
+// ─── Onyx Void — Micro Widget Framework ────────────────────────────
+// Lightweight trait-based widget system. Pure Vello rendering,
+// no HTML/CSS, no retained mode. Layout → Draw → Event.
+// ────────────────────────────────────────────────────────────────────
+
 pub mod text;
-pub mod titlebar;
 
+use vello::kurbo::{Rect, Size};
 use vello::Scene;
+use winit::event::WindowEvent;
 
-pub struct LayoutCtx<'a> {
+// ─── Contexts ──────────────────────────────────────────────────────
+
+/// Layout context passed during the layout pass.
+pub struct LayoutContext<'a> {
     pub font_cx: &'a mut parley::FontContext,
     pub layout_cx: &'a mut parley::LayoutContext<vello::peniko::Brush>,
     pub scale: f32,
 }
 
-pub struct PaintCtx<'a> {
-    pub scene: &'a mut Scene,
+// ─── Action ────────────────────────────────────────────────────────
+
+/// Result of handling an input event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// No state changed.
+    None,
+    /// Widget needs a repaint.
+    Redraw,
 }
 
+// ─── Widget Trait ──────────────────────────────────────────────────
+
+/// Core widget trait for the Onyx micro-framework.
+///
+/// Every visual element implements this: layout determines size,
+/// draw renders into a `vello::Scene`, and handle_event processes
+/// `winit` events.
 pub trait Widget {
-    fn layout(&mut self, cx: &mut LayoutCtx, max_width: f32) -> (f32, f32);
-    fn paint(&self, cx: &mut PaintCtx, x: f32, y: f32);
-    fn hit_test(&self, x: f32, y: f32, wx: f32, wy: f32, w: f32, h: f32) -> bool {
-        x >= wx && x <= wx + w && y >= wy && y <= wy + h
+    /// Compute the desired size given max constraints.
+    fn layout(&mut self, cx: &mut LayoutContext, constraints: Size) -> Size;
+
+    /// Render the widget into `scene` at the given `rect`.
+    fn draw(&self, scene: &mut Scene, rect: Rect);
+
+    /// Process an input event. Returns an `Action` indicating whether
+    /// a redraw is needed.
+    fn handle_event(&mut self, _event: &WindowEvent) -> Action {
+        Action::None
     }
 }
