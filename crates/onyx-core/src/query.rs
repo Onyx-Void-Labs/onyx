@@ -2,8 +2,24 @@
 // Filters and sorts notes within a Void based on SectionConfig.
 // ───────────────────────────────────────────────────────────────────
 
+use chrono::Utc;
+
 use crate::document::OnyxWorkspace;
 use crate::model::{NodeType, SectionConfig};
+
+/// Advanced query types for the workspace.
+pub enum AdvancedQuery {
+    /// Find notes in a void that have a specific property value.
+    NotesByProperty {
+        void: String,
+        key: String,
+        value: String,
+    },
+    /// Find flashcards due for review, up to `limit`.
+    DueFlashcards { limit: usize },
+    /// Find notes that link to a given note (backlinks).
+    Backlinks { note_id: String },
+}
 
 /// Process a query against the workspace using the given section config.
 /// Returns a sorted list of note IDs matching the filter criteria.
@@ -92,4 +108,49 @@ pub fn query_notes_sorted(
 
     matched.sort_by(|a, b| a.1.cmp(&b.1));
     matched.into_iter().map(|(id, _)| id).collect()
+}
+
+/// Execute an advanced query against the workspace.
+pub fn execute_advanced_query(workspace: &OnyxWorkspace, query: AdvancedQuery) -> Vec<String> {
+    match query {
+        AdvancedQuery::NotesByProperty { void, key, value } => {
+            query_notes_sorted(workspace, &void, Some(&key), Some(&value), None)
+        }
+        AdvancedQuery::DueFlashcards { limit } => {
+            let now = Utc::now();
+            let mut due: Vec<String> = workspace
+                .all_flashcard_ids()
+                .into_iter()
+                .filter(|card_id| {
+                    workspace
+                        .get_flashcard(card_id)
+                        .map(|card| {
+                            let days = card.state.stability * 0.9_f64.ln() / (-0.5_f64).ln();
+                            let due_date =
+                                card.state.last_review + chrono::Duration::days(days.ceil() as i64);
+                            due_date <= now
+                        })
+                        .unwrap_or(false)
+                })
+                .collect();
+            due.truncate(limit);
+            due
+        }
+        AdvancedQuery::Backlinks { note_id } => {
+            let all_notes = workspace.all_note_ids();
+            let mut backlinks = Vec::new();
+            for nid in &all_notes {
+                let blocks = workspace.get_note_blocks(nid);
+                for block in &blocks {
+                    if let crate::blocks::BlockType::Link { target_id } = &block.kind {
+                        if target_id == &note_id {
+                            backlinks.push(nid.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            backlinks
+        }
+    }
 }

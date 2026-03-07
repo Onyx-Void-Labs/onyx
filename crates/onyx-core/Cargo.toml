@@ -20,3 +20,18 @@ candle-transformers = { workspace = true }
 tokenizers          = { workspace = true }
 hf-hub              = { workspace = true }
 tracing             = { workspace = true }
+
+# Phase 2 Infrastructure
+tantivy = { workspace = true }
+sha2    = { workspace = true }
+walkdir = { workspace = true }
+base64  = { workspace = true }
+
+# Phase 3 Power Features
+regex   = { workspace = true }
+similar = { workspace = true }
+
+# Phase 4 Six-Fold Foundation
+pulldown-latex = { workspace = true }
+roxmltree      = { workspace = true }
+vello           = { workspace = true }

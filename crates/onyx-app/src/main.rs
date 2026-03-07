@@ -1,6 +1,7 @@
 // --- Onyx Void — Application Entry Point (Vello + Winit) ---
 
 mod app;
+mod widgets;
 
 use winit::event_loop::EventLoop;
 

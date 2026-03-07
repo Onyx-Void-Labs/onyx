@@ -3,7 +3,9 @@
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use onyx_core::blocks::Block;
 use onyx_core::document::OnyxWorkspace;
+use onyx_core::fsrs::{self, CardState, FlashcardData};
 use onyx_core::model::{NodeType, PropertyType};
 use parley::layout::{Alignment, AlignmentOptions, PositionedLayoutItem};
 use parley::style::StyleProperty;
@@ -176,6 +178,25 @@ impl OnyxApp {
                 let title = format!("Note {}", self.note_counter);
                 let note_id = self.workspace.create_note(&parent_id, &title);
                 tracing::info!("Created: {}", title);
+
+                // ── Block Engine: initialize note with one empty Paragraph ──
+                let initial_block = Block::empty_paragraph();
+                self.workspace.set_note_blocks(&note_id, &[initial_block]);
+                println!("🧱 Block Engine: Initialized note with 1 block.");
+
+                // ── FSRS: create a dummy flashcard and schedule it ──
+                let card_state = CardState::new();
+                let (scheduled_state, days) = fsrs::next_interval(&card_state, 3); // Good
+                let card_id = uuid::Uuid::new_v4().to_string();
+                let flashcard = FlashcardData {
+                    front: format!("What is {}?", title),
+                    back: format!("A note in Onyx Void."),
+                    note_id: note_id.clone(),
+                    state: scheduled_state,
+                };
+                self.workspace.set_flashcard(&card_id, &flashcard);
+                println!("🎓 FSRS: Card created. Next review in {} day(s).", days);
+
                 // Queue embedding for the new note
                 let _ = self.embed_tx.send((note_id, title));
             } else {

@@ -35,7 +35,7 @@ loro = "1"
 
 # ── Identity / Time ──
 uuid   = { version = "1", features = ["v4"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 # ── Observability ──
 tracing            = "0.1"
@@ -47,6 +47,20 @@ serde_json = "1"
 
 # ── Error handling ──
 anyhow = "1"
+
+# ── Phase 2 Infrastructure ──
+tantivy = "0.22"
+sha2    = "0.10"
+walkdir = "2"
+base64  = "0.21"
+
+# ── Phase 3 Power Features ──
+regex   = "1.10"
+similar = "2.4"
+
+# ── Phase 4 Six-Fold Foundation ──
+pulldown-latex = "0.1"
+roxmltree      = "0.20"
 
 # ── AI / ML (Candle) ──
 candle-core         = "0.9"

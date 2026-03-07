@@ -12,6 +12,9 @@ path = "src/main.rs"
 [dependencies]
 onyx-core = { workspace = true }
 
+# Identity
+uuid = { workspace = true }
+
 # Vello stack
 winit    = { workspace = true }
 wgpu     = { workspace = true }
