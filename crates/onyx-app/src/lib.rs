@@ -1,11 +1,14 @@
 ﻿// --- Onyx Void — Library Entry Point (Vello Stack) ---
 #![allow(dead_code, unused_imports)]
 
+pub mod widgets;
+
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use parley::{FontContext, LayoutContext};
 use vello::kurbo::{Affine, Circle};
-use vello::peniko::{color::palette, Fill};
+use vello::peniko::{self, color::palette, Brush, Fill};
 use vello::wgpu;
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
@@ -13,6 +16,8 @@ use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
+
+use widgets::text::SimpleText;
 
 /// Onyx Black — #09090b
 const ONYX_BLACK: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
@@ -36,6 +41,9 @@ struct RenderState {
 pub struct OnyxApp {
     state: Option<RenderState>,
     scene: Scene,
+    font_cx: FontContext,
+    layout_cx: LayoutContext<Brush>,
+    title_text: SimpleText,
 }
 
 impl Default for OnyxApp {
@@ -43,13 +51,20 @@ impl Default for OnyxApp {
         Self {
             state: None,
             scene: Scene::new(),
+            font_cx: FontContext::new(),
+            layout_cx: LayoutContext::new(),
+            title_text: SimpleText::new(
+                "Onyx Void",
+                32.0,
+                peniko::Color::from_rgba8(228, 228, 231, 255),
+            ),
         }
     }
 }
 
 impl OnyxApp {
     /// Build the vello Scene for the current frame.
-    fn render_scene(scene: &mut Scene, width: f64, height: f64) {
+    fn render_scene(scene: &mut Scene, width: f64, height: f64, title: &SimpleText) {
         scene.reset();
 
         // Red circle in the center of the window.
@@ -64,6 +79,9 @@ impl OnyxApp {
             None,
             &Circle::new((center_x, center_y), radius),
         );
+
+        // Draw "Onyx Void" text centered.
+        title.draw(scene, center_x - 80.0, center_y + radius + 48.0);
     }
 }
 
@@ -187,7 +205,12 @@ impl ApplicationHandler for OnyxApp {
                 let width = state.config.width;
                 let height = state.config.height;
 
-                Self::render_scene(&mut self.scene, width as f64, height as f64);
+                // Build text layout if needed (first frame or after changes).
+                if self.title_text.layout.is_none() {
+                    self.title_text.build(&mut self.font_cx, &mut self.layout_cx);
+                }
+
+                Self::render_scene(&mut self.scene, width as f64, height as f64, &self.title_text);
 
                 let surface_texture = match state.surface.get_current_texture() {
                     Ok(t) => t,
