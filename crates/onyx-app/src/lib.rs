@@ -1,4 +1,4 @@
-﻿// --- Onyx Void — Library Entry Point (Vello Stack) ---
+// --- Onyx Void — Library Entry Point (Vello Stack) ---
 #![allow(dead_code, unused_imports)]
 
 pub mod widgets;
@@ -13,14 +13,38 @@ use vello::wgpu;
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, ResizeDirection, Window, WindowId};
 
 use widgets::text::SimpleText;
+use widgets::titlebar;
+use widgets::Widget;
 
 /// Onyx Black — #09090b
 const ONYX_BLACK: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
+
+const EDGE: f32 = 6.0;
+const TITLE_H: f32 = 36.0;
+const BTN_W: f32 = 46.0;
+
+/// Hit-test regions for the custom window chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitRegion {
+    TitleBar,
+    Close,
+    Minimise,
+    Maximise,
+    ResizeN,
+    ResizeS,
+    ResizeE,
+    ResizeW,
+    ResizeNE,
+    ResizeNW,
+    ResizeSE,
+    ResizeSW,
+    Content,
+}
 
 /// The live render state, created once the window surface is ready.
 struct RenderState {
@@ -44,6 +68,15 @@ pub struct OnyxApp {
     font_cx: FontContext,
     layout_cx: LayoutContext<Brush>,
     title_text: SimpleText,
+    dock: widgets::dock::CommandDock,
+    /// When true, `RedrawRequested` will continuously schedule redraws.
+    is_animating: bool,
+    /// Last known cursor position (logical pixels).
+    cursor_pos: (f32, f32),
+    /// Stored window size in logical pixels for hit testing.
+    window_size: (f32, f32),
+    /// Which titlebar button is currently hovered.
+    hover_button: Option<titlebar::HoveredButton>,
 }
 
 impl Default for OnyxApp {
@@ -58,30 +91,86 @@ impl Default for OnyxApp {
                 32.0,
                 peniko::Color::from_rgba8(228, 228, 231, 255),
             ),
+            dock: widgets::dock::CommandDock::new(),
+            is_animating: false,
+            cursor_pos: (0.0, 0.0),
+            window_size: (1280.0, 800.0),
+            hover_button: None,
         }
     }
 }
 
+/// Determine the hit-test region for the given cursor coordinates.
+fn hit_test_region(x: f32, y: f32, w: f32, h: f32) -> HitRegion {
+    // --- Corners first (EDGE x EDGE squares) ---
+    if x < EDGE && y < EDGE {
+        return HitRegion::ResizeNW;
+    }
+    if x >= w - EDGE && y < EDGE {
+        return HitRegion::ResizeNE;
+    }
+    if x < EDGE && y >= h - EDGE {
+        return HitRegion::ResizeSW;
+    }
+    if x >= w - EDGE && y >= h - EDGE {
+        return HitRegion::ResizeSE;
+    }
+
+    // --- Edges ---
+    if y < EDGE {
+        return HitRegion::ResizeN;
+    }
+    if y >= h - EDGE {
+        return HitRegion::ResizeS;
+    }
+    if x < EDGE {
+        return HitRegion::ResizeW;
+    }
+    if x >= w - EDGE {
+        return HitRegion::ResizeE;
+    }
+
+    // --- Traffic-light buttons in title bar ---
+    if y < TITLE_H {
+        if x >= w - BTN_W {
+            return HitRegion::Close;
+        }
+        if x >= w - BTN_W * 2.0 {
+            return HitRegion::Maximise;
+        }
+        if x >= w - BTN_W * 3.0 {
+            return HitRegion::Minimise;
+        }
+        return HitRegion::TitleBar;
+    }
+
+    HitRegion::Content
+}
+
 impl OnyxApp {
     /// Build the vello Scene for the current frame.
-    fn render_scene(scene: &mut Scene, width: f64, height: f64, title: &SimpleText) {
+    fn render_scene(
+        scene: &mut Scene,
+        width: f64,
+        height: f64,
+        title: &SimpleText,
+        dock: &widgets::dock::CommandDock,
+        hover_button: Option<titlebar::HoveredButton>,
+    ) {
         scene.reset();
 
-        // Red circle in the center of the window.
+        // --- Title bar chrome ---
+        let mut paint_cx = widgets::PaintCtx { scene };
+        titlebar::paint(&mut paint_cx, width, hover_button);
+        let scene = paint_cx.scene;
+
+        // "Onyx Void" text centered horizontally, below the title bar.
         let center_x = width / 2.0;
-        let center_y = height / 2.0;
-        let radius = width.min(height) * 0.12;
+        title.draw(scene, center_x - 80.0, height / 2.0 + 48.0);
 
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            palette::css::RED,
-            None,
-            &Circle::new((center_x, center_y), radius),
-        );
-
-        // Draw "Onyx Void" text centered.
-        title.draw(scene, center_x - 80.0, center_y + radius + 48.0);
+        // Draw the command dock.
+        let mut paint_cx = widgets::PaintCtx { scene };
+        dock.paint(&mut paint_cx, 0.0, 0.0);
     }
 }
 
@@ -93,13 +182,22 @@ impl ApplicationHandler for OnyxApp {
 
         let window_attrs = Window::default_attributes()
             .with_title("Onyx Void")
-            .with_inner_size(LogicalSize::new(1280, 800));
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_inner_size(LogicalSize::new(1280.0_f64, 800.0_f64));
 
         let window = Arc::new(
             event_loop
                 .create_window(window_attrs)
                 .expect("failed to create window"),
         );
+
+        // Enable OS drop-shadow on Windows for borderless windows.
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowExtWindows;
+            window.set_undecorated_shadow(true);
+        }
 
         // --- wgpu bootstrap ---
         let instance = wgpu::Instance::default();
@@ -113,14 +211,12 @@ impl ApplicationHandler for OnyxApp {
         }))
         .expect("failed to find a suitable GPU adapter");
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("onyx-device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("onyx-device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .expect("failed to create wgpu device");
 
         let size = window.inner_size();
@@ -128,7 +224,12 @@ impl ApplicationHandler for OnyxApp {
         let surface_format = surface_caps
             .formats
             .iter()
-            .find(|f| matches!(f, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm))
+            .find(|f| {
+                matches!(
+                    f,
+                    wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm
+                )
+            })
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
@@ -160,6 +261,11 @@ impl ApplicationHandler for OnyxApp {
             },
         )
         .expect("failed to create vello renderer");
+
+        // Initialise dock dimensions from the first window size.
+        self.dock.window_width = size.width.max(1) as f64;
+        self.dock.window_height = size.height.max(1) as f64;
+        self.window_size = (size.width.max(1) as f32, size.height.max(1) as f32);
 
         self.state = Some(RenderState {
             window,
@@ -198,6 +304,95 @@ impl ApplicationHandler for OnyxApp {
                 let (tex, view) = create_target_texture(&state.device, w, h);
                 state.target_texture = tex;
                 state.target_view = view;
+                self.dock.window_width = w as f64;
+                self.dock.window_height = h as f64;
+                let scale = state.window.scale_factor() as f32;
+                self.window_size = (w as f32 / scale, h as f32 / scale);
+                state.window.request_redraw();
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                let scale = state.window.scale_factor() as f32;
+                let x = position.x as f32 / scale;
+                let y = position.y as f32 / scale;
+                self.cursor_pos = (x, y);
+
+                // Update hover state for title-bar buttons.
+                let new_hover = titlebar::hovered_button(x, y, self.window_size.0);
+                if new_hover != self.hover_button {
+                    self.hover_button = new_hover;
+                    state.window.request_redraw();
+                }
+
+                // Set cursor icon based on hit-test region.
+                let icon = match hit_test_region(x, y, self.window_size.0, self.window_size.1) {
+                    HitRegion::ResizeN => CursorIcon::NResize,
+                    HitRegion::ResizeS => CursorIcon::SResize,
+                    HitRegion::ResizeE => CursorIcon::EResize,
+                    HitRegion::ResizeW => CursorIcon::WResize,
+                    HitRegion::ResizeNE => CursorIcon::NeResize,
+                    HitRegion::ResizeNW => CursorIcon::NwResize,
+                    HitRegion::ResizeSE => CursorIcon::SeResize,
+                    HitRegion::ResizeSW => CursorIcon::SwResize,
+                    _ => CursorIcon::Default,
+                };
+                state.window.set_cursor(icon);
+            }
+
+            WindowEvent::KeyboardInput { .. } => {
+                state.window.request_redraw();
+            }
+
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: ElementState::Pressed,
+                ..
+            } => {
+                let (cx, cy) = self.cursor_pos;
+                match hit_test_region(cx, cy, self.window_size.0, self.window_size.1) {
+                    HitRegion::TitleBar => {
+                        let _ = state.window.drag_window();
+                    }
+                    HitRegion::ResizeN => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::North);
+                    }
+                    HitRegion::ResizeS => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::South);
+                    }
+                    HitRegion::ResizeE => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::East);
+                    }
+                    HitRegion::ResizeW => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::West);
+                    }
+                    HitRegion::ResizeNE => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::NorthEast);
+                    }
+                    HitRegion::ResizeNW => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::NorthWest);
+                    }
+                    HitRegion::ResizeSE => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::SouthEast);
+                    }
+                    HitRegion::ResizeSW => {
+                        let _ = state.window.drag_resize_window(ResizeDirection::SouthWest);
+                    }
+                    HitRegion::Close => {
+                        event_loop.exit();
+                    }
+                    HitRegion::Minimise => {
+                        state.window.set_minimized(true);
+                    }
+                    HitRegion::Maximise => {
+                        state.window.set_maximized(!state.window.is_maximized());
+                    }
+                    HitRegion::Content => {
+                        state.window.request_redraw();
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput { .. } => {
                 state.window.request_redraw();
             }
 
@@ -207,10 +402,18 @@ impl ApplicationHandler for OnyxApp {
 
                 // Build text layout if needed (first frame or after changes).
                 if self.title_text.layout.is_none() {
-                    self.title_text.build(&mut self.font_cx, &mut self.layout_cx);
+                    self.title_text
+                        .build(&mut self.font_cx, &mut self.layout_cx);
                 }
 
-                Self::render_scene(&mut self.scene, width as f64, height as f64, &self.title_text);
+                Self::render_scene(
+                    &mut self.scene,
+                    width as f64,
+                    height as f64,
+                    &self.title_text,
+                    &self.dock,
+                    self.hover_button,
+                );
 
                 let surface_texture = match state.surface.get_current_texture() {
                     Ok(t) => t,
@@ -245,9 +448,12 @@ impl ApplicationHandler for OnyxApp {
                 let surface_view = surface_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder = state.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor { label: Some("blit") },
-                );
+                let mut encoder =
+                    state
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("blit"),
+                        });
                 state.blitter.copy(
                     &state.device,
                     &mut encoder,
@@ -258,8 +464,10 @@ impl ApplicationHandler for OnyxApp {
 
                 surface_texture.present();
 
-                // Request continuous redraws for smooth animation.
-                state.window.request_redraw();
+                // Only keep requesting redraws when actively animating.
+                if self.is_animating {
+                    state.window.request_redraw();
+                }
             }
 
             _ => {}
@@ -268,7 +476,11 @@ impl ApplicationHandler for OnyxApp {
 }
 
 /// Create an intermediate Rgba8Unorm texture for vello's compute pipeline.
-fn create_target_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_target_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("vello-target"),
         size: wgpu::Extent3d {

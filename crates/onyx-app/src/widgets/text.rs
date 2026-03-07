@@ -1,4 +1,4 @@
-use parley::{FontContext, LayoutContext, Layout, PositionedLayoutItem, StyleProperty};
+use parley::{FontContext, Layout, LayoutContext, PositionedLayoutItem, StyleProperty};
 use vello::kurbo::Affine;
 use vello::peniko::{self, Fill};
 use vello::{Glyph, Scene};
@@ -21,7 +21,11 @@ impl SimpleText {
     }
 
     /// Shape and lay out the text. Call once (or when text/style changes).
-    pub fn build(&mut self, font_cx: &mut FontContext, layout_cx: &mut LayoutContext<peniko::Brush>) {
+    pub fn build(
+        &mut self,
+        font_cx: &mut FontContext,
+        layout_cx: &mut LayoutContext<peniko::Brush>,
+    ) {
         let mut builder = layout_cx.ranged_builder(font_cx, &self.text, 1.0, true);
         builder.push_default(StyleProperty::FontSize(self.font_size));
         builder.push_default(StyleProperty::Brush(self.color.into()));
