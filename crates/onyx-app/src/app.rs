@@ -1,5 +1,6 @@
 // ─── Onyx Void — Application (Vello + Winit + LoroTree UI) ─────────
 
+use anyhow::Context;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -107,13 +108,13 @@ pub struct OnyxApp {
 }
 
 impl OnyxApp {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         // Channels: main → AI thread (embed requests), AI thread → main (results)
         let (embed_tx, work_rx) = mpsc::channel::<(String, String)>();
         let (result_tx, embed_rx) = mpsc::channel::<(String, Vec<f32>)>();
 
-        // Spawn AI background thread
-        std::thread::Builder::new()
+        // Spawn AI background thread; propagate failure so caller can decide.
+        let _ = std::thread::Builder::new()
             .name("onyx-ai".into())
             .spawn(move || {
                 tracing::info!("🧠 AI thread: loading SemanticEngine…");
@@ -144,7 +145,7 @@ impl OnyxApp {
                     }
                 }
             })
-            .expect("spawn AI thread");
+            .context("spawn AI thread")?;
 
         // Scoped font context: load exactly one font instead of all OS fonts.
         let mut font_cx = FontContext::default();
@@ -153,7 +154,7 @@ impl OnyxApp {
             .collection
             .register_fonts(font_data.to_vec().into(), None);
 
-        Self {
+        Ok(Self {
             render_cx: RenderContext::new(),
             renderer: None,
             surface: None,
@@ -176,7 +177,7 @@ impl OnyxApp {
             is_architect_mode: false,
             scene_dirty: true,
             full_rebuild: false,
-        }
+        })
     }
 
     fn handle_click(&mut self) {
@@ -364,31 +365,48 @@ impl ApplicationHandler for OnyxApp {
             .with_title("Onyx Void")
             .with_inner_size(LogicalSize::new(1280.0, 800.0));
 
-        let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(err) => {
+                eprintln!("CRITICAL: failed to create window: {err}");
+                event_loop.exit();
+                return;
+            }
+        };
 
-        let surface = pollster::block_on(self.render_cx.create_surface(
+        let surface = match pollster::block_on(self.render_cx.create_surface(
             window.clone(),
             window.inner_size().width,
             window.inner_size().height,
             wgpu::PresentMode::AutoVsync,
-        ))
-        .expect("create surface");
+        )) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("CRITICAL: create surface failed: {err}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let device = &self.render_cx.devices[surface.dev_id]; // Immutable borrow only
 
         // CPU renderer — bulletproof, no format bugs
-        self.renderer = Some(
-            Renderer::new(
-                &device.device,
-                RendererOptions {
-                    use_cpu: true, // ← Skip all GPU validation hell
-                    antialiasing_support: vello::AaSupport::all(),
-                    num_init_threads: None,
-                    pipeline_cache: None,
-                },
-            )
-            .expect("create renderer"),
-        );
+        match Renderer::new(
+            &device.device,
+            RendererOptions {
+                use_cpu: true, // ← Skip all GPU validation hell
+                antialiasing_support: vello::AaSupport::all(),
+                num_init_threads: None,
+                pipeline_cache: None,
+            },
+        ) {
+            Ok(r) => self.renderer = Some(r),
+            Err(err) => {
+                eprintln!("CRITICAL: create renderer failed: {err}");
+                event_loop.exit();
+                return;
+            }
+        }
 
         self.surface = Some(surface);
         self.window = Some(window);

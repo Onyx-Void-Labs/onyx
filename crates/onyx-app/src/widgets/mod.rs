@@ -164,7 +164,13 @@ mod tests {
 
     #[test]
     fn slot_renderer_empty() {
-        let renderer = SlotRenderer::new(vec![], GridRow { slots: vec![], collapsed: false });
+        let renderer = SlotRenderer::new(
+            vec![],
+            GridRow {
+                slots: vec![],
+                collapsed: false,
+            },
+        );
         assert!(renderer.is_empty());
         assert_eq!(renderer.len(), 0);
     }

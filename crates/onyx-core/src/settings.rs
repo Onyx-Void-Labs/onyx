@@ -62,14 +62,11 @@ impl OnyxSettings {
             std::fs::create_dir_all(parent).context("create ~/.onyx directory")?;
         }
         let json = serde_json::to_string_pretty(self).context("serialize settings")?;
-        if let Ok(key) = settings_encryption_key() {
-            let encrypted =
-                crate::crypto::encrypt_data(json.as_bytes(), &key).context("encrypt settings")?;
-            std::fs::write(&path, encrypted).context("write settings file")?;
-        } else {
-            // fallback unencrypted if key derivation fails
-            std::fs::write(&path, json).context("write settings file")?;
-        }
+        // derive an encryption key and write encrypted data; fail loudly on any error
+        let key = settings_encryption_key().context("derive settings encryption key")?;
+        let encrypted =
+            crate::crypto::encrypt_data(json.as_bytes(), &key).context("encrypt settings")?;
+        std::fs::write(&path, encrypted).context("write settings file")?;
         Ok(())
     }
 }

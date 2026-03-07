@@ -2,8 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use loro::{LoroDoc, LoroValue};
 use anyhow::Context;
+use loro::{LoroDoc, LoroValue};
 use regex::Regex;
 
 /// Bidirectional link index tracking [[NoteID]] references between notes.

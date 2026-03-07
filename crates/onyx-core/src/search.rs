@@ -176,7 +176,7 @@ mod tests {
     #[ignore]
     fn index_and_search() -> Result<()> {
         // run inside a temp directory to avoid permission issues
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().context("failed to create temp dir")?;
         std::env::set_var("ONYX_SEARCH_DIR", tmp.path());
         // ensure clean directory or file to avoid lock conflicts from previous runs
         let dir = search_index_dir();
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     #[ignore]
     fn search_no_results() -> Result<()> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().context("failed to create temp dir")?;
         std::env::set_var("ONYX_SEARCH_DIR", tmp.path());
         let dir = search_index_dir();
         if dir.exists() {

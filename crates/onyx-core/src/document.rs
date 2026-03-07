@@ -486,7 +486,8 @@ impl OnyxWorkspace {
             .mov(slot_tid, dest_tid)
             .context("move slot")?;
         // update our auxiliary map so that callers can query the new parent
-        self.layout_parent_map.insert(slot_id.to_string(), to_row_id.to_string());
+        self.layout_parent_map
+            .insert(slot_id.to_string(), to_row_id.to_string());
         self.maybe_commit();
         Ok(())
     }
@@ -508,10 +509,7 @@ impl OnyxWorkspace {
                 if let Some(ValueOrContainer::Value(v)) = meta.get("collapsed") {
                     // `as_string` returns an `Option<&String>` so we double-deref
                     // or convert to &str before comparing.
-                    return v
-                        .as_string()
-                        .map(|s| s.as_str() == "true")
-                        .unwrap_or(false);
+                    return v.as_string().map(|s| s.as_str() == "true").unwrap_or(false);
                 }
             }
         }
