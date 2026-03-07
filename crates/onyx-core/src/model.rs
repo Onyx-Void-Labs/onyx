@@ -1,9 +1,25 @@
 // ─── Onyx Core — Data Model ────────────────────────────────────────
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeType {
     Void,
     Note,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PropertyType {
+    Text,
+    Select(Vec<String>),
+    Date,
+    Checkbox,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PropertyDefinition {
+    pub name: String,
+    pub kind: PropertyType,
 }
 
 #[derive(Debug, Clone)]
