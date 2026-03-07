@@ -1,17 +1,12 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  ONYX VOID — Exoskeleton for the Internet                      ║
-# ║  Phase 1: The Foundation (Local Core)                           ║
+# ║  Onyx Genesis (Phase 1)                                        ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 [workspace]
 resolver = "2"
 members = [
     "crates/onyx-core",
-    "crates/onyx-editor",
-    "crates/onyx-math",
-    "crates/onyx-store",
-    "crates/onyx-net",
-    "crates/onyx-relay",
     "crates/onyx-app",
 ]
 
@@ -26,73 +21,28 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 # Internal crates
-onyx-core   = { path = "crates/onyx-core" }
-onyx-editor = { path = "crates/onyx-editor" }
-onyx-math   = { path = "crates/onyx-math" }
-onyx-store  = { path = "crates/onyx-store" }
-onyx-net    = { path = "crates/onyx-net" }
+onyx-core = { path = "crates/onyx-core" }
 
 # ── Visual Engine (Vello Stack) ──
-winit   = "0.30"
-wgpu    = "28.0"
-vello   = { git = "https://github.com/linebender/vello" }
-parley  = { git = "https://github.com/linebender/parley" }
-pollster = "0.3"
+winit    = "0.30"
+wgpu     = "27"
+vello    = "0.7"
+parley   = "0.4"
+pollster = "0.4"
 
-# ── Text ──
-ropey = "1.6"
+# ── CRDT ──
+loro = "1"
 
-# ── Math ──
-typst       = "0.12"
-typst-render = "0.12"
-
-# ── Data / Serialization ──
-rkyv  = { version = "0.8", features = ["std"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-# ── Storage ──
-surrealdb = { version = "2", default-features = false, features = ["kv-mem"] }
-loro      = "1"
-zstd      = "0.13"
-
-# ── Networking (Phase 2: Telepathic Link) ──
-iroh-base   = { version = "0.96", features = ["key"] }
-iroh        = { version = "0.96", default-features = false }
-iroh-gossip = "0.96"
-iroh-relay  = { version = "0.96", features = ["server"] }
-sha2        = "0.10"
-rand        = "0.9"
-futures-lite = "2"
-
-# ── Audio / Voice (Phase 3: The Senses) ──
-cpal      = "0.15"
-audiopus  = "0.3.0-rc.0"
-
-# ── Neural Index (Semantic Memory) ──
-candle-core         = "0.8"
-candle-nn           = "0.8"
-candle-transformers = "0.8"
-tokenizers          = { version = "0.20", default-features = false, features = ["onig"] }
-hf-hub              = "0.3"
-
-# ── The Vault (Encryption at Rest) ──
-chacha20poly1305 = "0.10"
-argon2           = "0.5"
-
-# ── Async ──
-tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
-
-# ── Serialization ──
-bytes = "1"
+# ── Identity / Time ──
+uuid   = { version = "1", features = ["v4"] }
+chrono = "0.4"
 
 # ── Observability ──
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # ── Error handling ──
-thiserror = "2"
-anyhow    = "1"
+anyhow = "1"
 
 # ─── Build profiles ──────────────────────────────────────────────
 
