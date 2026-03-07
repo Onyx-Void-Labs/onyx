@@ -21,6 +21,8 @@ fn main() {
     tracing::info!("Onyx Void — ignition sequence started (Vello stack)");
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
+    // Use Wait by default — the app sets ControlFlow dynamically in about_to_wait().
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
     let mut app = OnyxApp::default();
     event_loop.run_app(&mut app).expect("event loop error");
 }

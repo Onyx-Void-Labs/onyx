@@ -4,6 +4,7 @@
 // ────────────────────────────────────────────────────────────────────
 
 pub mod editor;
+pub mod style;
 pub mod text;
 
 use vello::kurbo::{Rect, Size};

@@ -3,6 +3,9 @@
 // rendering via Parley + Vello.
 // ────────────────────────────────────────────────────────────────────
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use parley::{Layout, PositionedLayoutItem, StyleProperty};
 use vello::kurbo::{Affine, Rect, Size};
 use vello::peniko::{self, Fill};
@@ -10,6 +13,7 @@ use vello::{Glyph, Scene};
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{Key, NamedKey};
 
+use super::style::MarkdownStyler;
 use super::{Action, LayoutContext as OnyxLayoutCtx, Widget};
 
 /// Cursor color — Blue-600 (#2563eb).
@@ -30,6 +34,7 @@ pub struct LaneEditor {
     cached_size: Size,
     cursor_x: f64,
     dirty: bool,
+    last_layout_hash: u64,
 
     // Cursor blink
     blink_epoch: std::time::Instant,
@@ -49,6 +54,7 @@ impl LaneEditor {
             cached_size: Size::ZERO,
             cursor_x: 0.0,
             dirty: true,
+            last_layout_hash: 0,
             blink_epoch: std::time::Instant::now(),
             scale_factor: 1.0,
         }
@@ -153,18 +159,29 @@ impl Widget for LaneEditor {
     fn layout(&mut self, cx: &mut OnyxLayoutCtx, constraints: Size) -> Size {
         self.scale_factor = cx.scale_factor;
 
-        if !self.dirty && self.layout.is_some() {
+        // Content + scale hash — skip layout if nothing changed
+        let mut hasher = DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        cx.scale_factor.to_bits().hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if hash == self.last_layout_hash && self.layout.is_some() {
             return self.cached_size;
         }
+        self.last_layout_hash = hash;
 
         let scale = cx.scale_factor as f32;
 
-        // Build main text layout
+        // Build main text layout with Markdown styling
         let mut builder = cx
             .layout_cx
             .ranged_builder(cx.font_cx, &self.text, scale, true);
         builder.push_default(StyleProperty::FontSize(self.font_size));
         builder.push_default(StyleProperty::Brush(self.color.into()));
+        builder.push_default(StyleProperty::FontFamily(parley::FontFamily::named(
+            "Inter",
+        )));
+        MarkdownStyler::apply_styles(&self.text, &mut builder);
         let mut layout = builder.build(&self.text);
         layout.break_all_lines(Some(constraints.width as f32));
 

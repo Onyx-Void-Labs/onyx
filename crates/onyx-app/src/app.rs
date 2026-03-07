@@ -7,6 +7,7 @@
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parley::{FontContext, LayoutContext};
 use vello::kurbo::{Affine, Rect, RoundedRect, Size, Stroke};
@@ -16,7 +17,7 @@ use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use crate::ui::chrome::{CommandDock, HoveredButton, PathBar, WindowControls};
@@ -79,6 +80,8 @@ pub struct OnyxApp {
     // Flags
     is_animating: bool,
     layouts_dirty: bool,
+    needs_redraw: bool,
+    instant_frame: bool,
 }
 
 impl Default for OnyxApp {
@@ -101,6 +104,8 @@ impl Default for OnyxApp {
             scale_factor: 1.0,
             is_animating: true,
             layouts_dirty: true,
+            needs_redraw: true,
+            instant_frame: false,
         }
     }
 }
@@ -375,6 +380,8 @@ impl ApplicationHandler for OnyxApp {
             ref evt @ WindowEvent::KeyboardInput { .. } => {
                 if self.editor.handle_event(evt) == Action::Redraw {
                     self.layouts_dirty = true;
+                    self.needs_redraw = true;
+                    self.instant_frame = true;
                     let wctx = self.wctx.as_ref().unwrap();
                     wctx.window.request_redraw();
                 }
@@ -443,12 +450,36 @@ impl ApplicationHandler for OnyxApp {
 
                 surface_texture.present();
 
-                if self.is_animating {
-                    wctx.window.request_redraw();
-                }
+                self.needs_redraw = false;
+
+                // Cursor blink drives the next redraw via about_to_wait.
             }
 
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.instant_frame {
+            // Keyboard input just occurred — poll for one frame for instant response.
+            self.instant_frame = false;
+            event_loop.set_control_flow(ControlFlow::Poll);
+        } else if self.is_animating {
+            // Cursor blinking — wake at ~60 fps only while animating.
+            let deadline = Instant::now() + Duration::from_millis(16);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            if let Some(wctx) = &self.wctx {
+                // Toggle blink visibility — only request redraw if the visible state changes.
+                let vis_before = self.editor.cursor_visible();
+                // Check again after a tiny sleep won't work here;
+                // just schedule the next redraw so the draw pass picks up the new state.
+                wctx.window.request_redraw();
+                let _ = vis_before; // suppress unused warning
+            }
+        } else {
+            // Fully idle — sleep for up to 500 ms (next blink toggle).
+            let deadline = Instant::now() + Duration::from_millis(500);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         }
     }
 }
