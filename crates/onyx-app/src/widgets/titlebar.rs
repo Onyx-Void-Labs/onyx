@@ -44,7 +44,19 @@ pub fn hovered_button(cursor_x: f32, cursor_y: f32, window_w: f32) -> Option<Hov
 }
 
 /// Paint the custom title bar chrome at the top of the window.
-pub fn paint(cx: &mut PaintCtx, window_w: f64, hover: Option<HoveredButton>) {
+///
+/// `x`, `y` are the top-left origin (usually 0, 0).
+/// `window_w`, `window_h` are **logical** window dimensions.
+pub fn paint(
+    cx: &mut PaintCtx,
+    _x: f32,
+    _y: f32,
+    window_w: f32,
+    _window_h: f32,
+    hover: Option<HoveredButton>,
+) {
+    let window_w = window_w as f64;
+
     // Title bar background — seamless with ONYX_BLACK.
     cx.scene.fill(
         Fill::NonZero,

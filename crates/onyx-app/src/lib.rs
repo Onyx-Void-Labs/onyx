@@ -73,8 +73,10 @@ pub struct OnyxApp {
     is_animating: bool,
     /// Last known cursor position (logical pixels).
     cursor_pos: (f32, f32),
-    /// Stored window size in logical pixels for hit testing.
+    /// Stored window size in PHYSICAL pixels (from Resized).
     window_size: (f32, f32),
+    /// Display scale factor (physical / logical).
+    scale_factor: f64,
     /// Which titlebar button is currently hovered.
     hover_button: Option<titlebar::HoveredButton>,
     /// For double-click detection on the title bar.
@@ -97,6 +99,7 @@ impl Default for OnyxApp {
             is_animating: false,
             cursor_pos: (0.0, 0.0),
             window_size: (1280.0, 800.0),
+            scale_factor: 1.0,
             hover_button: None,
             last_click_time: None,
         }
@@ -151,6 +154,12 @@ fn hit_test_region(x: f32, y: f32, w: f32, h: f32) -> HitRegion {
 }
 
 impl OnyxApp {
+    /// Logical window size (physical / scale_factor).
+    fn logical_window_size(&self) -> (f32, f32) {
+        let s = self.scale_factor as f32;
+        (self.window_size.0 / s, self.window_size.1 / s)
+    }
+
     /// Build the vello Scene for the current frame.
     fn render_scene(
         scene: &mut Scene,
@@ -162,9 +171,16 @@ impl OnyxApp {
     ) {
         scene.reset();
 
-        // --- Title bar chrome ---
+        // --- Title bar chrome (logical coords) ---
         let mut paint_cx = widgets::PaintCtx { scene };
-        titlebar::paint(&mut paint_cx, width, hover_button);
+        titlebar::paint(
+            &mut paint_cx,
+            0.0,
+            0.0,
+            width as f32,
+            height as f32,
+            hover_button,
+        );
         let scene = paint_cx.scene;
 
         // "Onyx Void" text centered horizontally, below the title bar.
@@ -265,10 +281,12 @@ impl ApplicationHandler for OnyxApp {
         )
         .expect("failed to create vello renderer");
 
-        // Initialise dock dimensions from the first window size.
-        self.dock.window_width = size.width.max(1) as f64;
-        self.dock.window_height = size.height.max(1) as f64;
+        // Store scale factor and physical window size.
+        self.scale_factor = window.scale_factor();
         self.window_size = (size.width.max(1) as f32, size.height.max(1) as f32);
+        let s = self.scale_factor as f32;
+        self.dock.window_width = (self.window_size.0 / s) as f64;
+        self.dock.window_height = (self.window_size.1 / s) as f64;
 
         self.state = Some(RenderState {
             window,
@@ -307,28 +325,34 @@ impl ApplicationHandler for OnyxApp {
                 let (tex, view) = create_target_texture(&state.device, w, h);
                 state.target_texture = tex;
                 state.target_view = view;
-                self.dock.window_width = w as f64;
-                self.dock.window_height = h as f64;
-                let scale = state.window.scale_factor() as f32;
-                self.window_size = (w as f32 / scale, h as f32 / scale);
+                // Store PHYSICAL size; derive logical via scale_factor.
+                self.scale_factor = state.window.scale_factor();
+                self.window_size = (w as f32, h as f32);
+                let s = self.scale_factor as f32;
+                self.dock.window_width = (w as f32 / s) as f64;
+                self.dock.window_height = (h as f32 / s) as f64;
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                let scale = state.window.scale_factor() as f32;
-                let x = position.x as f32 / scale;
-                let y = position.y as f32 / scale;
-                self.cursor_pos = (x, y);
+                // Convert physical → logical.
+                let s = self.scale_factor as f32;
+                self.cursor_pos = ((position.x as f32) / s, (position.y as f32) / s);
+
+                // Logical window dimensions.
+                let lw = self.window_size.0 / s;
+                let lh = self.window_size.1 / s;
 
                 // Update hover state for title-bar buttons.
-                let new_hover = titlebar::hovered_button(x, y, self.window_size.0);
+                let new_hover = titlebar::hovered_button(self.cursor_pos.0, self.cursor_pos.1, lw);
                 if new_hover != self.hover_button {
                     self.hover_button = new_hover;
                     state.window.request_redraw();
                 }
 
                 // Set cursor icon based on hit-test region.
-                let icon = match hit_test_region(x, y, self.window_size.0, self.window_size.1) {
+                let region = hit_test_region(self.cursor_pos.0, self.cursor_pos.1, lw, lh);
+                let icon = match region {
                     HitRegion::ResizeN => CursorIcon::NResize,
                     HitRegion::ResizeS => CursorIcon::SResize,
                     HitRegion::ResizeE => CursorIcon::EResize,
@@ -340,6 +364,12 @@ impl ApplicationHandler for OnyxApp {
                     _ => CursorIcon::Default,
                 };
                 state.window.set_cursor(icon);
+                state.window.request_redraw();
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.scale_factor = scale_factor;
+                state.window.request_redraw();
             }
 
             WindowEvent::KeyboardInput { .. } => {
@@ -347,58 +377,17 @@ impl ApplicationHandler for OnyxApp {
             }
 
             WindowEvent::MouseInput {
-                button: MouseButton::Left,
                 state: ElementState::Pressed,
+                button: MouseButton::Left,
                 ..
             } => {
-                // Double-click detection for title bar maximize/restore.
+                let s = self.scale_factor as f32;
+                let lw = self.window_size.0 / s;
+                let lh = self.window_size.1 / s;
+                let region = hit_test_region(self.cursor_pos.0, self.cursor_pos.1, lw, lh);
                 let now = std::time::Instant::now();
-                let is_double_click = self
-                    .last_click_time
-                    .map(|t| now.duration_since(t).as_millis() < 400)
-                    .unwrap_or(false);
-                let region = hit_test_region(
-                    self.cursor_pos.0,
-                    self.cursor_pos.1,
-                    self.window_size.0,
-                    self.window_size.1,
-                );
-                if is_double_click && matches!(region, HitRegion::TitleBar) {
-                    state.window.set_maximized(!state.window.is_maximized());
-                    self.last_click_time = None;
-                    return;
-                }
-                self.last_click_time = Some(now);
 
-                let (cx, cy) = self.cursor_pos;
-                match hit_test_region(cx, cy, self.window_size.0, self.window_size.1) {
-                    HitRegion::TitleBar => {
-                        let _ = state.window.drag_window();
-                    }
-                    HitRegion::ResizeN => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::North);
-                    }
-                    HitRegion::ResizeS => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::South);
-                    }
-                    HitRegion::ResizeE => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::East);
-                    }
-                    HitRegion::ResizeW => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::West);
-                    }
-                    HitRegion::ResizeNE => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::NorthEast);
-                    }
-                    HitRegion::ResizeNW => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::NorthWest);
-                    }
-                    HitRegion::ResizeSE => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::SouthEast);
-                    }
-                    HitRegion::ResizeSW => {
-                        let _ = state.window.drag_resize_window(ResizeDirection::SouthWest);
-                    }
+                match region {
                     HitRegion::Close => {
                         event_loop.exit();
                     }
@@ -408,10 +397,61 @@ impl ApplicationHandler for OnyxApp {
                     HitRegion::Maximise => {
                         state.window.set_maximized(!state.window.is_maximized());
                     }
-                    HitRegion::Content => {
-                        state.window.request_redraw();
+                    HitRegion::TitleBar => {
+                        // Double-click: toggle maximise.
+                        let is_dbl = self
+                            .last_click_time
+                            .map(|t| now.duration_since(t).as_millis() < 400)
+                            .unwrap_or(false);
+                        if is_dbl {
+                            state.window.set_maximized(!state.window.is_maximized());
+                            self.last_click_time = None;
+                            // No drag on double-click.
+                        } else {
+                            // Single click: start drag.
+                            self.last_click_time = Some(now);
+                            state.window.drag_window().ok();
+                        }
                     }
+                    HitRegion::ResizeN => {
+                        state.window.drag_resize_window(ResizeDirection::North).ok();
+                    }
+                    HitRegion::ResizeS => {
+                        state.window.drag_resize_window(ResizeDirection::South).ok();
+                    }
+                    HitRegion::ResizeE => {
+                        state.window.drag_resize_window(ResizeDirection::East).ok();
+                    }
+                    HitRegion::ResizeW => {
+                        state.window.drag_resize_window(ResizeDirection::West).ok();
+                    }
+                    HitRegion::ResizeNE => {
+                        state
+                            .window
+                            .drag_resize_window(ResizeDirection::NorthEast)
+                            .ok();
+                    }
+                    HitRegion::ResizeNW => {
+                        state
+                            .window
+                            .drag_resize_window(ResizeDirection::NorthWest)
+                            .ok();
+                    }
+                    HitRegion::ResizeSE => {
+                        state
+                            .window
+                            .drag_resize_window(ResizeDirection::SouthEast)
+                            .ok();
+                    }
+                    HitRegion::ResizeSW => {
+                        state
+                            .window
+                            .drag_resize_window(ResizeDirection::SouthWest)
+                            .ok();
+                    }
+                    HitRegion::Content => {}
                 }
+                state.window.request_redraw();
             }
 
             WindowEvent::MouseInput { .. } => {
@@ -419,8 +459,11 @@ impl ApplicationHandler for OnyxApp {
             }
 
             WindowEvent::RedrawRequested => {
-                let width = state.config.width;
-                let height = state.config.height;
+                let phys_w = state.config.width;
+                let phys_h = state.config.height;
+                let s = self.scale_factor as f32;
+                let logical_w = (phys_w as f32 / s) as u32;
+                let logical_h = (phys_h as f32 / s) as u32;
 
                 // Build text layout if needed (first frame or after changes).
                 if self.title_text.layout.is_none() {
@@ -430,8 +473,8 @@ impl ApplicationHandler for OnyxApp {
 
                 Self::render_scene(
                     &mut self.scene,
-                    width as f64,
-                    height as f64,
+                    logical_w as f64,
+                    logical_h as f64,
                     &self.title_text,
                     &self.dock,
                     self.hover_button,
@@ -449,7 +492,7 @@ impl ApplicationHandler for OnyxApp {
                     }
                 };
 
-                // Render to intermediate Rgba8Unorm texture.
+                // Render to intermediate Rgba8Unorm texture (logical viewport).
                 state
                     .renderer
                     .render_to_texture(
@@ -459,8 +502,8 @@ impl ApplicationHandler for OnyxApp {
                         &state.target_view,
                         &vello::RenderParams {
                             base_color: ONYX_BLACK,
-                            width,
-                            height,
+                            width: logical_w,
+                            height: logical_h,
                             antialiasing_method: AaConfig::Msaa16,
                         },
                     )
