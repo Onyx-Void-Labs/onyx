@@ -2083,6 +2083,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "loro",
+ "serde",
  "uuid",
 ]
 

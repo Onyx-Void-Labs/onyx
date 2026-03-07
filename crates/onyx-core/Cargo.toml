@@ -9,4 +9,5 @@ authors.workspace = true
 loro   = { workspace = true }
 uuid   = { workspace = true }
 chrono = { workspace = true }
+serde  = { workspace = true }
 anyhow = { workspace = true }
