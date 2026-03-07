@@ -1,155 +1,113 @@
 use vello::kurbo::{Affine, Line, Rect, Stroke};
-use vello::peniko::{self, Fill};
+use vello::peniko::{Color, Fill};
+use vello::Scene;
 
-use super::PaintCtx;
+use crate::HitRegion;
 
-const TITLE_H: f64 = 40.0;
-const BTN_W: f64 = 46.0;
+// All coordinates in LOGICAL pixels.
+pub const TITLE_H: f32 = 40.;
+pub const BTN_W: f32 = 46.;
 
-/// Background — matches ONYX_BLACK so the seam is invisible.
-const BG_COLOR: peniko::Color = peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
-/// Close hover background — Windows 11 red.
-const CLOSE_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(196, 43, 28, 255);
-/// Min/Max hover background — white 10%.
-const SUBTLE_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 26);
-/// Icon color — zinc-200.
-const ICON_COLOR: peniko::Color = peniko::Color::from_rgba8(228, 228, 231, 255);
-/// Icon color when close is hovered — white.
-const ICON_WHITE: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 255);
-
-/// Which title-bar button the cursor is hovering, if any.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HoveredButton {
-    Close,
-    Maximise,
-    Minimise,
+pub struct TitleBar {
+    pub hover: Option<HitRegion>,
 }
 
-/// Determine which button (if any) is hovered at the given cursor position.
-pub fn hovered_button(cursor_x: f32, cursor_y: f32, window_w: f32) -> Option<HoveredButton> {
-    if cursor_y < 0.0 || cursor_y > TITLE_H as f32 {
-        return None;
-    }
-    let w = window_w;
-    if cursor_x >= w - 46.0 {
-        return Some(HoveredButton::Close);
-    }
-    if cursor_x >= w - 92.0 && cursor_x < w - 46.0 {
-        return Some(HoveredButton::Maximise);
-    }
-    if cursor_x >= w - 138.0 && cursor_x < w - 92.0 {
-        return Some(HoveredButton::Minimise);
-    }
-    None
-}
-
-/// Paint the custom title bar chrome at the top of the window.
-///
-/// `x`, `y` are the top-left origin (usually 0, 0).
-/// `window_w`, `window_h` are **logical** window dimensions.
-pub fn paint(
-    cx: &mut PaintCtx,
-    _x: f32,
-    _y: f32,
-    window_w: f32,
-    _window_h: f32,
-    hover: Option<HoveredButton>,
-) {
-    let window_w = window_w as f64;
-
-    // Title bar background — seamless with ONYX_BLACK.
-    cx.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        BG_COLOR,
-        None,
-        &Rect::new(0.0, 0.0, window_w, TITLE_H),
-    );
-
-    // --- Close button ---
-    let close_x = window_w - BTN_W;
-    let close_hover = hover == Some(HoveredButton::Close);
-    if close_hover {
-        cx.scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            CLOSE_HOVER_BG,
-            None,
-            &Rect::new(close_x, 0.0, close_x + BTN_W, TITLE_H),
-        );
-    }
-    {
-        let cx_icon = close_x + 23.0;
-        let cy_icon = 20.0;
-        let color = if close_hover { ICON_WHITE } else { ICON_COLOR };
-        cx.scene.stroke(
-            &Stroke::new(1.1),
-            Affine::IDENTITY,
-            color,
-            None,
-            &Line::new(
-                (cx_icon - 5.5, cy_icon - 5.5),
-                (cx_icon + 5.5, cy_icon + 5.5),
-            ),
-        );
-        cx.scene.stroke(
-            &Stroke::new(1.1),
-            Affine::IDENTITY,
-            color,
-            None,
-            &Line::new(
-                (cx_icon + 5.5, cy_icon - 5.5),
-                (cx_icon - 5.5, cy_icon + 5.5),
-            ),
-        );
+impl TitleBar {
+    pub fn new() -> Self {
+        Self { hover: None }
     }
 
-    // --- Maximise button ---
-    let max_x = window_w - BTN_W * 2.0;
-    if hover == Some(HoveredButton::Maximise) {
-        cx.scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            SUBTLE_HOVER_BG,
-            None,
-            &Rect::new(max_x, 0.0, max_x + BTN_W, TITLE_H),
-        );
-    }
-    {
-        let cx_icon = max_x + 23.0;
-        let cy_icon = 20.0;
-        cx.scene.stroke(
-            &Stroke::new(1.0),
-            Affine::IDENTITY,
-            ICON_COLOR,
-            None,
-            &Rect::new(cx_icon - 9.0, cy_icon - 8.0, cx_icon + 9.0, cy_icon + 8.0),
-        );
-    }
+    pub fn paint(&self, scene: &mut Scene, window_w: f32, _window_h: f32) {
+        let w = window_w as f64;
 
-    // --- Minimise button ---
-    let min_x = window_w - BTN_W * 3.0;
-    if hover == Some(HoveredButton::Minimise) {
-        cx.scene.fill(
-            Fill::NonZero,
+        // Button X positions (logical)
+        let close_x = w - BTN_W as f64;
+        let max_x = w - (BTN_W * 2.) as f64;
+        let min_x = w - (BTN_W * 3.) as f64;
+        let h = TITLE_H as f64;
+
+        // ── Hover backgrounds ──────────────────────────────
+        match self.hover {
+            Some(HitRegion::Close) => {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    Color::from_rgba8(196, 43, 28, 255),
+                    None,
+                    &Rect::new(close_x, 0., w, h),
+                );
+            }
+            Some(HitRegion::Maximise) => {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    Color::from_rgba8(255, 255, 255, 26),
+                    None,
+                    &Rect::new(max_x, 0., max_x + BTN_W as f64, h),
+                );
+            }
+            Some(HitRegion::Minimise) => {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    Color::from_rgba8(255, 255, 255, 26),
+                    None,
+                    &Rect::new(min_x, 0., min_x + BTN_W as f64, h),
+                );
+            }
+            _ => {}
+        }
+
+        // ── Icon colors ────────────────────────────────────
+        let normal_icon = Color::from_rgba8(228, 228, 231, 255);
+        let white_icon = Color::from_rgba8(255, 255, 255, 255);
+
+        let close_icon_color = match self.hover {
+            Some(HitRegion::Close) => white_icon,
+            _ => normal_icon,
+        };
+
+        // ── Icon centers ───────────────────────────────────
+        let close_cx = close_x + BTN_W as f64 / 2.;
+        let max_cx = max_x + BTN_W as f64 / 2.;
+        let min_cx = min_x + BTN_W as f64 / 2.;
+        let cy = h / 2.;
+
+        let stroke_thin = Stroke::new(1.0);
+        let stroke_x = Stroke::new(1.1);
+
+        // ── Minimise: horizontal line ──────────────────────
+        scene.stroke(
+            &stroke_thin,
             Affine::IDENTITY,
-            SUBTLE_HOVER_BG,
+            normal_icon,
             None,
-            &Rect::new(min_x, 0.0, min_x + BTN_W, TITLE_H),
+            &Line::new((min_cx - 6., cy + 4.), (min_cx + 6., cy + 4.)),
         );
-    }
-    {
-        let cx_icon = min_x + 23.0;
-        let cy_icon = 20.0;
-        cx.scene.stroke(
-            &Stroke::new(1.0),
+
+        // ── Maximise: hollow square ────────────────────────
+        scene.stroke(
+            &stroke_thin,
             Affine::IDENTITY,
-            ICON_COLOR,
+            normal_icon,
             None,
-            &Line::new(
-                (cx_icon - 6.0, cy_icon + 3.0),
-                (cx_icon + 6.0, cy_icon + 3.0),
-            ),
+            &Rect::new(max_cx - 6., cy - 6., max_cx + 6., cy + 6.),
+        );
+
+        // ── Close: × two diagonals ─────────────────────────
+        scene.stroke(
+            &stroke_x,
+            Affine::IDENTITY,
+            close_icon_color,
+            None,
+            &Line::new((close_cx - 5.5, cy - 5.5), (close_cx + 5.5, cy + 5.5)),
+        );
+        scene.stroke(
+            &stroke_x,
+            Affine::IDENTITY,
+            close_icon_color,
+            None,
+            &Line::new((close_cx + 5.5, cy - 5.5), (close_cx - 5.5, cy + 5.5)),
         );
     }
 }
