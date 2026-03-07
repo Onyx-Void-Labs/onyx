@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 // ── FSRS Constants ──────────────────────────────────────────────────
 
 const DECAY: f64 = -0.5;
-const FACTOR: f64 = 1.0; // -0.5 / DECAY where DECAY is -0.5
+/// FSRS-5 spec: FACTOR = 19/81 ensures R(t=S) = 0.9 exactly.
+/// Derivation: solve (1 + FACTOR)^DECAY = 0.9 → FACTOR = 0.9^(1/DECAY) - 1 = 19/81
+const FACTOR: f64 = 19.0 / 81.0;
 
 /// Default FSRS-4.5 parameters (w0..w16).
 const W: [f64; 17] = [
@@ -92,11 +94,11 @@ fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
 }
 
 /// Compute the interval (days) for a desired retention and stability.
+/// Derived from inverting the R formula:
+/// interval = (S / FACTOR) * (R_target^(1/DECAY) - 1)
 fn interval_for_retention(stability: f64) -> u32 {
-    // R_target = DESIRED_RETENTION = 0.9
-    // interval = stability * (ln(R_target) / ln(0.9))
-    let interval = stability * (DESIRED_RETENTION.ln() / 0.9_f64.ln());
-    interval.round().max(1.0) as u32
+    let raw = (stability / FACTOR) * (DESIRED_RETENTION.powf(1.0 / DECAY) - 1.0);
+    raw.round().max(1.0) as u32
 }
 
 /// Update difficulty after a review.

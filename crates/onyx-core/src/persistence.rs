@@ -43,7 +43,10 @@ fn save_snapshot_bytes(snapshot: &[u8], path: &str) -> Result<()> {
 
     let tmp_path = format!("{}.tmp", path);
     let mut file = File::create(&tmp_path).context("create tmp file")?;
-    file.write_all(&encrypted).context("write tmp file")?;
+    if let Err(e) = file.write_all(&encrypted) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(anyhow::anyhow!("write tmp file: {e}"));
+    }
     if let Err(e) = file.sync_all() {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(e.into());
@@ -71,7 +74,8 @@ pub fn load_workspace(path: &str) -> Result<OnyxWorkspace> {
     ensure_tmp_recovered(path);
     let encrypted = std::fs::read(path).context("read workspace file")?;
     let key = dev_encryption_key().context("derive dev key")?;
-    let data = crypto::decrypt_data(&encrypted, &key).context("decrypt snapshot")?;
+    // Wrap decrypted bytes in Zeroizing so plaintext is wiped on drop
+    let data = Zeroizing::new(crypto::decrypt_data(&encrypted, &key).context("decrypt snapshot")?);
     let ws = OnyxWorkspace::from_snapshot(&data).context("load snapshot")?;
     Ok(ws)
 }

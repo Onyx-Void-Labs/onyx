@@ -68,7 +68,22 @@ impl OnyxSettings {
         let key = settings_encryption_key().context("derive settings encryption key")?;
         let encrypted =
             crate::crypto::encrypt_data(json.as_bytes(), &*key).context("encrypt settings")?;
-        std::fs::write(&path, encrypted).context("write settings file")?;
+        // Atomic write: tmp → fsync → rename
+        let tmp_path = path.with_extension("tmp");
+        let mut file =
+            std::fs::File::create(&tmp_path).context("create settings tmp file")?;
+        if let Err(e) = std::io::Write::write_all(&mut file, &encrypted) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e).context("write settings tmp file");
+        }
+        if let Err(e) = file.sync_all() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e).context("fsync settings tmp file");
+        }
+        if let Err(e) = std::fs::rename(&tmp_path, &path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e).context("atomic rename settings file");
+        }
         Ok(())
     }
 }

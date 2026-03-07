@@ -128,7 +128,21 @@ impl WorkspaceManager {
         if let Ok(json) = serde_json::to_string_pretty(&self.workspaces) {
             if let Ok(key) = index_encryption_key() {
                 if let Ok(encrypted) = crate::crypto::encrypt_data(json.as_bytes(), &*key) {
-                    let _ = std::fs::write(&path, encrypted);
+                    // Atomic write: tmp → fsync → rename
+                    let tmp_path = path.with_extension("tmp");
+                    let write_ok = (|| -> anyhow::Result<()> {
+                        let mut file = std::fs::File::create(&tmp_path)?;
+                        std::io::Write::write_all(&mut file, &encrypted)?;
+                        file.sync_all()?;
+                        Ok(())
+                    })();
+                    if write_ok.is_err() {
+                        let _ = std::fs::remove_file(&tmp_path);
+                        return;
+                    }
+                    if let Err(_) = std::fs::rename(&tmp_path, &path) {
+                        let _ = std::fs::remove_file(&tmp_path);
+                    }
                 }
             }
         }

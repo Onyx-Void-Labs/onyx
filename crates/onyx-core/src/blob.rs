@@ -49,9 +49,17 @@ impl BlobStore {
     }
 
     /// Store a blob and return its SHA-256 hex hash.
+    /// The hash is computed over the plaintext for content-addressing
+    /// (deduplication). The stored bytes are encrypted.
     pub fn store_blob(&mut self, data: &[u8], mime: &str) -> String {
-        // encrypt blob with workspace key
-        let key = crate::persistence::dev_encryption_key().expect("dev key");
+        // Content-address by plaintext hash (deterministic for dedup)
+        let hash = Self::sha256_hex(data);
+        if self.blobs.contains_key(&hash) {
+            // Already stored — just bump refcount
+            *self.refcounts.entry(hash.clone()).or_insert(0) += 1;
+            return hash;
+        }
+        // Encrypt blob with workspace key
         let key = match crate::persistence::dev_encryption_key() {
             Ok(k) => k,
             Err(_) => return String::new(),
@@ -60,10 +68,7 @@ impl BlobStore {
             Ok(e) => e,
             Err(_) => return String::new(),
         };
-        let hash = Self::sha256_hex(&encrypted);
-        self.blobs
-            .entry(hash.clone())
-            .or_insert_with(|| encrypted.clone());
+        self.blobs.insert(hash.clone(), encrypted);
         *self.refcounts.entry(hash.clone()).or_insert(0) += 1;
         self.metadata.entry(hash.clone()).or_insert(BlobMeta {
             mime: mime.to_string(),
@@ -83,27 +88,43 @@ impl BlobStore {
     }
 
     /// Retrieve a blob by its hash.
+    /// Decrypts the stored ciphertext and re-verifies the plaintext hash
+    /// to detect corruption.
     pub fn get_blob(&self, hash: &str) -> Result<Vec<u8>, BlobError> {
         match self.blobs.get(hash) {
             Some(encrypted) => {
-                // verify hash
-                let computed = Self::sha256_hex(encrypted);
+                // decrypt — wrap in Zeroizing so plaintext is wiped on drop
+                let key =
+                    crate::persistence::dev_encryption_key().map_err(|_| BlobError::Corruption)?;
+                let decrypted = zeroize::Zeroizing::new(
+                    crate::crypto::decrypt_data(encrypted, &*key)
+                        .map_err(|_| BlobError::Corruption)?,
+                );
+                // verify plaintext hash matches the content-address key
+                let computed = Self::sha256_hex(&decrypted);
                 if computed != hash {
                     return Err(BlobError::Corruption);
                 }
-                // decrypt
-                let key =
-                    crate::persistence::dev_encryption_key().map_err(|_| BlobError::Corruption)?;
-                let data = crate::crypto::decrypt_data(encrypted, &*key)
-                    .map_err(|_| BlobError::Corruption)?;
-                Ok(data)
+                Ok(decrypted.to_vec())
             }
             None => Err(BlobError::NotFound),
         }
     }
 
-    /// Delete a blob by its hash.
+    /// Delete a blob by its hash. Respects reference counts: if the blob
+    /// is still referenced elsewhere, only decrements the count.
     pub fn delete_blob(&mut self, hash: &str) -> anyhow::Result<()> {
+        let count = self
+            .refcounts
+            .get_mut(hash)
+            .ok_or_else(|| anyhow::anyhow!("blob not found: {}", hash))?;
+
+        if *count > 1 {
+            *count -= 1;
+            return Ok(()); // still referenced — decrement only
+        }
+
+        // count <= 1: safe to fully remove
         self.blobs.remove(hash);
         self.metadata.remove(hash);
         self.refcounts.remove(hash);
