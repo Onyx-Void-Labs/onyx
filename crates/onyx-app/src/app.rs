@@ -1,5 +1,6 @@
 // ─── Onyx Void — Application (Vello + Winit + LoroTree UI) ─────────
 
+use std::sync::mpsc;
 use std::sync::Arc;
 
 use onyx_core::document::OnyxWorkspace;
@@ -92,10 +93,52 @@ pub struct OnyxApp {
     prop_value_rects: Vec<(String, Rect)>,
     editing_field: Option<String>,
     input_buffer: String,
+    /// Send (note_id, text) to the AI background thread for embedding.
+    embed_tx: mpsc::Sender<(String, String)>,
+    /// Receive (note_id, vector) back from the AI thread.
+    embed_rx: mpsc::Receiver<(String, Vec<f32>)>,
 }
 
 impl OnyxApp {
     pub fn new() -> Self {
+        // Channels: main → AI thread (embed requests), AI thread → main (results)
+        let (embed_tx, work_rx) = mpsc::channel::<(String, String)>();
+        let (result_tx, embed_rx) = mpsc::channel::<(String, Vec<f32>)>();
+
+        // Spawn AI background thread
+        std::thread::Builder::new()
+            .name("onyx-ai".into())
+            .spawn(move || {
+                tracing::info!("🧠 AI thread: loading SemanticEngine…");
+                let engine = match onyx_core::neural::SemanticEngine::load() {
+                    Ok(e) => {
+                        tracing::info!("🧠 AI thread: engine ready");
+                        e
+                    }
+                    Err(err) => {
+                        tracing::error!("🧠 AI thread: failed to load engine: {err:#}");
+                        return;
+                    }
+                };
+
+                while let Ok((id, text)) = work_rx.recv() {
+                    match engine.embed_text(&text) {
+                        Ok(vec) => {
+                            println!(
+                                "🧠 AI: Embedded note '{}' -> [Vector Size: {}]",
+                                id,
+                                vec.len()
+                            );
+                            let _ = result_tx.send((id, vec));
+                        }
+                        Err(err) => {
+                            tracing::warn!("🧠 AI: embed failed for {id}: {err:#}");
+                        }
+                    }
+                }
+            })
+            .expect("spawn AI thread");
+
         Self {
             render_cx: RenderContext::new(),
             renderer: None,
@@ -114,6 +157,8 @@ impl OnyxApp {
             prop_value_rects: Vec::new(),
             editing_field: None,
             input_buffer: String::new(),
+            embed_tx,
+            embed_rx,
         }
     }
 
@@ -129,8 +174,10 @@ impl OnyxApp {
             if let Some(parent_id) = self.workspace.first_void_id() {
                 self.note_counter += 1;
                 let title = format!("Note {}", self.note_counter);
-                self.workspace.create_note(&parent_id, &title);
+                let note_id = self.workspace.create_note(&parent_id, &title);
                 tracing::info!("Created: {}", title);
+                // Queue embedding for the new note
+                let _ = self.embed_tx.send((note_id, title));
             } else {
                 tracing::warn!("No void exists — create a Void first");
             }
@@ -200,6 +247,11 @@ impl OnyxApp {
     }
 
     pub fn draw(&mut self) {
+        // Drain completed embeddings from AI thread
+        while let Ok((note_id, vec)) = self.embed_rx.try_recv() {
+            self.workspace.set_vector(&note_id, &vec);
+        }
+
         // Get dimensions (early return if no surface)
         let (width, height) = match self.surface.as_ref() {
             Some(s) => (s.config.width, s.config.height),
@@ -686,6 +738,12 @@ impl ApplicationHandler for OnyxApp {
                                         field,
                                         self.input_buffer
                                     );
+                                    // Re-embed note with updated property text
+                                    let title =
+                                        self.workspace.node_title(&note_id).unwrap_or_default();
+                                    let embed_text =
+                                        format!("{} {} {}", title, field, self.input_buffer);
+                                    let _ = self.embed_tx.send((note_id, embed_text));
                                 }
                             }
                             self.editing_field = None;

@@ -14,6 +14,7 @@ pub struct OnyxWorkspace {
     pub properties: LoroMap,
     pub schemas: LoroMap,
     pub node_values: LoroMap,
+    pub vectors: LoroMap,
     id_map: HashMap<String, TreeID>,
     parent_map: HashMap<String, String>,
 }
@@ -25,12 +26,14 @@ impl OnyxWorkspace {
         let properties = doc.get_map("properties");
         let schemas = doc.get_map("schemas");
         let node_values = doc.get_map("node_values");
+        let vectors = doc.get_map("vectors");
         Self {
             doc,
             tree,
             properties,
             schemas,
             node_values,
+            vectors,
             id_map: HashMap::new(),
             parent_map: HashMap::new(),
         }
@@ -194,6 +197,28 @@ impl OnyxWorkspace {
             .expect("void map");
         void_map.insert(key, value).expect("set value");
         self.doc.commit();
+    }
+
+    /// Return all note IDs in the workspace.
+    pub fn all_note_ids(&self) -> Vec<String> {
+        self.parent_map.keys().cloned().collect()
+    }
+
+    /// Store an embedding vector for a note.
+    pub fn set_vector(&mut self, note_id: &str, vec: &[f32]) {
+        let json = serde_json::to_string(vec).expect("serialize vector");
+        self.vectors.insert(note_id, json).expect("set vector");
+        self.doc.commit();
+    }
+
+    /// Retrieve the embedding vector for a note.
+    pub fn get_vector(&self, note_id: &str) -> Option<Vec<f32>> {
+        match self.vectors.get(note_id) {
+            Some(ValueOrContainer::Value(v)) => {
+                v.as_string().and_then(|s| serde_json::from_str(s).ok())
+            }
+            _ => None,
+        }
     }
 
     /// Get all property values for a note within a void context.

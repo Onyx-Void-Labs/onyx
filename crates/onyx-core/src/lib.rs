@@ -5,3 +5,5 @@
 
 pub mod document;
 pub mod model;
+pub mod neural;
+pub mod query;
