@@ -3,7 +3,7 @@ use vello::peniko::{self, Fill};
 
 use super::PaintCtx;
 
-const TITLE_H: f64 = 36.0;
+const TITLE_H: f64 = 40.0;
 const BTN_W: f64 = 46.0;
 
 /// Background — matches ONYX_BLACK so the seam is invisible.
@@ -31,13 +31,13 @@ pub fn hovered_button(cursor_x: f32, cursor_y: f32, window_w: f32) -> Option<Hov
         return None;
     }
     let w = window_w;
-    if cursor_x >= w - BTN_W as f32 {
+    if cursor_x >= w - 46.0 {
         return Some(HoveredButton::Close);
     }
-    if cursor_x >= w - (BTN_W * 2.0) as f32 {
+    if cursor_x >= w - 92.0 && cursor_x < w - 46.0 {
         return Some(HoveredButton::Maximise);
     }
-    if cursor_x >= w - (BTN_W * 3.0) as f32 {
+    if cursor_x >= w - 138.0 && cursor_x < w - 92.0 {
         return Some(HoveredButton::Minimise);
     }
     None
@@ -68,7 +68,7 @@ pub fn paint(cx: &mut PaintCtx, window_w: f64, hover: Option<HoveredButton>) {
     }
     {
         let cx_icon = close_x + 23.0;
-        let cy_icon = 18.0;
+        let cy_icon = 20.0;
         let color = if close_hover { ICON_WHITE } else { ICON_COLOR };
         cx.scene.stroke(
             &Stroke::new(1.1),
@@ -105,13 +105,13 @@ pub fn paint(cx: &mut PaintCtx, window_w: f64, hover: Option<HoveredButton>) {
     }
     {
         let cx_icon = max_x + 23.0;
-        let cy_icon = 18.0;
+        let cy_icon = 20.0;
         cx.scene.stroke(
             &Stroke::new(1.0),
             Affine::IDENTITY,
             ICON_COLOR,
             None,
-            &Rect::new(cx_icon - 6.0, cy_icon - 5.0, cx_icon + 6.0, cy_icon + 5.0),
+            &Rect::new(cx_icon - 9.0, cy_icon - 8.0, cx_icon + 9.0, cy_icon + 8.0),
         );
     }
 
@@ -128,7 +128,7 @@ pub fn paint(cx: &mut PaintCtx, window_w: f64, hover: Option<HoveredButton>) {
     }
     {
         let cx_icon = min_x + 23.0;
-        let cy_icon = 18.0;
+        let cy_icon = 20.0;
         cx.scene.stroke(
             &Stroke::new(1.0),
             Affine::IDENTITY,

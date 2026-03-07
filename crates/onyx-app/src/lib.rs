@@ -25,7 +25,7 @@ use widgets::Widget;
 const ONYX_BLACK: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
 
 const EDGE: f32 = 6.0;
-const TITLE_H: f32 = 36.0;
+const TITLE_H: f32 = 40.0;
 const BTN_W: f32 = 46.0;
 
 /// Hit-test regions for the custom window chrome.
@@ -77,6 +77,8 @@ pub struct OnyxApp {
     window_size: (f32, f32),
     /// Which titlebar button is currently hovered.
     hover_button: Option<titlebar::HoveredButton>,
+    /// For double-click detection on the title bar.
+    last_click_time: Option<std::time::Instant>,
 }
 
 impl Default for OnyxApp {
@@ -96,6 +98,7 @@ impl Default for OnyxApp {
             cursor_pos: (0.0, 0.0),
             window_size: (1280.0, 800.0),
             hover_button: None,
+            last_click_time: None,
         }
     }
 }
@@ -130,17 +133,17 @@ fn hit_test_region(x: f32, y: f32, w: f32, h: f32) -> HitRegion {
         return HitRegion::ResizeE;
     }
 
-    // --- Traffic-light buttons in title bar ---
+    // --- Title bar buttons (rightmost first) ---
+    if x >= w - 46.0 && y < TITLE_H {
+        return HitRegion::Close;
+    }
+    if x >= w - 92.0 && x < w - 46.0 && y < TITLE_H {
+        return HitRegion::Maximise;
+    }
+    if x >= w - 138.0 && x < w - 92.0 && y < TITLE_H {
+        return HitRegion::Minimise;
+    }
     if y < TITLE_H {
-        if x >= w - BTN_W {
-            return HitRegion::Close;
-        }
-        if x >= w - BTN_W * 2.0 {
-            return HitRegion::Maximise;
-        }
-        if x >= w - BTN_W * 3.0 {
-            return HitRegion::Minimise;
-        }
         return HitRegion::TitleBar;
     }
 
@@ -348,6 +351,25 @@ impl ApplicationHandler for OnyxApp {
                 state: ElementState::Pressed,
                 ..
             } => {
+                // Double-click detection for title bar maximize/restore.
+                let now = std::time::Instant::now();
+                let is_double_click = self
+                    .last_click_time
+                    .map(|t| now.duration_since(t).as_millis() < 400)
+                    .unwrap_or(false);
+                let region = hit_test_region(
+                    self.cursor_pos.0,
+                    self.cursor_pos.1,
+                    self.window_size.0,
+                    self.window_size.1,
+                );
+                if is_double_click && matches!(region, HitRegion::TitleBar) {
+                    state.window.set_maximized(!state.window.is_maximized());
+                    self.last_click_time = None;
+                    return;
+                }
+                self.last_click_time = Some(now);
+
                 let (cx, cy) = self.cursor_pos;
                 match hit_test_region(cx, cy, self.window_size.0, self.window_size.1) {
                     HitRegion::TitleBar => {
