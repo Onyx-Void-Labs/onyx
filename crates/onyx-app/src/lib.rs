@@ -25,6 +25,11 @@ struct RenderState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
+    // Intermediate Rgba8Unorm texture — vello's compute shaders always write
+    // this format. We blit from here to the surface (which may be Bgra8Unorm).
+    target_texture: wgpu::Texture,
+    target_view: wgpu::TextureView,
+    blitter: wgpu::util::TextureBlitter,
 }
 
 /// Top-level application driven by `winit`.
@@ -102,24 +107,29 @@ impl ApplicationHandler for OnyxApp {
 
         let size = window.inner_size();
         let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps
+        let surface_format = surface_caps
             .formats
             .iter()
-            .find(|f| !f.is_srgb())
+            .find(|f| matches!(f, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm))
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
+            format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+
+        // --- intermediate Rgba8Unorm target for vello compute shaders ---
+        let (target_texture, target_view) =
+            create_target_texture(&device, config.width, config.height);
+        let blitter = wgpu::util::TextureBlitter::new(&device, surface_format);
 
         // --- vello renderer ---
         let renderer = Renderer::new(
@@ -140,6 +150,9 @@ impl ApplicationHandler for OnyxApp {
             device,
             queue,
             renderer,
+            target_texture,
+            target_view,
+            blitter,
         });
     }
 
@@ -159,17 +172,22 @@ impl ApplicationHandler for OnyxApp {
             }
 
             WindowEvent::Resized(new_size) => {
-                state.config.width = new_size.width.max(1);
-                state.config.height = new_size.height.max(1);
+                let w = new_size.width.max(1);
+                let h = new_size.height.max(1);
+                state.config.width = w;
+                state.config.height = h;
                 state.surface.configure(&state.device, &state.config);
+                let (tex, view) = create_target_texture(&state.device, w, h);
+                state.target_texture = tex;
+                state.target_view = view;
                 state.window.request_redraw();
             }
 
             WindowEvent::RedrawRequested => {
-                let width = state.config.width as f64;
-                let height = state.config.height as f64;
+                let width = state.config.width;
+                let height = state.config.height;
 
-                Self::render_scene(&mut self.scene, width, height);
+                Self::render_scene(&mut self.scene, width as f64, height as f64);
 
                 let surface_texture = match state.surface.get_current_texture() {
                     Ok(t) => t,
@@ -183,25 +201,37 @@ impl ApplicationHandler for OnyxApp {
                     }
                 };
 
-                let texture_view = surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
+                // Render to intermediate Rgba8Unorm texture.
                 state
                     .renderer
                     .render_to_texture(
                         &state.device,
                         &state.queue,
                         &self.scene,
-                        &texture_view,
+                        &state.target_view,
                         &vello::RenderParams {
                             base_color: ONYX_BLACK,
-                            width: state.config.width,
-                            height: state.config.height,
+                            width,
+                            height,
                             antialiasing_method: AaConfig::Msaa16,
                         },
                     )
-                    .expect("failed to render to surface");
+                    .expect("vello render failed");
+
+                // Blit from Rgba8Unorm target → surface (which may be Bgra8Unorm).
+                let surface_view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let mut encoder = state.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor { label: Some("blit") },
+                );
+                state.blitter.copy(
+                    &state.device,
+                    &mut encoder,
+                    &state.target_view,
+                    &surface_view,
+                );
+                state.queue.submit(Some(encoder.finish()));
 
                 surface_texture.present();
 
@@ -212,4 +242,24 @@ impl ApplicationHandler for OnyxApp {
             _ => {}
         }
     }
+}
+
+/// Create an intermediate Rgba8Unorm texture for vello's compute pipeline.
+fn create_target_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("vello-target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
