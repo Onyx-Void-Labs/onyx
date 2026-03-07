@@ -6,6 +6,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use parley::editing::Cursor as ParleyCursor;
+use parley::layout::Affinity;
 use parley::{Layout, PositionedLayoutItem, StyleProperty};
 use vello::kurbo::{Affine, Rect, Size};
 use vello::peniko::{self, Fill};
@@ -33,6 +35,8 @@ pub struct LaneEditor {
     layout: Option<Layout<peniko::Brush>>,
     cached_size: Size,
     cursor_x: f64,
+    cursor_y: f64,
+    cursor_h: f64,
     dirty: bool,
     last_layout_hash: u64,
 
@@ -53,6 +57,8 @@ impl LaneEditor {
             layout: None,
             cached_size: Size::ZERO,
             cursor_x: 0.0,
+            cursor_y: 0.0,
+            cursor_h: 0.0,
             dirty: true,
             last_layout_hash: 0,
             blink_epoch: std::time::Instant::now(),
@@ -94,30 +100,14 @@ impl LaneEditor {
         i.min(self.text.len())
     }
 
-    /// Compute cursor X offset by measuring text before the cursor.
-    fn compute_cursor_x(
-        font_cx: &mut parley::FontContext,
-        layout_cx: &mut parley::LayoutContext<peniko::Brush>,
-        text: &str,
+    /// Compute cursor geometry from the Parley layout using exact Cursor API.
+    fn compute_cursor_geometry(
+        layout: &Layout<peniko::Brush>,
         cursor_idx: usize,
-        font_size: f32,
-        scale: f64,
-    ) -> f64 {
-        if cursor_idx == 0 {
-            return 0.0;
-        }
-        let before = &text[..cursor_idx];
-        let mut builder = layout_cx.ranged_builder(font_cx, before, scale as f32, true);
-        builder.push_default(StyleProperty::FontSize(font_size));
-        builder.push_default(StyleProperty::Brush(
-            peniko::Color::from_rgba8(0, 0, 0, 0).into(),
-        ));
-        let mut measure = builder.build(before);
-        measure.break_all_lines(None);
-        if let Some(line) = measure.lines().next() {
-            return line.metrics().advance as f64;
-        }
-        0.0
+    ) -> (f64, f64, f64) {
+        let cursor = ParleyCursor::from_byte_index(layout, cursor_idx, Affinity::Downstream);
+        let geom = cursor.geometry(layout, 2.0);
+        (geom.x0, geom.y0, geom.y1 - geom.y0)
     }
 
     /// Draw glyphs into the scene at `(x, y)`.
@@ -194,17 +184,14 @@ impl Widget for LaneEditor {
             h += metrics.size();
         }
         self.cached_size = Size::new(w as f64, h as f64);
-        self.layout = Some(layout);
 
-        // Compute cursor X (separate measurement layout)
-        self.cursor_x = Self::compute_cursor_x(
-            cx.font_cx,
-            cx.layout_cx,
-            &self.text,
-            self.cursor_idx,
-            self.font_size,
-            cx.scale_factor,
-        );
+        // Compute cursor position from the layout using Parley's Cursor API
+        let (cx_pos, cy_pos, ch) = Self::compute_cursor_geometry(&layout, self.cursor_idx);
+        self.cursor_x = cx_pos;
+        self.cursor_y = cy_pos;
+        self.cursor_h = ch;
+
+        self.layout = Some(layout);
 
         self.dirty = false;
         self.cached_size
@@ -214,19 +201,23 @@ impl Widget for LaneEditor {
         // Draw text
         self.draw_text(scene, rect.x0, rect.y0);
 
-        // Draw cursor
+        // Draw cursor (precise position from Parley Cursor API)
         if self.cursor_visible() {
-            let cursor_w = 2.0 * self.scale_factor;
-            let cursor_h = self.cached_size.height;
+            let cursor_w = 2.0;
             let cx = rect.x0 + self.cursor_x;
-            let cy = rect.y0;
+            let cy = rect.y0 + self.cursor_y;
+            let ch = if self.cursor_h > 0.0 {
+                self.cursor_h
+            } else {
+                self.font_size as f64 * self.scale_factor
+            };
 
             scene.fill(
                 Fill::NonZero,
                 Affine::IDENTITY,
                 CURSOR_COLOR,
                 None,
-                &Rect::new(cx, cy, cx + cursor_w, cy + cursor_h),
+                &Rect::new(cx, cy, cx + cursor_w, cy + ch),
             );
         }
     }

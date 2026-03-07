@@ -6,17 +6,58 @@
 use crate::id::OnyxId;
 use rkyv::{Archive, Deserialize, Serialize};
 
-/// A block inside a document—paragraph, heading, math, code, etc.
+/// The content variant of a block.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
-pub enum Block {
+pub enum BlockContent {
     /// Plain rich-text paragraph.
-    Paragraph { text: String },
+    Paragraph(String),
+    /// Section heading (level 1-6).
+    Heading(String, u8),
     /// LaTeX / Typst math block.
-    Math { source: String },
+    Math(String),
     /// Fenced code block with optional language tag.
     Code { lang: String, source: String },
-    /// Section heading (level 1-6).
-    Heading { level: u8, text: String },
+}
+
+/// A block inside a document—paragraph, heading, math, code, etc.
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+pub struct Block {
+    pub id: String,
+    pub content: BlockContent,
+}
+
+impl Block {
+    /// Create a new paragraph block with a generated UUID.
+    pub fn paragraph(text: impl Into<String>) -> Self {
+        Self {
+            id: OnyxId::new().to_string(),
+            content: BlockContent::Paragraph(text.into()),
+        }
+    }
+
+    /// Create a new heading block with a generated UUID.
+    pub fn heading(text: impl Into<String>, level: u8) -> Self {
+        Self {
+            id: OnyxId::new().to_string(),
+            content: BlockContent::Heading(text.into(), level),
+        }
+    }
+
+    /// Return a reference to this block's text content.
+    pub fn text(&self) -> &str {
+        match &self.content {
+            BlockContent::Paragraph(t) | BlockContent::Heading(t, _) | BlockContent::Math(t) => t,
+            BlockContent::Code { source, .. } => source,
+        }
+    }
+
+    /// Return a mutable reference to this block's text content.
+    pub fn text_mut(&mut self) -> &mut String {
+        match &mut self.content {
+            BlockContent::Paragraph(t) | BlockContent::Heading(t, _) | BlockContent::Math(t) => t,
+            BlockContent::Code { source, .. } => source,
+        }
+    }
 }
 
 /// A document is an ordered list of blocks plus metadata.

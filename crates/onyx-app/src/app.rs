@@ -19,7 +19,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-use crate::ui::chrome::{FormattingRibbon, HoveredButton, PathBar, RibbonHit, WindowControls};
+use crate::ui::chrome::{HoveredButton, PathBar, WindowControls};
 use crate::widgets::editor::LaneEditor;
 use crate::widgets::text::TextWidget;
 use crate::widgets::{Action, LayoutContext as OnyxLayoutCtx, Widget};
@@ -37,6 +37,9 @@ const SPINE_BORDER: peniko::Color = peniko::Color::from_rgba8(0x27, 0x27, 0x2a, 
 const ZINC_200: peniko::Color = peniko::Color::from_rgba8(228, 228, 231, 255);
 /// Accent — blue-600.
 const BLUE_600: peniko::Color = peniko::Color::from_rgba8(0x25, 0x63, 0xeb, 0xff);
+
+/// Spacing between blocks in physical pixels.
+const BLOCK_GAP: f64 = 20.0;
 
 // ─── Render State ──────────────────────────────────────────────────
 
@@ -65,13 +68,13 @@ pub struct OnyxApp {
     layout_cx: LayoutContext<Brush>,
 
     // Chrome
-    ribbon: FormattingRibbon,
     path_bar: PathBar,
     hover_button: Option<HoveredButton>,
 
-    // Document content
+    // Document content — one editor per block
     title_text: TextWidget,
-    editor: LaneEditor,
+    blocks: Vec<LaneEditor>,
+    active_block_idx: usize,
 
     // DPI
     scale_factor: f64,
@@ -83,21 +86,22 @@ pub struct OnyxApp {
 
 impl Default for OnyxApp {
     fn default() -> Self {
+        let text_color = peniko::Color::from_rgba8(0xa1, 0xa1, 0xaa, 0xff);
         Self {
             render: None,
             wctx: None,
             scene: Scene::new(),
             font_cx: FontContext::new(),
             layout_cx: LayoutContext::new(),
-            ribbon: FormattingRibbon::new(15.0),
             path_bar: PathBar::new(&["Root", "Workspace"]),
             hover_button: None,
             title_text: TextWidget::new("Onyx Void", 28.0, ZINC_200),
-            editor: LaneEditor::new(
+            blocks: vec![LaneEditor::new(
                 "Welcome to the void. Start typing to create.",
                 15.0,
-                peniko::Color::from_rgba8(0xa1, 0xa1, 0xaa, 0xff),
-            ),
+                text_color,
+            )],
+            active_block_idx: 0,
             scale_factor: 1.0,
             layouts_dirty: true,
             needs_redraw: true,
@@ -120,8 +124,9 @@ impl OnyxApp {
         let spine_w = 850.0 * scale;
         let wide = Size::new(spine_w, 2000.0);
         self.title_text.layout(&mut cx, wide);
-        self.editor.layout(&mut cx, wide);
-        self.ribbon.layout_labels(&mut cx);
+        for block in &mut self.blocks {
+            block.layout(&mut cx, wide);
+        }
         self.path_bar.layout_all(&mut cx);
         self.layouts_dirty = false;
     }
@@ -133,8 +138,7 @@ impl OnyxApp {
         phys_h: f64,
         scale: f64,
         title: &TextWidget,
-        editor: &LaneEditor,
-        ribbon: &FormattingRibbon,
+        blocks: &[LaneEditor],
         path_bar: &PathBar,
         hover_button: Option<HoveredButton>,
         is_maximized: bool,
@@ -160,7 +164,7 @@ impl OnyxApp {
         let spine_w = (850.0 * scale).min(phys_w - 60.0);
         let spine_x = (phys_w - spine_w) / 2.0;
         let spine_y = 110.0;
-        let spine_h = phys_h - 200.0;
+        let spine_h = phys_h - spine_y - 40.0;
         let spine_rect =
             RoundedRect::new(spine_x, spine_y, spine_x + spine_w, spine_y + spine_h, 8.0);
         scene.fill(Fill::NonZero, Affine::IDENTITY, SPINE_BG, None, &spine_rect);
@@ -186,21 +190,21 @@ impl OnyxApp {
             ),
         );
 
-        // 6. Editor (replaces static body rows)
-        let editor_y = title_y + title_sz.height + 24.0;
-        let editor_sz = editor.cached_size();
-        editor.draw(
-            scene,
-            Rect::new(
-                title_x,
-                editor_y,
-                title_x + editor_sz.width,
-                editor_y + editor_sz.height,
-            ),
-        );
-
-        // 7. FormattingRibbon (bottom)
-        ribbon.draw(scene, phys_w, phys_h);
+        // 6. Blocks — vertical stack with 20px gap, 100px top padding
+        let mut block_y = title_y + title_sz.height + 100.0;
+        for block in blocks {
+            let block_sz = block.cached_size();
+            block.draw(
+                scene,
+                Rect::new(
+                    title_x,
+                    block_y,
+                    title_x + block_sz.width,
+                    block_y + block_sz.height,
+                ),
+            );
+            block_y += block_sz.height + BLOCK_GAP;
+        }
     }
 }
 
@@ -374,52 +378,19 @@ impl ApplicationHandler for OnyxApp {
                 ..
             } => {
                 let wctx = self.wctx.as_mut().unwrap();
-
-                // Ribbon hit-test (physical coords)
-                let rs = self.render.as_ref().unwrap();
-                let phys_w = rs.config.width as f64;
-                let phys_h = rs.config.height as f64;
-                let (cx, cy) = (wctx.cursor_pos.0 as f64, wctx.cursor_pos.1 as f64);
-                if let Some(hit) = self.ribbon.hit_test(cx, cy, phys_w, phys_h) {
-                    match hit {
-                        RibbonHit::Bold => {
-                            self.ribbon.is_bold = !self.ribbon.is_bold;
-                        }
-                        RibbonHit::Italic => {
-                            self.ribbon.is_italic = !self.ribbon.is_italic;
-                        }
-                        RibbonHit::FontSizeMinus => {
-                            if self.editor.font_size > 8.0 {
-                                self.editor.font_size -= 1.0;
-                                self.ribbon.font_size = self.editor.font_size;
-                                self.ribbon.update_size_label();
-                            }
-                        }
-                        RibbonHit::FontSizePlus => {
-                            if self.editor.font_size < 72.0 {
-                                self.editor.font_size += 1.0;
-                                self.ribbon.font_size = self.editor.font_size;
-                                self.ribbon.update_size_label();
-                            }
-                        }
-                        RibbonHit::Settings => {}
-                    }
-                    self.layouts_dirty = true;
-                    self.needs_redraw = true;
-                    wctx.window.request_redraw();
-                } else {
-                    wctx.handle_click(event_loop);
-                    wctx.window.request_redraw();
-                }
+                wctx.handle_click(event_loop);
+                wctx.window.request_redraw();
             }
 
-            // Route keyboard input to the editor
+            // Route keyboard input to the active block
             ref evt @ WindowEvent::KeyboardInput { .. } => {
-                if self.editor.handle_event(evt) == Action::Redraw {
-                    self.layouts_dirty = true;
-                    self.needs_redraw = true;
-                    let wctx = self.wctx.as_ref().unwrap();
-                    wctx.window.request_redraw();
+                if let Some(editor) = self.blocks.get_mut(self.active_block_idx) {
+                    if editor.handle_event(evt) == Action::Redraw {
+                        self.layouts_dirty = true;
+                        self.needs_redraw = true;
+                        let wctx = self.wctx.as_ref().unwrap();
+                        wctx.window.request_redraw();
+                    }
                 }
             }
 
@@ -438,8 +409,7 @@ impl ApplicationHandler for OnyxApp {
                     phys_h as f64,
                     self.scale_factor,
                     &self.title_text,
-                    &self.editor,
-                    &self.ribbon,
+                    &self.blocks,
                     &self.path_bar,
                     self.hover_button,
                     wctx.window.is_maximized(),
