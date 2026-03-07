@@ -5,10 +5,6 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[lib]
-name = "onyx_app"
-crate-type =["cdylib", "rlib"]
-
 [[bin]]
 name = "onyx_void"
 path = "src/main.rs"
@@ -25,8 +21,11 @@ onyx-math   = { workspace = true }
 onyx-store  = { workspace = true }
 onyx-net    = { workspace = true }
 
-# Makepad (upstream via workspace)
-makepad-widgets = { workspace = true }
+# Vello stack
+winit    = { workspace = true }
+vello    = { workspace = true }
+parley   = { workspace = true }
+pollster = { workspace = true }
 
 # Async runtime (for Iroh background thread)
 tokio = { workspace = true }

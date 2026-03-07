@@ -32,8 +32,12 @@ onyx-math   = { path = "crates/onyx-math" }
 onyx-store  = { path = "crates/onyx-store" }
 onyx-net    = { path = "crates/onyx-net" }
 
-# ── Visual Engine ──
-makepad-widgets = { git = "https://github.com/makepad/makepad", branch = "rik" }
+# ── Visual Engine (Vello Stack) ──
+winit   = "0.30"
+wgpu    = "28.0"
+vello   = { git = "https://github.com/linebender/vello" }
+parley  = { git = "https://github.com/linebender/parley" }
+pollster = "0.3"
 
 # ── Text ──
 ropey = "1.6"

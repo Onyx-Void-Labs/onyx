@@ -1,12 +1,215 @@
-﻿// --- Onyx Void - Library Entry Point ---
-// Required for Android builds: the Makepad app_main!() macro
-// generates JNI entry points when compiled as a cdylib (.so).
+﻿// --- Onyx Void — Library Entry Point (Vello Stack) ---
 #![allow(dead_code, unused_imports)]
 
-#[cfg(not(target_os = "android"))]
-use mimalloc::MiMalloc;
-#[cfg(not(target_os = "android"))]
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 
-mod app;
+use vello::kurbo::{Affine, Circle};
+use vello::peniko::{color::palette, Fill};
+use vello::wgpu;
+use vello::{AaConfig, Renderer, RendererOptions, Scene};
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::WindowEvent;
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{Window, WindowId};
+
+/// Onyx Black — #09090b
+const ONYX_BLACK: vello::peniko::Color = vello::peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
+
+/// The live render state, created once the window surface is ready.
+struct RenderState {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: Renderer,
+}
+
+/// Top-level application driven by `winit`.
+pub struct OnyxApp {
+    state: Option<RenderState>,
+    scene: Scene,
+}
+
+impl Default for OnyxApp {
+    fn default() -> Self {
+        Self {
+            state: None,
+            scene: Scene::new(),
+        }
+    }
+}
+
+impl OnyxApp {
+    /// Build the vello Scene for the current frame.
+    fn render_scene(scene: &mut Scene, width: f64, height: f64) {
+        scene.reset();
+
+        // Red circle in the center of the window.
+        let center_x = width / 2.0;
+        let center_y = height / 2.0;
+        let radius = width.min(height) * 0.12;
+
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            palette::css::RED,
+            None,
+            &Circle::new((center_x, center_y), radius),
+        );
+    }
+}
+
+impl ApplicationHandler for OnyxApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.state.is_some() {
+            return;
+        }
+
+        let window_attrs = Window::default_attributes()
+            .with_title("Onyx Void")
+            .with_inner_size(LogicalSize::new(1280, 800));
+
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .expect("failed to create window"),
+        );
+
+        // --- wgpu bootstrap ---
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(Arc::clone(&window))
+            .expect("failed to create surface");
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
+        .expect("failed to find a suitable GPU adapter");
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("onyx-device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            },
+        ))
+        .expect("failed to create wgpu device");
+
+        let size = window.inner_size();
+        let surface_caps = surface.get_capabilities(&adapter);
+        let format = surface_caps
+            .formats
+            .iter()
+            .find(|f| !f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        // --- vello renderer ---
+        let renderer = Renderer::new(
+            &device,
+            RendererOptions {
+                use_cpu: false,
+                antialiasing_support: vello::AaSupport::all(),
+                num_init_threads: NonZeroUsize::new(1),
+                ..Default::default()
+            },
+        )
+        .expect("failed to create vello renderer");
+
+        self.state = Some(RenderState {
+            window,
+            surface,
+            config,
+            device,
+            queue,
+            renderer,
+        });
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+
+            WindowEvent::Resized(new_size) => {
+                state.config.width = new_size.width.max(1);
+                state.config.height = new_size.height.max(1);
+                state.surface.configure(&state.device, &state.config);
+                state.window.request_redraw();
+            }
+
+            WindowEvent::RedrawRequested => {
+                let width = state.config.width as f64;
+                let height = state.config.height as f64;
+
+                Self::render_scene(&mut self.scene, width, height);
+
+                let surface_texture = match state.surface.get_current_texture() {
+                    Ok(t) => t,
+                    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                        state.surface.configure(&state.device, &state.config);
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("surface error: {e}");
+                        return;
+                    }
+                };
+
+                let texture_view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                state
+                    .renderer
+                    .render_to_texture(
+                        &state.device,
+                        &state.queue,
+                        &self.scene,
+                        &texture_view,
+                        &vello::RenderParams {
+                            base_color: ONYX_BLACK,
+                            width: state.config.width,
+                            height: state.config.height,
+                            antialiasing_method: AaConfig::Msaa16,
+                        },
+                    )
+                    .expect("failed to render to surface");
+
+                surface_texture.present();
+
+                // Request continuous redraws for smooth animation.
+                state.window.request_redraw();
+            }
+
+            _ => {}
+        }
+    }
+}

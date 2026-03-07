@@ -1,4 +1,4 @@
-﻿// --- Onyx Void - Application Entry Point ---
+﻿// --- Onyx Void — Application Entry Point (Vello Stack) ---
 
 #[cfg(not(target_os = "android"))]
 use mimalloc::MiMalloc;
@@ -6,19 +6,21 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod app;
+use onyx_app::OnyxApp;
+use winit::event_loop::EventLoop;
 
 fn main() {
     // -- Tracing --
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "onyx=debug,makepad=info".into()),
+                .unwrap_or_else(|_| "onyx=debug,wgpu=warn".into()),
         )
         .init();
 
-    tracing::info!("Onyx Void - ignition sequence started");
+    tracing::info!("Onyx Void — ignition sequence started (Vello stack)");
 
-    // -- Launch Makepad --
-    app::app_main();
+    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let mut app = OnyxApp::default();
+    event_loop.run_app(&mut app).expect("event loop error");
 }
