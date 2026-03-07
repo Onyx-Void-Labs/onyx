@@ -292,6 +292,20 @@ impl Widget for LaneEditor {
                         }
                         Action::None
                     }
+                    Key::Named(NamedKey::Enter) => {
+                        self.text.insert(self.cursor_idx, '\n');
+                        self.cursor_idx += 1;
+                        self.dirty = true;
+                        self.reset_blink();
+                        Action::Redraw
+                    }
+                    Key::Named(NamedKey::Space) => {
+                        self.text.insert(self.cursor_idx, ' ');
+                        self.cursor_idx += 1;
+                        self.dirty = true;
+                        self.reset_blink();
+                        Action::Redraw
+                    }
                     _ => {
                         if let Some(ref text) = event.text {
                             let s = text.as_str();

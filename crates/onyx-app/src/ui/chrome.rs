@@ -33,39 +33,120 @@ const SUBTLE_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 
 const ICON_WHITE: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 255);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  CommandDock
+//  FormattingRibbon  (replaces CommandDock)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const DOCK_WIDTH: f64 = 380.0;
+const DOCK_WIDTH: f64 = 520.0;
 const DOCK_HEIGHT: f64 = 52.0;
 const DOCK_RADIUS: f64 = 26.0;
 const DOCK_BOTTOM_MARGIN: f64 = 30.0;
 
-/// A rounded-rect pill pinned to the bottom-center of the window.
-pub struct CommandDock {
-    labels: Vec<TextWidget>,
+/// Ribbon button inner size.
+const BTN_SIZE: f64 = 32.0;
+const BTN_RADIUS: f64 = 6.0;
+
+/// Button pressed/active background — zinc-700.
+const BTN_ACTIVE_BG: peniko::Color = peniko::Color::from_rgba8(0x3f, 0x3f, 0x46, 0xff);
+/// Button hover background — zinc-800.
+const BTN_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(0x27, 0x27, 0x2a, 0xff);
+
+/// Which ribbon button the cursor is currently over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RibbonHit {
+    Bold,
+    Italic,
+    FontSizeMinus,
+    FontSizePlus,
+    Settings,
 }
 
-impl CommandDock {
-    pub fn new() -> Self {
-        let items: &[&str] = &["✦ WRITE", "▨ PAINT", "✉ MAIL", "⚙ SETTINGS"];
+/// A frosted-glass formatting ribbon pinned to the bottom-center.
+pub struct FormattingRibbon {
+    // Text labels
+    mode_label: TextWidget,
+    bold_label: TextWidget,
+    italic_label: TextWidget,
+    minus_label: TextWidget,
+    plus_label: TextWidget,
+    settings_label: TextWidget,
+    size_label: TextWidget,
+
+    // State
+    pub is_bold: bool,
+    pub is_italic: bool,
+    pub font_size: f32,
+}
+
+impl FormattingRibbon {
+    pub fn new(font_size: f32) -> Self {
         Self {
-            labels: items
-                .iter()
-                .map(|&s| TextWidget::new(s, 11.0, ZINC_200))
-                .collect(),
+            mode_label: TextWidget::new("\u{1F4C4} WRITE", 11.0, ZINC_200),
+            bold_label: TextWidget::new("B", 13.0, ZINC_200),
+            italic_label: TextWidget::new("I", 13.0, ZINC_200),
+            minus_label: TextWidget::new("\u{2212}", 13.0, ZINC_200),
+            plus_label: TextWidget::new("+", 13.0, ZINC_200),
+            settings_label: TextWidget::new("\u{2699}", 13.0, ZINC_200),
+            size_label: TextWidget::new(format!("{}", font_size as u32), 11.0, ZINC_200),
+            is_bold: false,
+            is_italic: false,
+            font_size,
         }
     }
 
-    /// Build / refresh text layouts for dock labels.
+    /// Rebuild the font-size label when the value changes.
+    pub fn update_size_label(&mut self) {
+        self.size_label = TextWidget::new(format!("{}", self.font_size as u32), 11.0, ZINC_200);
+    }
+
+    /// Build / refresh text layouts.
     pub fn layout_labels(&mut self, cx: &mut LayoutContext) {
-        let constraints = Size::new(120.0, 30.0);
-        for label in &mut self.labels {
-            label.layout(cx, constraints);
-        }
+        let c = Size::new(120.0, 30.0);
+        self.mode_label.layout(cx, c);
+        self.bold_label.layout(cx, c);
+        self.italic_label.layout(cx, c);
+        self.minus_label.layout(cx, c);
+        self.plus_label.layout(cx, c);
+        self.settings_label.layout(cx, c);
+        self.size_label.layout(cx, c);
     }
 
-    /// Draw the dock at the bottom-center of the viewport.
+    /// Hit-test: which button (if any) is at `(px, py)` in physical coords.
+    pub fn hit_test(&self, px: f64, py: f64, window_w: f64, window_h: f64) -> Option<RibbonHit> {
+        let dock_x = (window_w - DOCK_WIDTH) / 2.0;
+        let dock_y = window_h - DOCK_HEIGHT - DOCK_BOTTOM_MARGIN;
+        if px < dock_x || px > dock_x + DOCK_WIDTH || py < dock_y || py > dock_y + DOCK_HEIGHT {
+            return None;
+        }
+        // Compute button positions (same as draw)
+        let cy = dock_y + (DOCK_HEIGHT - BTN_SIZE) / 2.0;
+        let positions = self.button_positions(dock_x);
+        for (hit, bx) in positions {
+            let rect = Rect::new(bx, cy, bx + BTN_SIZE, cy + BTN_SIZE);
+            if rect.contains(vello::kurbo::Point::new(px, py)) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+
+    /// Button X positions relative to dock_x.
+    fn button_positions(&self, dock_x: f64) -> Vec<(RibbonHit, f64)> {
+        // Layout: [📄 WRITE] | [B] [I] | [-] [size] [+] | [⚙]
+        let mut positions = Vec::new();
+        let mut x = dock_x + 90.0; // after mode label + divider
+        positions.push((RibbonHit::Bold, x));
+        x += BTN_SIZE + 6.0;
+        positions.push((RibbonHit::Italic, x));
+        x += BTN_SIZE + 20.0; // gap for divider
+        positions.push((RibbonHit::FontSizeMinus, x));
+        x += BTN_SIZE + 40.0; // skip size label
+        positions.push((RibbonHit::FontSizePlus, x));
+        x += BTN_SIZE + 20.0; // gap for divider
+        positions.push((RibbonHit::Settings, x));
+        positions
+    }
+
+    /// Draw the ribbon at the bottom-center of the viewport.
     pub fn draw(&self, scene: &mut Scene, window_w: f64, window_h: f64) {
         let dock_x = (window_w - DOCK_WIDTH) / 2.0;
         let dock_y = window_h - DOCK_HEIGHT - DOCK_BOTTOM_MARGIN;
@@ -79,7 +160,6 @@ impl CommandDock {
             DOCK_RADIUS,
         );
         scene.fill(Fill::NonZero, Affine::IDENTITY, DOCK_COLOR, None, &pill);
-        // Pill border
         scene.stroke(
             &Stroke::new(1.0),
             Affine::IDENTITY,
@@ -88,18 +168,99 @@ impl CommandDock {
             &pill,
         );
 
-        // Evenly spaced labels inside the pill.
-        let n = self.labels.len() as f64;
-        let spacing = DOCK_WIDTH / (n + 1.0);
-        for (i, label) in self.labels.iter().enumerate() {
-            let lw = label.cached_size().width;
-            let lx = dock_x + spacing * (i as f64 + 1.0) - lw / 2.0;
-            let ly = dock_y + (DOCK_HEIGHT - label.cached_size().height) / 2.0;
-            label.draw(
-                scene,
-                Rect::new(lx, ly, lx + lw, ly + label.cached_size().height),
-            );
+        let cy = dock_y + (DOCK_HEIGHT - BTN_SIZE) / 2.0;
+        let label_cy =
+            |label: &TextWidget| dock_y + (DOCK_HEIGHT - label.cached_size().height) / 2.0;
+
+        // ── Left: Mode label ──
+        let mode_x = dock_x + 16.0;
+        let mode_y = label_cy(&self.mode_label);
+        let msz = self.mode_label.cached_size();
+        self.mode_label.draw(
+            scene,
+            Rect::new(mode_x, mode_y, mode_x + msz.width, mode_y + msz.height),
+        );
+
+        // Divider 1
+        let div1_x = dock_x + 80.0;
+        scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            ZINC_600,
+            None,
+            &Line::new(
+                (div1_x, dock_y + 12.0),
+                (div1_x, dock_y + DOCK_HEIGHT - 12.0),
+            ),
+        );
+
+        // ── Center-left: Bold / Italic ──
+        let positions = self.button_positions(dock_x);
+
+        for &(ref hit, bx) in &positions {
+            let is_active = match hit {
+                RibbonHit::Bold => self.is_bold,
+                RibbonHit::Italic => self.is_italic,
+                _ => false,
+            };
+            let btn_rect = RoundedRect::new(bx, cy, bx + BTN_SIZE, cy + BTN_SIZE, BTN_RADIUS);
+            if is_active {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    BTN_ACTIVE_BG,
+                    None,
+                    &btn_rect,
+                );
+            }
+            let label = match hit {
+                RibbonHit::Bold => &self.bold_label,
+                RibbonHit::Italic => &self.italic_label,
+                RibbonHit::FontSizeMinus => &self.minus_label,
+                RibbonHit::FontSizePlus => &self.plus_label,
+                RibbonHit::Settings => &self.settings_label,
+            };
+            let lsz = label.cached_size();
+            let lx = bx + (BTN_SIZE - lsz.width) / 2.0;
+            let ly = cy + (BTN_SIZE - lsz.height) / 2.0;
+            label.draw(scene, Rect::new(lx, ly, lx + lsz.width, ly + lsz.height));
         }
+
+        // Font size value label (between – and +)
+        let size_x = dock_x + 90.0 + BTN_SIZE + 6.0 + BTN_SIZE + 20.0 + BTN_SIZE + 6.0;
+        let size_y = label_cy(&self.size_label);
+        let ssz = self.size_label.cached_size();
+        self.size_label.draw(
+            scene,
+            Rect::new(size_x, size_y, size_x + ssz.width, size_y + ssz.height),
+        );
+
+        // Divider 2 (before –/+)
+        let div2_x = dock_x + 90.0 + BTN_SIZE + 6.0 + BTN_SIZE + 10.0;
+        scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            ZINC_600,
+            None,
+            &Line::new(
+                (div2_x, dock_y + 12.0),
+                (div2_x, dock_y + DOCK_HEIGHT - 12.0),
+            ),
+        );
+
+        // Divider 3 (before ⚙)
+        let div3_x =
+            dock_x + 90.0 + BTN_SIZE + 6.0 + BTN_SIZE + 20.0 + BTN_SIZE + 40.0 + BTN_SIZE + 10.0;
+        scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            ZINC_600,
+            None,
+            &Line::new(
+                (div3_x, dock_y + 12.0),
+                (div3_x, dock_y + DOCK_HEIGHT - 12.0),
+            ),
+        );
     }
 }
 

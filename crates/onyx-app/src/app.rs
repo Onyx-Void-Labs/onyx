@@ -7,7 +7,6 @@
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use parley::{FontContext, LayoutContext};
 use vello::kurbo::{Affine, Rect, RoundedRect, Size, Stroke};
@@ -17,10 +16,10 @@ use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-use crate::ui::chrome::{CommandDock, HoveredButton, PathBar, WindowControls};
+use crate::ui::chrome::{FormattingRibbon, HoveredButton, PathBar, RibbonHit, WindowControls};
 use crate::widgets::editor::LaneEditor;
 use crate::widgets::text::TextWidget;
 use crate::widgets::{Action, LayoutContext as OnyxLayoutCtx, Widget};
@@ -66,7 +65,7 @@ pub struct OnyxApp {
     layout_cx: LayoutContext<Brush>,
 
     // Chrome
-    dock: CommandDock,
+    ribbon: FormattingRibbon,
     path_bar: PathBar,
     hover_button: Option<HoveredButton>,
 
@@ -78,10 +77,8 @@ pub struct OnyxApp {
     scale_factor: f64,
 
     // Flags
-    is_animating: bool,
     layouts_dirty: bool,
     needs_redraw: bool,
-    instant_frame: bool,
 }
 
 impl Default for OnyxApp {
@@ -92,7 +89,7 @@ impl Default for OnyxApp {
             scene: Scene::new(),
             font_cx: FontContext::new(),
             layout_cx: LayoutContext::new(),
-            dock: CommandDock::new(),
+            ribbon: FormattingRibbon::new(15.0),
             path_bar: PathBar::new(&["Root", "Workspace"]),
             hover_button: None,
             title_text: TextWidget::new("Onyx Void", 28.0, ZINC_200),
@@ -102,10 +99,8 @@ impl Default for OnyxApp {
                 peniko::Color::from_rgba8(0xa1, 0xa1, 0xaa, 0xff),
             ),
             scale_factor: 1.0,
-            is_animating: true,
             layouts_dirty: true,
             needs_redraw: true,
-            instant_frame: false,
         }
     }
 }
@@ -126,7 +121,7 @@ impl OnyxApp {
         let wide = Size::new(spine_w, 2000.0);
         self.title_text.layout(&mut cx, wide);
         self.editor.layout(&mut cx, wide);
-        self.dock.layout_labels(&mut cx);
+        self.ribbon.layout_labels(&mut cx);
         self.path_bar.layout_all(&mut cx);
         self.layouts_dirty = false;
     }
@@ -139,7 +134,7 @@ impl OnyxApp {
         scale: f64,
         title: &TextWidget,
         editor: &LaneEditor,
-        dock: &CommandDock,
+        ribbon: &FormattingRibbon,
         path_bar: &PathBar,
         hover_button: Option<HoveredButton>,
         is_maximized: bool,
@@ -204,8 +199,8 @@ impl OnyxApp {
             ),
         );
 
-        // 7. CommandDock (bottom)
-        dock.draw(scene, phys_w, phys_h);
+        // 7. FormattingRibbon (bottom)
+        ribbon.draw(scene, phys_w, phys_h);
     }
 }
 
@@ -275,7 +270,14 @@ impl ApplicationHandler for OnyxApp {
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
+                wgpu::PresentMode::Mailbox
+            } else {
+                wgpu::PresentMode::Fifo
+            },
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -372,8 +374,43 @@ impl ApplicationHandler for OnyxApp {
                 ..
             } => {
                 let wctx = self.wctx.as_mut().unwrap();
-                wctx.handle_click(event_loop);
-                wctx.window.request_redraw();
+
+                // Ribbon hit-test (physical coords)
+                let rs = self.render.as_ref().unwrap();
+                let phys_w = rs.config.width as f64;
+                let phys_h = rs.config.height as f64;
+                let (cx, cy) = (wctx.cursor_pos.0 as f64, wctx.cursor_pos.1 as f64);
+                if let Some(hit) = self.ribbon.hit_test(cx, cy, phys_w, phys_h) {
+                    match hit {
+                        RibbonHit::Bold => {
+                            self.ribbon.is_bold = !self.ribbon.is_bold;
+                        }
+                        RibbonHit::Italic => {
+                            self.ribbon.is_italic = !self.ribbon.is_italic;
+                        }
+                        RibbonHit::FontSizeMinus => {
+                            if self.editor.font_size > 8.0 {
+                                self.editor.font_size -= 1.0;
+                                self.ribbon.font_size = self.editor.font_size;
+                                self.ribbon.update_size_label();
+                            }
+                        }
+                        RibbonHit::FontSizePlus => {
+                            if self.editor.font_size < 72.0 {
+                                self.editor.font_size += 1.0;
+                                self.ribbon.font_size = self.editor.font_size;
+                                self.ribbon.update_size_label();
+                            }
+                        }
+                        RibbonHit::Settings => {}
+                    }
+                    self.layouts_dirty = true;
+                    self.needs_redraw = true;
+                    wctx.window.request_redraw();
+                } else {
+                    wctx.handle_click(event_loop);
+                    wctx.window.request_redraw();
+                }
             }
 
             // Route keyboard input to the editor
@@ -381,7 +418,6 @@ impl ApplicationHandler for OnyxApp {
                 if self.editor.handle_event(evt) == Action::Redraw {
                     self.layouts_dirty = true;
                     self.needs_redraw = true;
-                    self.instant_frame = true;
                     let wctx = self.wctx.as_ref().unwrap();
                     wctx.window.request_redraw();
                 }
@@ -403,7 +439,7 @@ impl ApplicationHandler for OnyxApp {
                     self.scale_factor,
                     &self.title_text,
                     &self.editor,
-                    &self.dock,
+                    &self.ribbon,
                     &self.path_bar,
                     self.hover_button,
                     wctx.window.is_maximized(),
@@ -459,27 +495,11 @@ impl ApplicationHandler for OnyxApp {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.instant_frame {
-            // Keyboard input just occurred — poll for one frame for instant response.
-            self.instant_frame = false;
-            event_loop.set_control_flow(ControlFlow::Poll);
-        } else if self.is_animating {
-            // Cursor blinking — wake at ~60 fps only while animating.
-            let deadline = Instant::now() + Duration::from_millis(16);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-            if let Some(wctx) = &self.wctx {
-                // Toggle blink visibility — only request redraw if the visible state changes.
-                let vis_before = self.editor.cursor_visible();
-                // Check again after a tiny sleep won't work here;
-                // just schedule the next redraw so the draw pass picks up the new state.
-                wctx.window.request_redraw();
-                let _ = vis_before; // suppress unused warning
-            }
-        } else {
-            // Fully idle — sleep for up to 500 ms (next blink toggle).
-            let deadline = Instant::now() + Duration::from_millis(500);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // PERF: ControlFlow::Poll is set once in main(). Always request redraw
+        // so the cursor blink stays animated and input is never delayed.
+        if let Some(wctx) = &self.wctx {
+            wctx.window.request_redraw();
         }
     }
 }
