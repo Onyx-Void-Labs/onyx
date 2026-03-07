@@ -6,10 +6,23 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
+use anyhow::Result;
+use thiserror::Error;
+
+/// Errors returned by BlobStore operations.
+#[derive(Debug, Error)]
+pub enum BlobError {
+    #[error("blob not found")]
+    NotFound,
+    #[error("blob corrupted")]
+    Corruption,
+}
+
 /// A content-addressable blob store. Blobs are keyed by their SHA-256 hash.
 pub struct BlobStore {
     blobs: HashMap<String, Vec<u8>>,
     metadata: HashMap<String, BlobMeta>,
+    refcounts: HashMap<String, usize>,
 }
 
 /// Metadata for a stored blob.
@@ -31,15 +44,21 @@ impl BlobStore {
         Self {
             blobs: HashMap::new(),
             metadata: HashMap::new(),
+            refcounts: HashMap::new(),
         }
     }
 
     /// Store a blob and return its SHA-256 hex hash.
     pub fn store_blob(&mut self, data: &[u8], mime: &str) -> String {
-        let hash = Self::sha256_hex(data);
+        // encrypt blob with workspace key
+        let key = crate::persistence::dev_encryption_key()
+            .expect("dev key");
+        let encrypted = crate::crypto::encrypt_data(data, &*key).expect("encrypt blob");
+        let hash = Self::sha256_hex(&encrypted);
         self.blobs
             .entry(hash.clone())
-            .or_insert_with(|| data.to_vec());
+            .or_insert_with(|| encrypted.clone());
+        *self.refcounts.entry(hash.clone()).or_insert(0) += 1;
         self.metadata.entry(hash.clone()).or_insert(BlobMeta {
             mime: mime.to_string(),
             size: data.len(),
@@ -58,8 +77,23 @@ impl BlobStore {
     }
 
     /// Retrieve a blob by its hash.
-    pub fn get_blob(&self, hash: &str) -> Option<Vec<u8>> {
-        self.blobs.get(hash).cloned()
+    pub fn get_blob(&self, hash: &str) -> Result<Vec<u8>, BlobError> {
+        match self.blobs.get(hash) {
+            Some(encrypted) => {
+                // verify hash
+                let computed = Self::sha256_hex(encrypted);
+                if computed != hash {
+                    return Err(BlobError::Corruption);
+                }
+                // decrypt
+                let key = crate::persistence::dev_encryption_key()
+                    .expect("dev key");
+                let data = crate::crypto::decrypt_data(encrypted, &*key)
+                    .map_err(|_| BlobError::Corruption)?;
+                Ok(data)
+            }
+            None => Err(BlobError::NotFound),
+        }
     }
 
     /// Check if a blob exists.
@@ -97,10 +131,9 @@ mod tests {
         let hash = store.store_blob(data, "text/plain");
 
         assert!(store.has_blob(&hash));
-        if let Some(blob) = store.get_blob(&hash) {
-            assert_eq!(blob, data);
-        } else {
-            panic!("blob missing");
+        match store.get_blob(&hash) {
+            Ok(blob) => assert_eq!(blob, data),
+            Err(_) => panic!("blob missing or corrupted"),
         }
         assert_eq!(store.get_mime(&hash), Some("text/plain"));
         assert_eq!(store.get_size(&hash), Some(10));

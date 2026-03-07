@@ -622,7 +622,7 @@ impl OnyxWorkspace {
     }
 
     /// Retrieve a blob by hash.
-    pub fn get_blob(&self, hash: &str) -> Option<Vec<u8>> {
+    pub fn get_blob(&self, hash: &str) -> Result<Vec<u8>, crate::blob::BlobError> {
         self.blob_store.get_blob(hash)
     }
 

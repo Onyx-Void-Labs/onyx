@@ -93,8 +93,12 @@ fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
 
 /// Compute the interval (days) for a desired retention and stability.
 fn interval_for_retention(stability: f64) -> u32 {
-    let interval = stability / FACTOR * (DESIRED_RETENTION.powf(1.0 / DECAY) - 1.0);
-    interval.round().max(1.0) as u32
+    // R_target = DESIRED_RETENTION = 0.9
+    // interval = stability * (ln(R_target) / ln(0.9))
+    let interval = stability * (DESIRED_RETENTION.ln() / 0.9_f64.ln());
+    let days = interval.round().max(1.0);
+    let days_clamped = days.max(1.0).min(u32::MAX as f64);
+    days_clamped as u32
 }
 
 /// Update difficulty after a review.

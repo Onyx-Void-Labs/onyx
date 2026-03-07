@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::document::OnyxWorkspace;
 use crate::persistence;
@@ -34,7 +35,7 @@ fn index_path() -> PathBuf {
 
 /// Derive the key used to encrypt the workspace index file.  
 /// In production this should be user‑supplied.
-fn index_encryption_key() -> anyhow::Result<[u8; 32]> {
+fn index_encryption_key() -> anyhow::Result<Zeroizing<[u8; 32]>> {
     crate::crypto::derive_key("onyx_index_key", b"fixed_salt_for_dev_1234")
 }
 
@@ -108,7 +109,7 @@ impl WorkspaceManager {
         let path = index_path();
         if let Ok(encrypted) = std::fs::read(&path) {
             if let Ok(key) = index_encryption_key() {
-                if let Ok(decrypted) = crate::crypto::decrypt_data(&encrypted, &key) {
+                if let Ok(decrypted) = crate::crypto::decrypt_data(&encrypted, &*key) {
                     if let Ok(map) =
                         serde_json::from_slice::<HashMap<Uuid, WorkspaceMeta>>(&decrypted)
                     {
@@ -126,7 +127,7 @@ impl WorkspaceManager {
         }
         if let Ok(json) = serde_json::to_string_pretty(&self.workspaces) {
             if let Ok(key) = index_encryption_key() {
-                if let Ok(encrypted) = crate::crypto::encrypt_data(json.as_bytes(), &key) {
+                if let Ok(encrypted) = crate::crypto::encrypt_data(json.as_bytes(), &*key) {
                     let _ = std::fs::write(&path, encrypted);
                 }
             }

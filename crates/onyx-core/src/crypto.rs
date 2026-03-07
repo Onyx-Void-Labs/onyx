@@ -5,12 +5,13 @@ use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::XChaCha20Poly1305;
 use rand::RngCore;
+use zeroize::Zeroizing;
 
 /// Derive a 32-byte encryption key from a password and salt using Argon2id.
-pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32]> {
-    let mut key = [0u8; 32];
+pub fn derive_key(password: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+    let mut key = Zeroizing::new([0u8; 32]);
     Argon2::default()
-        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .hash_password_into(password.as_bytes(), salt, &mut *key)
         .map_err(|e| anyhow::anyhow!("argon2 key derivation failed: {e}"))?;
     Ok(key)
 }
@@ -55,8 +56,8 @@ mod tests {
     fn round_trip() -> Result<()> {
         let key = derive_key("test_password", b"some_salt_12345!")?;
         let plaintext = b"Hello, Onyx Void!";
-        let encrypted = encrypt_data(plaintext, &key)?;
-        let decrypted = decrypt_data(&encrypted, &key)?;
+        let encrypted = encrypt_data(plaintext, &*key)?;
+        let decrypted = decrypt_data(&encrypted, &*key)?;
         assert_eq!(decrypted, plaintext);
         Ok(())
     }
@@ -65,8 +66,8 @@ mod tests {
     fn wrong_key_fails() -> Result<()> {
         let key1 = derive_key("password_a", b"some_salt_12345!")?;
         let key2 = derive_key("password_b", b"some_salt_12345!")?;
-        let encrypted = encrypt_data(b"secret", &key1)?;
-        assert!(decrypt_data(&encrypted, &key2).is_err());
+        let encrypted = encrypt_data(b"secret", &*key1)?;
+        assert!(decrypt_data(&encrypted, &*key2).is_err());
         Ok(())
     }
 }

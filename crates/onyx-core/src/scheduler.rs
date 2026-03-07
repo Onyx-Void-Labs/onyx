@@ -35,7 +35,16 @@ pub fn get_due_notifications(ws: &OnyxWorkspace) -> Vec<Notification> {
                 if let Ok(card) = serde_json::from_str::<FlashcardData>(json) {
                     let due = card.state.last_review;
                     let stability_days = card.state.stability;
-                    let next_due = due + Duration::seconds((stability_days * 86400.0) as i64);
+                    // convert stability_days*86400 to i64 with bounds checking
+                    let secs_f = (stability_days * 86400.0).round();
+                    let secs_i64 = if secs_f < (i64::MIN as f64) {
+                        i64::MIN
+                    } else if secs_f > (i64::MAX as f64) {
+                        i64::MAX
+                    } else {
+                        secs_f as i64
+                    };
+                    let next_due = due + Duration::seconds(secs_i64);
 
                     if next_due <= now + Duration::hours(24) {
                         notifications.push(Notification {

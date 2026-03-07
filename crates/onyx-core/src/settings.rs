@@ -35,7 +35,9 @@ fn settings_path() -> PathBuf {
 }
 
 /// Derive encryption key for settings file (dev-only).
-fn settings_encryption_key() -> anyhow::Result<[u8; 32]> {
+use zeroize::Zeroizing;
+
+fn settings_encryption_key() -> anyhow::Result<Zeroizing<[u8; 32]>> {
     crate::crypto::derive_key("onyx_settings_key", b"fixed_salt_for_dev_1234")
 }
 
@@ -65,7 +67,7 @@ impl OnyxSettings {
         // derive an encryption key and write encrypted data; fail loudly on any error
         let key = settings_encryption_key().context("derive settings encryption key")?;
         let encrypted =
-            crate::crypto::encrypt_data(json.as_bytes(), &key).context("encrypt settings")?;
+            crate::crypto::encrypt_data(json.as_bytes(), &*key).context("encrypt settings")?;
         std::fs::write(&path, encrypted).context("write settings file")?;
         Ok(())
     }

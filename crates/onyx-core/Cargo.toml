@@ -12,6 +12,8 @@ chrono = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }
+zeroize       = { workspace = true }
+thiserror     = "1.0"
 
 # AI / ML
 candle-core         = { workspace = true }

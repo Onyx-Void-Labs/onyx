@@ -1,5 +1,7 @@
 // ─── Onyx Core — Tantivy Full-Text Search Index ────────────────────
 // MmapDirectory-backed Tantivy index for memory-efficient full-text search.
+// EXCLUDED FROM ENCRYPTION: Tantivy manages its own mmap files and cannot
+// be wrapped by the workspace encryption layer.
 // ───────────────────────────────────────────────────────────────────
 
 use std::path::PathBuf;
@@ -153,6 +155,23 @@ impl SearchIndex {
             .context("note_id field missing from schema")?;
         let term = tantivy::Term::from_field_text(note_id_field, note_id);
         self.writer.delete_term(term);
+        self.writer.commit()?;
+        Ok(())
+    }
+
+    /// Rebuild the entire index from a workspace. This clears the index and
+    /// re-adds every note currently present in the tree.  Can be invoked at
+    /// startup if the index is missing or out of sync.
+    pub fn reindex_all(&mut self, workspace: &crate::document::OnyxWorkspace) -> Result<()> {
+        // delete everything by recreating writer with a fresh segment
+        self.writer.delete_all_documents()?;
+        for note_id in workspace.all_note_ids() {
+            let title = workspace.node_title(&note_id).unwrap_or_default();
+            let void_id = workspace.parent_void_of(&note_id).unwrap_or_default();
+            let blocks = workspace.get_note_blocks(&note_id);
+            // ignore errors for individual notes
+            let _ = self.index_note(&note_id, &void_id, &title, &blocks);
+        }
         self.writer.commit()?;
         Ok(())
     }
