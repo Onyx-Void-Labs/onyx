@@ -20,8 +20,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
 use crate::ui::chrome::{CommandDock, HoveredButton, PathBar, WindowControls};
+use crate::widgets::editor::LaneEditor;
 use crate::widgets::text::TextWidget;
-use crate::widgets::{LayoutContext as OnyxLayoutCtx, Widget};
+use crate::widgets::{Action, LayoutContext as OnyxLayoutCtx, Widget};
 use crate::window::WindowContext;
 
 // ─── Palette ───────────────────────────────────────────────────────
@@ -70,7 +71,10 @@ pub struct OnyxApp {
 
     // Document content
     title_text: TextWidget,
-    body_texts: Vec<TextWidget>,
+    editor: LaneEditor,
+
+    // DPI
+    scale_factor: f64,
 
     // Flags
     is_animating: bool,
@@ -89,12 +93,13 @@ impl Default for OnyxApp {
             path_bar: PathBar::new(&["Root", "Workspace"]),
             hover_button: None,
             title_text: TextWidget::new("Onyx Void", 28.0, ZINC_200),
-            body_texts: vec![TextWidget::new(
+            editor: LaneEditor::new(
                 "Welcome to the void. Start typing to create.",
-                14.0,
+                15.0,
                 peniko::Color::from_rgba8(0xa1, 0xa1, 0xaa, 0xff),
-            )],
-            is_animating: false,
+            ),
+            scale_factor: 1.0,
+            is_animating: true,
             layouts_dirty: true,
         }
     }
@@ -106,16 +111,16 @@ impl OnyxApp {
         if !self.layouts_dirty {
             return;
         }
+        let scale = self.scale_factor;
         let mut cx = OnyxLayoutCtx {
             font_cx: &mut self.font_cx,
             layout_cx: &mut self.layout_cx,
-            scale: 1.0,
+            scale_factor: scale,
         };
-        let wide = Size::new(850.0, 2000.0);
+        let spine_w = 850.0 * scale;
+        let wide = Size::new(spine_w, 2000.0);
         self.title_text.layout(&mut cx, wide);
-        for t in &mut self.body_texts {
-            t.layout(&mut cx, wide);
-        }
+        self.editor.layout(&mut cx, wide);
         self.dock.layout_labels(&mut cx);
         self.path_bar.layout_all(&mut cx);
         self.layouts_dirty = false;
@@ -126,8 +131,9 @@ impl OnyxApp {
         scene: &mut Scene,
         phys_w: f64,
         phys_h: f64,
+        scale: f64,
         title: &TextWidget,
-        body: &[TextWidget],
+        editor: &LaneEditor,
         dock: &CommandDock,
         path_bar: &PathBar,
         hover_button: Option<HoveredButton>,
@@ -150,8 +156,8 @@ impl OnyxApp {
         // 3. PathBar (top-left, below title bar)
         path_bar.draw(scene, 54.0);
 
-        // 4. Spine — 850px centered rect
-        let spine_w = 850.0_f64.min(phys_w - 60.0);
+        // 4. Spine — 850pt centered rect, scaled to physical pixels
+        let spine_w = (850.0 * scale).min(phys_w - 60.0);
         let spine_x = (phys_w - spine_w) / 2.0;
         let spine_y = 110.0;
         let spine_h = phys_h - 200.0;
@@ -180,16 +186,18 @@ impl OnyxApp {
             ),
         );
 
-        // 6. Document body rows
-        let mut row_y = title_y + title_sz.height + 24.0;
-        for text in body {
-            let sz = text.cached_size();
-            text.draw(
-                scene,
-                Rect::new(title_x, row_y, title_x + sz.width, row_y + sz.height),
-            );
-            row_y += sz.height + 12.0;
-        }
+        // 6. Editor (replaces static body rows)
+        let editor_y = title_y + title_sz.height + 24.0;
+        let editor_sz = editor.cached_size();
+        editor.draw(
+            scene,
+            Rect::new(
+                title_x,
+                editor_y,
+                title_x + editor_sz.width,
+                editor_y + editor_sz.height,
+            ),
+        );
 
         // 7. CommandDock (bottom)
         dock.draw(scene, phys_w, phys_h);
@@ -285,6 +293,8 @@ impl ApplicationHandler for OnyxApp {
         .expect("failed to create vello renderer");
 
         self.wctx = Some(WindowContext::new(Arc::clone(&window)));
+        self.scale_factor = window.scale_factor();
+        self.layouts_dirty = true;
 
         self.render = Some(RenderState {
             surface,
@@ -346,6 +356,7 @@ impl ApplicationHandler for OnyxApp {
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let wctx = self.wctx.as_mut().unwrap();
                 wctx.scale_factor = scale_factor;
+                self.scale_factor = scale_factor;
                 self.layouts_dirty = true;
                 wctx.window.request_redraw();
             }
@@ -358,6 +369,15 @@ impl ApplicationHandler for OnyxApp {
                 let wctx = self.wctx.as_mut().unwrap();
                 wctx.handle_click(event_loop);
                 wctx.window.request_redraw();
+            }
+
+            // Route keyboard input to the editor
+            ref evt @ WindowEvent::KeyboardInput { .. } => {
+                if self.editor.handle_event(evt) == Action::Redraw {
+                    self.layouts_dirty = true;
+                    let wctx = self.wctx.as_ref().unwrap();
+                    wctx.window.request_redraw();
+                }
             }
 
             WindowEvent::RedrawRequested => {
@@ -373,8 +393,9 @@ impl ApplicationHandler for OnyxApp {
                     &mut self.scene,
                     phys_w as f64,
                     phys_h as f64,
+                    self.scale_factor,
                     &self.title_text,
-                    &self.body_texts,
+                    &self.editor,
                     &self.dock,
                     &self.path_bar,
                     self.hover_button,

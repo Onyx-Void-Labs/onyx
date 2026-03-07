@@ -56,11 +56,12 @@ impl TextWidget {
         font_cx: &mut FontContext,
         layout_cx: &mut LayoutContext<peniko::Brush>,
         max_width: Option<f32>,
+        scale: f32,
     ) {
         if !self.dirty && self.layout.is_some() {
             return;
         }
-        let mut builder = layout_cx.ranged_builder(font_cx, &self.text, 1.0, true);
+        let mut builder = layout_cx.ranged_builder(font_cx, &self.text, scale, true);
         builder.push_default(StyleProperty::FontSize(self.font_size));
         builder.push_default(StyleProperty::Brush(self.color.into()));
         let mut layout = builder.build(&self.text);
@@ -116,7 +117,12 @@ impl TextWidget {
 
 impl Widget for TextWidget {
     fn layout(&mut self, cx: &mut OnyxLayoutCtx, constraints: Size) -> Size {
-        self.ensure_layout(cx.font_cx, cx.layout_cx, Some(constraints.width as f32));
+        self.ensure_layout(
+            cx.font_cx,
+            cx.layout_cx,
+            Some(constraints.width as f32),
+            cx.scale_factor as f32,
+        );
         self.cached_size
     }
 

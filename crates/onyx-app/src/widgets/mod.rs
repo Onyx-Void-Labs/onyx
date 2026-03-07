@@ -3,6 +3,7 @@
 // no HTML/CSS, no retained mode. Layout → Draw → Event.
 // ────────────────────────────────────────────────────────────────────
 
+pub mod editor;
 pub mod text;
 
 use vello::kurbo::{Rect, Size};
@@ -15,7 +16,14 @@ use winit::event::WindowEvent;
 pub struct LayoutContext<'a> {
     pub font_cx: &'a mut parley::FontContext,
     pub layout_cx: &'a mut parley::LayoutContext<vello::peniko::Brush>,
-    pub scale: f32,
+    pub scale_factor: f64,
+}
+
+impl LayoutContext<'_> {
+    /// Convert typographic points to physical pixels.
+    pub fn px(&self, points: f64) -> f64 {
+        points * self.scale_factor
+    }
 }
 
 // ─── Action ────────────────────────────────────────────────────────
