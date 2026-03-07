@@ -3,16 +3,20 @@
 use serde::{Deserialize, Serialize};
 
 /// A slot within a grid row, spanning some number of columns.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Slot {
+    pub col_start: u8,
     pub col_span: u8,
     pub widget_id: String,
 }
 
 /// A single row in the 12-column grid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GridRow {
     pub slots: Vec<Slot>,
+    pub collapsed: bool,
 }
 
 /// A rectangle representing the resolved position of a slot.
@@ -65,9 +69,11 @@ mod tests {
     fn full_width_single_slot() {
         let grid = GridRow {
             slots: vec![Slot {
+                col_start: 0,
                 col_span: 12,
                 widget_id: "w1".into(),
             }],
+            collapsed: false,
         };
         let rects = resolve_layout(1200.0, &grid);
         assert_eq!(rects.len(), 1);
@@ -87,14 +93,17 @@ mod tests {
         let grid = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 6,
                     widget_id: "a".into(),
                 },
                 Slot {
+                    col_start: 6,
                     col_span: 6,
                     widget_id: "b".into(),
                 },
             ],
+            collapsed: false,
         };
         let rects = resolve_layout(1200.0, &grid);
         assert_eq!(rects.len(), 2);
@@ -109,14 +118,17 @@ mod tests {
         let grid = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 8,
                     widget_id: "a".into(),
                 },
                 Slot {
+                    col_start: 8,
                     col_span: 8,
                     widget_id: "b".into(),
                 }, // exceeds 12
             ],
+            collapsed: false,
         };
         let rects = resolve_layout(1200.0, &grid);
         assert_eq!(rects.len(), 2);
@@ -128,18 +140,22 @@ mod tests {
         let grid = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 4,
                     widget_id: "a".into(),
                 },
                 Slot {
+                    col_start: 4,
                     col_span: 4,
                     widget_id: "b".into(),
                 },
                 Slot {
+                    col_start: 8,
                     col_span: 4,
                     widget_id: "c".into(),
                 },
             ],
+            collapsed: false,
         };
         let rects = resolve_layout(1200.0, &grid);
         assert_eq!(rects.len(), 3);

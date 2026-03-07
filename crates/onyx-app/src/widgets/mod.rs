@@ -127,14 +127,17 @@ mod tests {
         let grid = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 6,
                     widget_id: "a".into(),
                 },
                 Slot {
+                    col_start: 6,
                     col_span: 6,
                     widget_id: "b".into(),
                 },
             ],
+            collapsed: false,
         };
         let mut renderer = SlotRenderer::new(widgets, grid);
         let rects = renderer.layout_all(1200.0);
@@ -148,9 +151,11 @@ mod tests {
         let widgets: Vec<Box<dyn Widget>> = vec![Box::new(TestWidget::new())];
         let grid = GridRow {
             slots: vec![Slot {
+                col_start: 0,
                 col_span: 12,
                 widget_id: "w".into(),
             }],
+            collapsed: false,
         };
         let renderer = SlotRenderer::new(widgets, grid);
         let mut scene = Scene::new();
@@ -159,7 +164,7 @@ mod tests {
 
     #[test]
     fn slot_renderer_empty() {
-        let renderer = SlotRenderer::new(vec![], GridRow { slots: vec![] });
+        let renderer = SlotRenderer::new(vec![], GridRow { slots: vec![], collapsed: false });
         assert!(renderer.is_empty());
         assert_eq!(renderer.len(), 0);
     }

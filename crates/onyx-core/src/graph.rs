@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use loro::{LoroDoc, LoroValue};
+use anyhow::Context;
 use regex::Regex;
 
 /// Bidirectional link index tracking [[NoteID]] references between notes.

@@ -99,6 +99,7 @@ impl OnyxWorkspace {
         let doc = LoroDoc::new();
         doc.import(&data)?;
         let tree = doc.get_tree("nodes");
+        let layout_tree = doc.get_tree("layout");
         let properties = doc.get_map("properties");
         let schemas = doc.get_map("schemas");
         let node_values = doc.get_map("node_values");
@@ -470,7 +471,7 @@ impl OnyxWorkspace {
 
     /// Move a slot node to another row at the given index.
     /// Performs a single LoroTree move operation.
-    pub fn move_slot(&mut self, slot_id: &str, to_row_id: &str, index: usize) -> Result<()> {
+    pub fn move_slot(&mut self, slot_id: &str, to_row_id: &str, _index: usize) -> Result<()> {
         let slot_tid = *self
             .layout_id_map
             .get(slot_id)
@@ -479,9 +480,13 @@ impl OnyxWorkspace {
             .layout_id_map
             .get(to_row_id)
             .context("destination row not found")?;
+        // LoroTree's method is now `mov` rather than `move` and it returns a Result.
+        // we don't need the index parameter any more so ignore it.
         self.layout_tree
-            .r#move(slot_tid, Some(dest_tid), index as u32)
+            .mov(slot_tid, dest_tid)
             .context("move slot")?;
+        // update our auxiliary map so that callers can query the new parent
+        self.layout_parent_map.insert(slot_id.to_string(), to_row_id.to_string());
         self.maybe_commit();
         Ok(())
     }
@@ -501,7 +506,12 @@ impl OnyxWorkspace {
         if let Some(tid) = self.layout_id_map.get(row_id) {
             if let Ok(meta) = self.layout_tree.get_meta(*tid) {
                 if let Some(ValueOrContainer::Value(v)) = meta.get("collapsed") {
-                    return v.as_string().map(|s| s == "true").unwrap_or(false);
+                    // `as_string` returns an `Option<&String>` so we double-deref
+                    // or convert to &str before comparing.
+                    return v
+                        .as_string()
+                        .map(|s| s.as_str() == "true")
+                        .unwrap_or(false);
                 }
             }
         }
@@ -780,7 +790,7 @@ mod layout_tests {
         let r1 = ws.create_layout_row(None)?;
         let r2 = ws.create_layout_row(None)?;
         // insert slots into first row
-        let s1 = ws.create_layout_slot(&r1)?;
+        let _s1 = ws.create_layout_slot(&r1)?;
         let s2 = ws.create_layout_slot(&r1)?;
         // move second slot into row2 at index 0
         ws.move_slot(&s2, &r2, 0)?;

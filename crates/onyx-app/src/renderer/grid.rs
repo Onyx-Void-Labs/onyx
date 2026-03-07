@@ -96,14 +96,17 @@ mod tests {
         let row = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 6,
                     widget_id: "a".into(),
                 },
                 Slot {
+                    col_start: 6,
                     col_span: 6,
                     widget_id: "b".into(),
                 },
             ],
+            collapsed: false,
         };
         let container = GridRect {
             x: 0.0,

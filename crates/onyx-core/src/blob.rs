@@ -88,6 +88,7 @@ impl BlobStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn store_and_retrieve() -> Result<()> {

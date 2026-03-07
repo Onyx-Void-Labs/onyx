@@ -3414,6 +3414,7 @@ dependencies = [
  "sha2",
  "similar",
  "tantivy",
+ "tempfile",
  "tokenizers",
  "tracing",
  "uuid",

@@ -33,6 +33,7 @@ impl HistoryStack {
 
         // Any new action invalidates the redo stack
         self.redo_stack.clear();
+        Ok(())
     }
 
     /// Undo: pop the last snapshot and return a restored LoroDoc.
@@ -92,6 +93,7 @@ impl HistoryStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loro::LoroValue;
 
     #[test]
     fn undo_redo_cycle() -> anyhow::Result<()> {
@@ -118,7 +120,7 @@ mod tests {
             if let LoroValue::Map(obj) = val {
                 if let Some(v) = obj.get("key") {
                     if let LoroValue::String(s) = v {
-                        assert_eq!(s, "value1");
+                        assert_eq!(s.as_str(), "value1");
                     }
                 }
             }

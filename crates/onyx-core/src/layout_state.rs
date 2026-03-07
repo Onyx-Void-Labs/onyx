@@ -70,10 +70,12 @@ mod tests {
         let row = GridRow {
             slots: vec![
                 Slot {
+                    col_start: 0,
                     col_span: 6,
                     widget_id: "widget-a".into(),
                 },
                 Slot {
+                    col_start: 6,
                     col_span: 6,
                     widget_id: "widget-b".into(),
                 },
@@ -108,6 +110,7 @@ mod tests {
         let state = LayoutState::new(&doc);
         let row = GridRow {
             slots: vec![Slot {
+                col_start: 0,
                 col_span: 12,
                 widget_id: "w".into(),
             }],
@@ -131,6 +134,7 @@ mod tests {
         let state = LayoutState::new(&doc);
         let row = GridRow {
             slots: vec![Slot {
+                col_start: 0,
                 col_span: 12,
                 widget_id: "w".into(),
             }],
