@@ -1,24 +1,23 @@
-use vello::kurbo::{Affine, Circle, Rect};
+use vello::kurbo::{Affine, Line, Rect, Stroke};
 use vello::peniko::{self, Fill};
 
 use super::PaintCtx;
 
 const TITLE_H: f64 = 36.0;
 const BTN_W: f64 = 46.0;
-const BTN_RADIUS: f64 = 7.0;
 
 /// Background — matches ONYX_BLACK so the seam is invisible.
 const BG_COLOR: peniko::Color = peniko::Color::from_rgba8(0x09, 0x09, 0x0b, 0xff);
-/// Default button fill — zinc-700.
-const BTN_DEFAULT: peniko::Color = peniko::Color::from_rgba8(0x3f, 0x3f, 0x46, 0xff);
-/// Close hover — red-500.
-const BTN_CLOSE_HOVER: peniko::Color = peniko::Color::from_rgba8(0xef, 0x44, 0x44, 0xff);
-/// Maximise hover — green-500.
-const BTN_MAX_HOVER: peniko::Color = peniko::Color::from_rgba8(0x22, 0xc5, 0x5e, 0xff);
-/// Minimise hover — yellow-500.
-const BTN_MIN_HOVER: peniko::Color = peniko::Color::from_rgba8(0xea, 0xb3, 0x08, 0xff);
+/// Close hover background — Windows 11 red.
+const CLOSE_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(196, 43, 28, 255);
+/// Min/Max hover background — white 10%.
+const SUBTLE_HOVER_BG: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 26);
+/// Icon color — zinc-200.
+const ICON_COLOR: peniko::Color = peniko::Color::from_rgba8(228, 228, 231, 255);
+/// Icon color when close is hovered — white.
+const ICON_WHITE: peniko::Color = peniko::Color::from_rgba8(255, 255, 255, 255);
 
-/// Which traffic-light button the cursor is hovering, if any.
+/// Which title-bar button the cursor is hovering, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoveredButton {
     Close,
@@ -32,16 +31,13 @@ pub fn hovered_button(cursor_x: f32, cursor_y: f32, window_w: f32) -> Option<Hov
         return None;
     }
     let w = window_w;
-    // Close: [w - BTN_W, 0, BTN_W, TITLE_H]
-    if cursor_x >= w - BTN_W as f32 && cursor_x <= w {
+    if cursor_x >= w - BTN_W as f32 {
         return Some(HoveredButton::Close);
     }
-    // Maximise: [w - BTN_W*2, 0, BTN_W, TITLE_H]
-    if cursor_x >= w - (BTN_W * 2.0) as f32 && cursor_x < w - BTN_W as f32 {
+    if cursor_x >= w - (BTN_W * 2.0) as f32 {
         return Some(HoveredButton::Maximise);
     }
-    // Minimise: [w - BTN_W*3, 0, BTN_W, TITLE_H]
-    if cursor_x >= w - (BTN_W * 3.0) as f32 && cursor_x < w - (BTN_W * 2.0) as f32 {
+    if cursor_x >= w - (BTN_W * 3.0) as f32 {
         return Some(HoveredButton::Minimise);
     }
     None
@@ -58,51 +54,90 @@ pub fn paint(cx: &mut PaintCtx, window_w: f64, hover: Option<HoveredButton>) {
         &Rect::new(0.0, 0.0, window_w, TITLE_H),
     );
 
-    // Traffic-light circles — top-right, Windows/Linux convention.
-    let cy = TITLE_H / 2.0; // vertical center = 18
+    // --- Close button ---
+    let close_x = window_w - BTN_W;
+    let close_hover = hover == Some(HoveredButton::Close);
+    if close_hover {
+        cx.scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            CLOSE_HOVER_BG,
+            None,
+            &Rect::new(close_x, 0.0, close_x + BTN_W, TITLE_H),
+        );
+    }
+    {
+        let cx_icon = close_x + 23.0;
+        let cy_icon = 18.0;
+        let color = if close_hover { ICON_WHITE } else { ICON_COLOR };
+        cx.scene.stroke(
+            &Stroke::new(1.1),
+            Affine::IDENTITY,
+            color,
+            None,
+            &Line::new(
+                (cx_icon - 5.5, cy_icon - 5.5),
+                (cx_icon + 5.5, cy_icon + 5.5),
+            ),
+        );
+        cx.scene.stroke(
+            &Stroke::new(1.1),
+            Affine::IDENTITY,
+            color,
+            None,
+            &Line::new(
+                (cx_icon + 5.5, cy_icon - 5.5),
+                (cx_icon - 5.5, cy_icon + 5.5),
+            ),
+        );
+    }
 
-    // Close button: center at (w - 23, 18)
-    let close_cx = window_w - 23.0;
-    let close_color = if hover == Some(HoveredButton::Close) {
-        BTN_CLOSE_HOVER
-    } else {
-        BTN_DEFAULT
-    };
-    cx.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        close_color,
-        None,
-        &Circle::new((close_cx, cy), BTN_RADIUS),
-    );
+    // --- Maximise button ---
+    let max_x = window_w - BTN_W * 2.0;
+    if hover == Some(HoveredButton::Maximise) {
+        cx.scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            SUBTLE_HOVER_BG,
+            None,
+            &Rect::new(max_x, 0.0, max_x + BTN_W, TITLE_H),
+        );
+    }
+    {
+        let cx_icon = max_x + 23.0;
+        let cy_icon = 18.0;
+        cx.scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            ICON_COLOR,
+            None,
+            &Rect::new(cx_icon - 6.0, cy_icon - 5.0, cx_icon + 6.0, cy_icon + 5.0),
+        );
+    }
 
-    // Maximise button: center at (w - 23 - 46, 18)
-    let max_cx = window_w - 23.0 - BTN_W;
-    let max_color = if hover == Some(HoveredButton::Maximise) {
-        BTN_MAX_HOVER
-    } else {
-        BTN_DEFAULT
-    };
-    cx.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        max_color,
-        None,
-        &Circle::new((max_cx, cy), BTN_RADIUS),
-    );
-
-    // Minimise button: center at (w - 23 - 92, 18)
-    let min_cx = window_w - 23.0 - BTN_W * 2.0;
-    let min_color = if hover == Some(HoveredButton::Minimise) {
-        BTN_MIN_HOVER
-    } else {
-        BTN_DEFAULT
-    };
-    cx.scene.fill(
-        Fill::NonZero,
-        Affine::IDENTITY,
-        min_color,
-        None,
-        &Circle::new((min_cx, cy), BTN_RADIUS),
-    );
+    // --- Minimise button ---
+    let min_x = window_w - BTN_W * 3.0;
+    if hover == Some(HoveredButton::Minimise) {
+        cx.scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            SUBTLE_HOVER_BG,
+            None,
+            &Rect::new(min_x, 0.0, min_x + BTN_W, TITLE_H),
+        );
+    }
+    {
+        let cx_icon = min_x + 23.0;
+        let cy_icon = 18.0;
+        cx.scene.stroke(
+            &Stroke::new(1.0),
+            Affine::IDENTITY,
+            ICON_COLOR,
+            None,
+            &Line::new(
+                (cx_icon - 6.0, cy_icon + 3.0),
+                (cx_icon + 6.0, cy_icon + 3.0),
+            ),
+        );
+    }
 }
