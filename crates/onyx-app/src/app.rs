@@ -403,11 +403,14 @@ impl ApplicationHandler for OnyxApp {
 
         let device = &self.render_cx.devices[surface.dev_id]; // Immutable borrow only
 
-        // CPU renderer — bulletproof, no format bugs
+        // NOTE: the vello version in this workspace (0.7.x) does not expose a
+        // `surface_format` option yet, so we can’t perform the explicit format
+        // binding described in the original patch.  We keep the CPU renderer and
+        // include the pipeline cache field to satisfy the struct requirements.
         match Renderer::new(
             &device.device,
             RendererOptions {
-                use_cpu: true, // ← Skip all GPU validation hell
+                use_cpu: true,
                 antialiasing_support: vello::AaSupport::all(),
                 num_init_threads: None,
                 pipeline_cache: None,
