@@ -22,66 +22,64 @@ rust-version = "1.75"
 [workspace.dependencies]
 # Internal crates
 onyx-core = { path = "crates/onyx-core" }
-fsrs = "0.4.0"  # FSRS-6 ← NEW
+fsrs = "5.2.0"  # Latest FSRS-6 + Optimizer
 
 # security helpers
-zeroize = { version = "1.8", features = ["zeroize_derive"] }
+zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
 
 # ── Visual Engine (Vello Stack) ──
-winit    = "0.30"
-wgpu     = "28"   # upgraded for rendering improvements
+winit    = "0.30.13"
+wgpu     = "28"
 vello    = "0.7"
-parley   = "0.4"
+parley   = "0.7"
 pollster = "0.4"
 
 # ── CRDT ──
-loro = "1.1"      # bugfix release
+loro = "1.10.3"      # bugfix release
 
 # ── Identity / Time ──
-uuid   = { version = "2.0", features = ["v4", "fast"] }
-chrono = { version = "0.4", features = ["serde"] }
+uuid   = { version = "1.22.0", features = ["v4"] }
+chrono = { version = "0.4.44", features = ["serde"] }
 
 # ── Observability ──
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing            = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 # ── Serialization ──
-serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde      = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 
 # ── Error handling ──
-anyhow = "1"
+anyhow = "1.0.102"
 
 # ── Phase 2 Infrastructure ──
-tantivy = "0.23"   # search perf bump
-sha2    = "0.10"
-walkdir = "2"
-base64  = "0.21"
+tantivy = "0.25"   # search perf bump
+sha2    = "0.10.9"
+walkdir = "2.5"
+base64  = "0.22.1"
 
 # ── Phase 3 Power Features ──
-regex   = "1.10"
-similar = "2.4"
+regex   = "1.12.3"
+similar = "2.7"
 
 # ── Phase 2.9 Performance & Security ──
-argon2           = "0.5"
-chacha20poly1305 = "0.10"
-rand             = "0.8"
-dirs             = "5"
-subtle           = "2.5"
+argon2           = "0.5.3"
+chacha20poly1305 = "0.10.1"
+rand             = "0.10.0"
+dirs             = "6"
+subtle           = "2.6.1"
 
 # ── Phase 4 Six-Fold Foundation ──
-pulldown-latex = "0.1"
-roxmltree      = "0.20"
+pulldown-latex = "0.7.1"
+roxmltree      = "0.21.1"
 
 # ── AI / ML (Candle) ──
-candle-core         = "0.10"
-candle-nn           = "0.10"
-candle-transformers = "0.10"
-tokenizers          = "0.15"
+candle-core         = "0.9.2"
+candle-nn           = "0.9.2"
+candle-transformers = "0.9.2"
+tokenizers          = "0.22.2"
 hf-hub              = "0.5"
 
-tree-sitter = "0.21"  # Code parsing
-pyodide    = "0.6"    # Python REPL integration
 
 # ─── Build profiles ──────────────────────────────────────────────
 
@@ -99,6 +97,5 @@ opt-level = 1          # Faster Makepad shader compilation in debug
 [profile.dev.package."*"]
 opt-level = 2          # Optimize deps even in debug for smooth 144Hz
 
-[workspace.dev-dependencies]
-rand = "0.8"  # used by stress test t999
+
 

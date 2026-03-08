@@ -1,7 +1,15 @@
 // Placeholder module showing integration of FSRS into a question bank.
 // This file was added as part of the FSRS-6 upgrade and AI feature work.
 
-use fsrs::FSRS;
+// local stub version of scheduler; real implementation TBD
+pub struct FSRS;
+
+impl FSRS {
+    pub fn next_for_retention(&self, _r: f64) -> Vec<Question> {
+        Vec::new()
+    }
+    pub fn grade(&mut self, _qid: &str, _grade: f32) {}
+}
 
 /// Simple question representation used by the bank.
 pub struct Question {

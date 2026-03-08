@@ -14,6 +14,7 @@ pub mod diffing;
 pub mod document;
 pub use document::OnyxWorkspace; // re-export core workspace type
 pub mod fsrs;
+pub use fsrs::{CardState, Scheduler, FlashcardData};
 pub mod question_bank;
 pub mod graph;
 pub use graph::BacklinkIndex;

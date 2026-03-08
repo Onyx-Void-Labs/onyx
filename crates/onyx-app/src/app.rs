@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use onyx_core::blocks::Block;
 use onyx_core::document::OnyxWorkspace;
-use onyx_core::fsrs::{self, CardState, FlashcardData};
+use onyx_core::fsrs::{self, CardState, FlashcardData, Scheduler};
 use onyx_core::model::{NodeType, PropertyType};
 use parley::layout::{Alignment, AlignmentOptions, PositionedLayoutItem};
 use parley::style::StyleProperty;
@@ -15,6 +15,10 @@ use vello::kurbo::{Affine, Point, Rect};
 use vello::peniko::{Brush, Color, Fill};
 use vello::util::{RenderContext, RenderSurface};
 use vello::{Renderer, RendererOptions, Scene};
+
+// ensure we use the same wgpu version that Vello depends on; alias it
+use vello::wgpu as wgpu;
+
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -204,8 +208,9 @@ impl OnyxApp {
                 println!("🧱 Block Engine: Initialized note with 1 block.");
 
                 // ── FSRS: create a dummy flashcard and schedule it ──
-                let card_state = CardState::new();
-                let (scheduled_state, days) = fsrs::next_interval(&card_state, 3); // Good
+                let card_state = CardState::default();
+                let mut sched = Scheduler::default();
+                let (scheduled_state, days) = sched.next_interval(&card_state, 3); // Good
                 let card_id = uuid::Uuid::new_v4().to_string();
                 let flashcard = FlashcardData {
                     front: format!("What is {}?", title),

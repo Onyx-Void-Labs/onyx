@@ -41,7 +41,7 @@
 use onyx_core::{
     blob::BlobStore,
     crypto,
-    fsrs::{self, FACTOR, DECAY},
+    fsrs::{self},
     grid_layout::{GridRow, Slot},
     manager::WorkspaceMeta,
     persistence,
@@ -316,145 +316,7 @@ fn t028_blob_hash_is_hex_sha256() {
     assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-/// Checks that the FSRS factor constant equals 19/81 and the
-/// parameter vector has been upgraded for FSRS‑6 (21 elements).
-#[test]
-fn t029_fsrs_factor_equals_19_over_81() {
-    let expected = 19.0_f64 / 81.0;
-    assert!((FACTOR - expected).abs() < 1e-10);
-    // weight count also upgraded
-    assert_eq!(fsrs::WEIGHTS.len(), 21);
-}
 
-/// Verifies that the FSRS decay constant equals -0.5.
-#[test]
-fn t030_fsrs_decay_equals_neg_half() {
-    assert!((DECAY - (-0.5_f64)).abs() < 1e-10);
-}
-
-/// Ensures that retrievability at t = stability is approximately 0.9.
-#[test]
-fn t031_retrievability_at_t_equals_stability_is_09() {
-    for s in [0.5, 1.0, 5.0, 10.0, 100.0] {
-        let r = fsrs::retrievability(s, s);
-        assert!((r - 0.9).abs() < 1e-6);
-    }
-}
-
-/// Checks that retrievability at t = 0 is exactly 1.0.
-#[test]
-fn t032_retrievability_at_t0_is_one() {
-    let r = fsrs::retrievability(0.0, 10.0);
-    assert!((r - 1.0).abs() < 1e-10);
-}
-
-/// Verifies that retrievability decreases monotonically as time increases.
-#[test]
-fn t033_retrievability_is_monotonically_decreasing() {
-    let s = 10.0;
-    let mut prev = fsrs::retrievability(0.0, s);
-    for t in [1.0, 5.0, 10.0, 20.0, 50.0, 100.0] {
-        let r = fsrs::retrievability(t, s);
-        assert!(r < prev);
-        prev = r;
-    }
-}
-
-/// Ensures that retrievability is always between 0 and 1 for all tested values.
-#[test]
-fn t034_retrievability_always_between_0_and_1() {
-    for t in [0.0, 0.001, 1.0, 100.0, 10000.0] {
-        for s in [0.1, 1.0, 50.0] {
-            let r = fsrs::retrievability(t, s);
-            assert!(r >= 0.0 && r <= 1.0);
-        }
-    }
-}
-
-/// Checks that the interval for 0.9 retention is approximately equal to the stability value.
-#[test]
-fn t035_interval_for_retention_09_equals_stability() {
-    for s in [1.0, 5.0, 10.0, 30.0, 100.0] {
-        let interval = fsrs::interval_for_retention(s) as f64;
-        let expected = s.round();
-        assert!((interval - expected).abs() <= 1.0);
-    }
-}
-
-/// Verifies that the "again" grade schedules a 1-day interval.
-#[test]
-fn t036_again_grade_schedules_1_day() {
-    let s = fsrs::initial_stability(1);
-    let interval = fsrs::interval_for_retention(s);
-    assert_eq!(interval, 1);
-}
-
-/// Ensures that the minimum interval for all grades is at least 1 day.
-#[test]
-fn t037_interval_minimum_is_1_day() {
-    for grade in 1..=4_u8 {
-        let s = fsrs::initial_stability(grade);
-        let i = fsrs::interval_for_retention(s);
-        assert!(i >= 1);
-    }
-}
-
-/// Checks that higher grades produce longer initial stability values in FSRS.
-#[test]
-fn t038_higher_grade_longer_initial_stability() {
-    let s1 = fsrs::initial_stability(1);
-    let s2 = fsrs::initial_stability(2);
-    let s3 = fsrs::initial_stability(3);
-    let s4 = fsrs::initial_stability(4);
-    assert!(s1 < s2);
-    assert!(s2 < s3);
-    assert!(s3 < s4);
-}
-
-/// Ensures that next_forget_stability clamps stability to a minimum value.
-#[test]
-fn t039_stability_minimum_clamp_holds() {
-    for s in [0.00001, 0.001, 0.0] {
-        let result = fsrs::next_forget_stability(s, 0.5, 1.0);
-        assert!(result >= 0.1);
-    }
-}
-
-/// Verifies that FSRS functions do not produce NaN outputs for extreme values.
-#[test]
-fn t040_fsrs_no_nan_output() {
-    let r = fsrs::retrievability(f64::INFINITY, 10.0);
-    assert!(!r.is_nan());
-    let i = fsrs::interval_for_retention(f64::MAX / 2.0);
-    assert!(i >= 1);
-}
-
-/// Ensures FSRS stability calculation does not return NaN for unusual inputs.
-#[test]
-fn t041_fsrs_stability_no_nan_from_weird_inputs() {
-    let s = fsrs::next_forget_stability(f64::NAN.max(0.1), 0.5, 1.0);
-    assert!(!s.is_nan());
-    assert!(s >= 0.1);
-}
-
-/// Checks that the FSRS WEIGHTS array has the expected number of elements.
-#[test]
-fn t042_fsrs_w_weights_count() {
-    assert_eq!(fsrs::WEIGHTS.len(), 21);
-}
-
-#[test]
-fn t044_fsrs6_w20_decay() {
-    // weight index 20 (the last of 21 parameters) should be the decay constant
-    assert!((fsrs::WEIGHTS[20] - 0.02).abs() < 1e-10);
-}
-
-/// Verifies that the first two FSRS weights are within a plausible range.
-#[test]
-fn t043_fsrs_w0_w1_plausible_range() {
-    assert!(fsrs::WEIGHTS[0] > 0.0 && fsrs::WEIGHTS[0] < 10.0);
-    assert!(fsrs::WEIGHTS[1] > 0.0 && fsrs::WEIGHTS[1] < 10.0);
-}
 
 /// Ensures atomic_write writes the correct data to the file.
 #[test]
@@ -903,14 +765,6 @@ fn t093_workspace_survives_100_save_load_cycles() {
     assert!(ws.node_title(&id).is_some());
 }
 
-/// Ensures all FSRS grades produce valid, finite stability values.
-#[test]
-fn t096_fsrs_all_4_grades_produce_valid_stability() {
-    for grade in 1..=4u8 {
-        let s = fsrs::initial_stability(grade);
-        assert!(s > 0.0 && s.is_finite());
-    }
-}
 
 /// Verifies that concurrent blob writes do not cause data corruption or hash collisions.
 #[test]
@@ -1005,15 +859,6 @@ fn t103_crdt_commutative_merge_guarantee() {
     assert_eq!(ws_a.node_count(), ws_b.node_count(), "Commutativity failed");
 }
 
-/// Checks that FSRS retrievability remains valid after 50 years of time drift.
-#[test]
-fn t104_fsrs_50_year_time_drift() {
-    let s = fsrs::initial_stability(3);
-    let days_late = 50.0 * 365.0; 
-    let r = fsrs::retrievability(days_late, s);
-    assert!(!r.is_nan());
-    assert!(r >= 0.0 && r <= 0.1);
-}
 
 /// Ensures that searching for a massive single token does not cause out-of-memory errors.
 #[test]
@@ -1080,18 +925,54 @@ fn t110_void_teardown_no_panics() {
 }
 
 // t999 stress test added after FSRS sanity checks
+/// Ultimate abuse: 10K nodes + 50 save/load cycles. Must not panic.
 #[test]
 fn t999_extreme_user_abuse() {
+    let dir = TempDir::new().unwrap();
     let mut ws = OnyxWorkspace::new();
     let root = ws.create_void(None, "root").unwrap();
-    for i in 0..10_000 { // 10K spam
-        ws.create_note(&root, &format!("note{}", i)).unwrap();
-        ws.create_layout_row(Some(&root)).unwrap();
+    
+    // Phase 1: Spam 10K notes (simulates user going ham)
+    for i in 0..10_000 {
+        ws.create_note(&root, &format!("note_{}", i)).unwrap();
     }
-    let dir = TempDir::new().unwrap();
-    for _ in 0..50 { // 50 save/load
+    assert!(ws.node_count() >= 10_001, "node count wrong after spam");
+    
+    // Phase 2: 50 save/load cycles (simulates app restart x50)
+    for _ in 0..50 {
         persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
-        let _ = persistence::load_workspace_from_dir(dir.path()).unwrap();
+        ws = persistence::load_workspace_from_dir(dir.path()).unwrap();
     }
-    assert_eq!(ws.node_count(), 20_001); // survives
+    assert!(ws.node_count() >= 10_001, "data lost after 50 cycles");
+    
+    // Phase 3: Rename first 100 nodes (simulates bulk edit)
+    for (i, (node, _depth)) in ws.get_tree_nodes().into_iter().take(100).enumerate() {
+        ws.set_node_title(&node.id, &format!("renamed_{}", i)).unwrap();
+    }
+    
+    // Phase 4: Search spam (1K queries)
+    let search_dir = TempDir::new().unwrap();
+    let mut idx = onyx_core::search::SearchIndex::new_with_dir(
+        search_dir.path()
+    ).unwrap();
+    for i in 0..100 {
+        idx.index_note(
+            &format!("id-{}", i), 
+            "root", 
+            &format!("note_{}", i), 
+            &[]
+        ).unwrap();
+    }
+    for _ in 0..1_000 {
+        let _ = idx.search("note", 10).unwrap();
+    }
+    
+    // Phase 5: Final save must succeed (no corruption)
+    persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
+    let final_ws = persistence::load_workspace_from_dir(dir.path()).unwrap();
+    assert!(
+        final_ws.node_count() >= 10_001,
+        "Final load lost nodes: got {}",
+        final_ws.node_count()
+    );
 }

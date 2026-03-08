@@ -6,9 +6,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# spaced alphabetically where appropriate
+chrono = { workspace = true }
+fsrs   = { workspace = true }  # external FSRS-6 scheduler crate
 loro   = { workspace = true }
 uuid   = { workspace = true }
-chrono = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }

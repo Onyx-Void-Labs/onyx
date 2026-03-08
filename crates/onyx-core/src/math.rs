@@ -1,6 +1,7 @@
 // ─── Onyx Core — Math Engine (LaTeX → Vello Paths) ──────────────────
 
 use vello::kurbo::PathEl;
+use pulldown_latex::Storage; // used below in latex_to_mathml
 
 /// Render a LaTeX string to a vector of Vello path elements.
 ///
@@ -14,9 +15,11 @@ pub fn render_math_to_paths(latex: &str) -> Vec<PathEl> {
 /// Convert a LaTeX string to a MathML string via pulldown-latex.
 fn latex_to_mathml(latex: &str) -> String {
     let mut output = String::new();
+    let storage = Storage::default();
+    // parser is the iterator of events that push_mathml expects
     let _ = pulldown_latex::push_mathml(
         &mut output,
-        pulldown_latex::Parser::new(latex),
+        pulldown_latex::Parser::new(latex, &storage),
         pulldown_latex::config::RenderConfig::default(),
     );
     output

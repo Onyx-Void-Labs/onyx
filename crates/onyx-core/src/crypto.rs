@@ -1,10 +1,11 @@
 // ─── Onyx Core — Snapshot Encryption (XChaCha20-Poly1305 + Argon2id) ──
 
 use anyhow::Result;
+// rand_core traits are re-exported by argon2's password_hash feature
+use argon2::password_hash::rand_core::RngCore;
 use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::XChaCha20Poly1305;
-use rand::RngCore;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
@@ -25,7 +26,8 @@ pub fn encrypt_data(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
     let cipher = XChaCha20Poly1305::new(key.into());
 
     let mut nonce_bytes = [0u8; 24];
-    OsRng.fill_bytes(&mut nonce_bytes);
+    // `try_fill_bytes` is available directly on OsRng; it returns a Result
+    OsRng.try_fill_bytes(&mut nonce_bytes)?;
     let nonce = chacha20poly1305::XNonce::from(nonce_bytes);
 
     let ciphertext = cipher
