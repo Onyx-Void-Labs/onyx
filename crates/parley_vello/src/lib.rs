@@ -1,9 +1,5 @@
 use parley::layout::{Layout, PositionedLayoutItem};
-use vello::{
-    kurbo::Affine,
-    peniko::{Brush, Fill},
-    Scene,
-};
+use vello::{kurbo::Affine, peniko::{Brush, Fill}, Scene};
 
 pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>) {
     for line in layout.lines() {
@@ -22,8 +18,11 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                     None => transform,
                 };
 
-                // 1% OVERKILL: Pull the exact Brush calculated by Parley's CRDT spans
                 let brush = &glyph_run.style().brush;
+                
+                // 1% OVERKILL: Extract the absolute Layout Matrix coordinates for this word
+                let run_x = glyph_run.offset();
+                let run_y = glyph_run.baseline();
 
                 scene
                     .draw_glyphs(font)
@@ -34,8 +33,9 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                         Fill::NonZero,
                         glyph_run.glyphs().map(|g| vello::Glyph {
                             id: g.id as u32,
-                            x: g.x,
-                            y: g.y,
+                            // Map local glyph advance into the absolute layout coordinate space
+                            x: run_x + g.x,
+                            y: run_y + g.y,
                         }),
                     );
             }
