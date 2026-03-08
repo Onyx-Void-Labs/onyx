@@ -111,6 +111,9 @@ pub struct OnyxApp {
     /// Dirty flag: only re-render when the scene actually changed.
     pub scene_dirty: bool,
     pub full_rebuild: bool, // Track if a full or partial rebuild is needed
+    // --- Vello Compositing ---
+    pub cached_target: Option<wgpu::Texture>,
+    pub blitter: Option<wgpu::util::TextureBlitter>,
 }
 
 impl OnyxApp {
@@ -190,6 +193,8 @@ impl OnyxApp {
             is_architect_mode: false,
             scene_dirty: true,
             full_rebuild: false,
+            cached_target: None,
+            blitter: None,
         })
     }
 
@@ -301,53 +306,99 @@ impl OnyxApp {
     }
 
     pub fn draw(&mut self) {
+        // drain embedding results first
         while let Ok((note_id, vec)) = self.embed_rx.try_recv() {
             let _ = self.workspace.set_vector(&note_id, &vec);
         }
 
-        let surface = match self.surface.as_mut() {
+        let surface_ref = match self.surface.as_mut() {
             Some(s) => s,
             None => return,
         };
-        let device_id = surface.dev_id;
+        let device_id = surface_ref.dev_id;
         let device = &self.render_cx.devices[device_id];
 
-        let output = match surface.surface.get_current_texture() {
+        let output = match surface_ref.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
+        let surface_format = surface_ref.config.format;
+        let width = surface_ref.config.width;
+        let height = surface_ref.config.height;
 
-        // 1% OVERKILL: Purge previous frame geometry to prevent pipeline accumulation jitter and memory leaks.
+        // 1% OVERKILL: Manage intermediate Rgba8Unorm target for Vello 0.7.0 compositing
+        let needs_rebuild = self
+            .cached_target
+            .as_ref()
+            .map_or(true, |t| t.width() != width || t.height() != height);
+        if needs_rebuild {
+            self.cached_target = Some(device.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Vello Intermediate Target"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }));
+            // recreate blitter for the current swapchain format
+            self.blitter = Some(wgpu::util::TextureBlitter::new(
+                &device.device,
+                surface_format,
+            ));
+        }
+
+        // purge previous geometry
         self.scene.reset();
-
-        // Rebuild the CRDT/UI layout mapping into the pristine scene
         if let Some(note_id) = &self.selected_node_id {
             self.editor
                 .build_scene(&mut self.scene, &self.workspace, note_id);
         }
 
-        // BREACH RESOLUTION: Hand over rendering fully to the Vello pipeline.
-        // This replaces the manual WGPU clear-pass that was blanking the screen.
         if let Some(renderer) = self.renderer.as_mut() {
-            // create a texture view from the surface's current texture
-            let view = output
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
+            if let Some(tex) = &self.cached_target {
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                renderer
+                    .render_to_texture(
+                        &device.device,
+                        &device.queue,
+                        &self.scene,
+                        &view,
+                        &vello::RenderParams {
+                            base_color: vello::peniko::Color::from_rgba8(9, 9, 11, 255),
+                            width,
+                            height,
+                            antialiasing_method: vello::AaConfig::Area,
+                        },
+                    )
+                    .expect("CRITICAL: Failed to rasterize Vello scene");
+            }
 
-            renderer
-                .render_to_texture(
-                    &device.device,
-                    &device.queue,
-                    &self.scene,
-                    &view,
-                    &vello::RenderParams {
-                        base_color: vello::peniko::Color::from_rgba8(9, 9, 11, 255), // Matrix Void Gray
-                        width: surface.config.width,
-                        height: surface.config.height,
-                        antialiasing_method: vello::AaConfig::Area,
-                    },
-                )
-                .expect("CRITICAL: Failed to rasterize Vello scene to WGPU surface");
+            // now blit the RGBA result to the swapchain's BGRA texture
+            if let (Some(blitter), Some(src_tex)) =
+                (self.blitter.as_ref(), self.cached_target.as_ref())
+            {
+                let mut encoder =
+                    device
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("blit encoder"),
+                        });
+                let src_view = src_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let dst_view = output
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                blitter.copy(&device.device, &mut encoder, &src_view, &dst_view);
+                device.queue.submit(Some(encoder.finish()));
+            }
         }
 
         output.present();
