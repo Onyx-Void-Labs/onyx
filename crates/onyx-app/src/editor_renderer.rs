@@ -43,12 +43,12 @@ impl EditorRenderer {
         }
     }
 
-    pub fn build_scene(&mut self, scene: &mut Scene, ws: &OnyxWorkspace, note_id: &str) {
+    pub fn build_scene(&mut self, scene: &mut Scene, ws: &OnyxWorkspace, note_id: &str, spine_x: f64, spine_w: f64) {
         let block_ids_opt = ws.get_note_block_ids(note_id);
         let Some(block_ids) = block_ids_opt else { return };
         
-        // Push the starting cursor down and right to frame the text nicely
-        let mut y_offset = 150.0;
+        // Start typing cursor 120px down from the top
+        let mut y_offset = 120.0;
 
         self.layouts.clear();
 
@@ -58,8 +58,8 @@ impl EditorRenderer {
             let content_opt = ws.get_block_content(&block_id);
             let Some(content) = content_opt else { continue };
 
-            // 1% OVERKILL: 48px physical size to ensure absolute high-DPI visibility
-            let font_size = 48.0;
+            // A clean, readable high-DPI paragraph size
+            let font_size = 24.0;
             let default_brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255)); 
 
             let mut layout_builder = self.layout_context.ranged_builder(
@@ -110,13 +110,17 @@ impl EditorRenderer {
             }
 
             let mut layout = layout_builder.build(content.as_str());
-            layout.break_all_lines(Some(1000.0));
-            layout.align(Some(1000.0), parley::layout::Alignment::Start, parley::layout::AlignmentOptions::default());
+            
+            // 1% OVERKILL: Constrain text to the Spine width minus 80px of breathing padding
+            let max_width = (spine_w - 80.0) as f32;
+            layout.break_all_lines(Some(max_width));
+            layout.align(Some(max_width), parley::layout::Alignment::Start, parley::layout::AlignmentOptions::default());
 
-            let transform = Affine::translate((100.0, y_offset));
+            // Mount the block exactly onto the absolute Spine coordinates
+            let transform = Affine::translate((spine_x + 40.0, y_offset));
             parley_vello::render_text(scene, transform, &layout);
 
-            y_offset += layout.height() as f64 + 40.0;
+            y_offset += layout.height() as f64 + 24.0;
             self.layouts.push(layout);
         }
     }

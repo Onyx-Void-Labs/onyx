@@ -358,9 +358,24 @@ impl OnyxApp {
 
         // purge previous geometry
         self.scene.reset();
+
+        let width_f = width as f64;
+        let height_f = height as f64;
+        let spine_w = 850.0;
+        let spine_x = (width_f / 2.0) - (spine_w / 2.0);
+
+        // 1% OVERKILL: Render the Deep Work Spine (A subtle physical elevation from the Void)
+        self.scene.fill(
+            vello::peniko::Fill::NonZero,
+            vello::kurbo::Affine::IDENTITY,
+            &vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(16, 16, 19, 255)), // Slightly lighter than the 9,9,11 void
+            None,
+            &vello::kurbo::Rect::new(spine_x, 0.0, spine_x + spine_w, height_f),
+        );
+
+        // Rebuild the CRDT/UI layout mapping into the pristine scene
         if let Some(note_id) = &self.selected_node_id {
-            self.editor
-                .build_scene(&mut self.scene, &self.workspace, note_id);
+            self.editor.build_scene(&mut self.scene, &self.workspace, note_id, spine_x, spine_w);
         }
 
         if let Some(renderer) = self.renderer.as_mut() {
