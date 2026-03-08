@@ -19,8 +19,6 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                 };
 
                 let brush = &glyph_run.style().brush;
-                
-                // 1% OVERKILL: Extract the absolute Layout Matrix coordinates for this word
                 let run_x = glyph_run.offset();
                 let run_y = glyph_run.baseline();
 
@@ -28,14 +26,17 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                     .draw_glyphs(font)
                     .font_size(font_size)
                     .transform(xform)
+                    // BREACH RESOLUTION: Pass variable font axes so glyph paths don't collapse
+                    .normalized_coords(run.normalized_coords())
+                    .hint(true)
                     .brush(brush)
                     .draw(
                         Fill::NonZero,
                         glyph_run.glyphs().map(|g| vello::Glyph {
                             id: g.id as u32,
-                            // Map local glyph advance into the absolute layout coordinate space
                             x: run_x + g.x,
-                            y: run_y + g.y,
+                            // BREACH RESOLUTION: Invert Parley's Y-Up baseline offset to Vello's Y-Down coordinates
+                            y: run_y - g.y,
                         }),
                     );
             }
