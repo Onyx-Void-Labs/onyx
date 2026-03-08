@@ -37,7 +37,10 @@ impl OnyxWorkspace {
 
     /// Check whether `slot_id` is currently a direct child of `row_id`.
     pub fn row_contains_slot(&self, row_id: &str, slot_id: &str) -> bool {
-        self.layout_parent_map.get(slot_id).map(|p| p == row_id).unwrap_or(false)
+        self.layout_parent_map
+            .get(slot_id)
+            .map(|p| p == row_id)
+            .unwrap_or(false)
     }
 
     /// Expand a previously-collapsed layout row.
@@ -100,7 +103,9 @@ impl OnyxWorkspace {
 
         // 1. Nodes
         let mut stack = Vec::new();
-        for root in self.tree.roots() { stack.push((root, None::<String>)); }
+        for root in self.tree.roots() {
+            stack.push((root, None::<String>));
+        }
 
         while let Some((id, parent_void)) = stack.pop() {
             let id_str = id.to_string();
@@ -108,11 +113,13 @@ impl OnyxWorkspace {
 
             let mut is_void = false;
             if let Ok(meta) = self.tree.get_meta(id) {
-                 if let Some(ValueOrContainer::Value(v)) = meta.get("node_type") {
-                     if let Some(s) = v.as_string() {
-                         if s.as_str() == "void" { is_void = true; }
-                     }
-                 }
+                if let Some(ValueOrContainer::Value(v)) = meta.get("node_type") {
+                    if let Some(s) = v.as_string() {
+                        if s.as_str() == "void" {
+                            is_void = true;
+                        }
+                    }
+                }
             }
 
             if !is_void {
@@ -122,13 +129,17 @@ impl OnyxWorkspace {
             }
             let next_ctx = if is_void { Some(id_str) } else { parent_void };
             if let Some(children) = self.tree.children(id) {
-                for child in children { stack.push((child, next_ctx.clone())); }
+                for child in children {
+                    stack.push((child, next_ctx.clone()));
+                }
             }
         }
 
         // 2. Layout
         let mut stack = Vec::new();
-        for root in self.layout_tree.roots() { stack.push((root, None::<String>)); }
+        for root in self.layout_tree.roots() {
+            stack.push((root, None::<String>));
+        }
         while let Some((id, parent_id)) = stack.pop() {
             let id_str = id.to_string();
             self.layout_id_map.insert(id_str.clone(), id);
@@ -136,7 +147,9 @@ impl OnyxWorkspace {
                 self.layout_parent_map.insert(id_str.clone(), p.clone());
             }
             if let Some(children) = self.layout_tree.children(id) {
-                for child in children { stack.push((child, Some(id_str.clone()))); }
+                for child in children {
+                    stack.push((child, Some(id_str.clone())));
+                }
             }
         }
     }
@@ -150,7 +163,7 @@ use chrono::{DateTime, Utc};
 use loro::{LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, ValueOrContainer};
 
 use crate::blob::BlobStore;
-use crate::blocks::Block;
+use crate::blocks::{Attribute, AttributeSpan, Block, BlockType};
 use crate::fsrs::FlashcardData;
 use crate::graph::BacklinkIndex;
 use crate::history::HistoryStack;
@@ -173,6 +186,8 @@ pub struct OnyxWorkspace {
     pub vectors: LoroMap,
     pub blocks: LoroMap,
     pub flashcards: LoroMap,
+    /// map of canvas element id -> serialized CanvasElement json
+    pub canvas_elements: LoroMap,
     pub blob_store: BlobStore,
     pub search_index: Option<SearchIndex>,
     pub history: HistoryStack,
@@ -203,7 +218,9 @@ impl OnyxWorkspace {
         let vectors = doc.get_map("vectors");
         let blocks = doc.get_map("blocks");
         let flashcards = doc.get_map("flashcards");
-        Self {
+        let canvas_elements = doc.get_map("canvas_elements");
+
+        let mut ws = Self {
             doc,
             tree,
             layout_tree,
@@ -213,6 +230,7 @@ impl OnyxWorkspace {
             vectors,
             blocks,
             flashcards,
+            canvas_elements,
             blob_store: BlobStore::new(),
             search_index: SearchIndex::new().ok(),
             history: HistoryStack::new(),
@@ -222,7 +240,43 @@ impl OnyxWorkspace {
             layout_id_map: HashMap::new(),
             layout_parent_map: HashMap::new(),
             batching: false,
+        };
+
+        // --- GENESIS BLOCK CREATION ---
+        // make a root void and a note with a single styled block so that
+        // an editor rendering pipeline has something to display immediately.
+        if let Ok(root_void_id) = ws.create_void(None, "Welcome to the Void") {
+            if let Ok(note_id) = ws.create_note(&root_void_id, "Genesis Note") {
+                let block_content = "The Spine is now online. Rendered with Vello + Parley.";
+                let block = Block {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    kind: BlockType::Paragraph,
+                    content: block_content.to_string(),
+                    attributes: vec![
+                        AttributeSpan {
+                            start: 0,
+                            end: 9,
+                            attr: Attribute::Bold,
+                        },
+                        AttributeSpan {
+                            start: 40,
+                            end: 54,
+                            attr: Attribute::Italic,
+                        },
+                        AttributeSpan {
+                            start: 40,
+                            end: 54,
+                            attr: Attribute::Color([0.5, 0.8, 1.0, 1.0]),
+                        },
+                    ],
+                    children: Vec::new(),
+                };
+                let _ = ws.set_note_blocks(&note_id, &[block]);
+            }
         }
+        // --- END GENESIS BLOCK ---
+
+        ws
     }
 
     /// Begin a transaction — suppress individual `doc.commit()` calls.
@@ -255,6 +309,7 @@ impl OnyxWorkspace {
         let vectors = doc.get_map("vectors");
         let blocks = doc.get_map("blocks");
         let flashcards = doc.get_map("flashcards");
+        let canvas_elements = doc.get_map("canvas_elements");
 
         // Rebuild id_map and parent_map from the tree
         let mut id_map = HashMap::new();
@@ -340,6 +395,7 @@ impl OnyxWorkspace {
             vectors,
             blocks,
             flashcards,
+            canvas_elements,
             blob_store: BlobStore::new(),
             search_index: SearchIndex::new().ok(),
             history: HistoryStack::new(),
@@ -696,6 +752,122 @@ impl OnyxWorkspace {
         }
     }
 
+    /// Return a list of block IDs belonging to the specified note.
+    ///
+    /// Previously this returned a bare `Vec` but callers were often
+    /// interested only in non‑empty results.  The new signature yields
+    /// `None` when the note has no blocks, simplifying rendering loops
+    /// like `let Some(ids) = ws.get_note_block_ids(id) else { return };`.
+    pub fn get_note_block_ids(&self, note_id: &str) -> Option<Vec<String>> {
+        let ids: Vec<String> = self
+            .get_note_blocks(note_id)
+            .into_iter()
+            .map(|b| b.id.clone())
+            .collect();
+        if ids.is_empty() {
+            None
+        } else {
+            Some(ids)
+        }
+    }
+
+    /// Retrieve the raw content string for a given block ID, or `None` if not
+    /// found anywhere in the workspace.
+    pub fn get_block_content(&self, block_id: &str) -> Option<String> {
+        self.find_block(block_id).map(|b| b.content.clone())
+    }
+
+    /// Internal helper: scan every note's block list for a block with the
+    /// given ID.
+    fn find_block(&self, block_id: &str) -> Option<Block> {
+        let deep = self.blocks.get_deep_value();
+        if let LoroValue::Map(map) = &deep {
+            for (_note_id, val) in map.iter() {
+                if let LoroValue::String(json) = val {
+                    if let Ok(vec) = serde_json::from_str::<Vec<Block>>(json) {
+                        for b in vec {
+                            if b.id == block_id {
+                                return Some(b);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Helper that converts a given block's text and attribute spans into a
+    /// sequence of `(segment, attributes)` tuples suitable for rendering by
+    /// a Parley text buffer.  Overlapping attributes are merged into the
+    /// vector for each character range; contiguous runs with identical
+    /// attribute sets are collapsed.
+    pub fn get_styled_text(
+        &self,
+        block_id: &str,
+    ) -> Option<Vec<(String, Vec<crate::blocks::Attribute>)>> {
+        // locate the block among stored note blocks by scanning every
+        // note's serialized vector.  This is O(n) in number of blocks but
+        // acceptable during rendering; an index can be added later.
+        let mut found: Option<crate::blocks::Block> = None;
+        let deep = self.blocks.get_deep_value();
+        if let LoroValue::Map(map) = &deep {
+            for (_note_id, val) in map.iter() {
+                if let LoroValue::String(json) = val {
+                    if let Ok(vec) = serde_json::from_str::<Vec<crate::blocks::Block>>(json) {
+                        for b in vec {
+                            if b.id == block_id {
+                                found = Some(b);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+        }
+        let block = found?;
+
+        // build vector of (pos, start/end, attr) events
+        let mut events: Vec<(usize, bool, crate::blocks::Attribute)> = Vec::new();
+        for span in &block.attributes {
+            events.push((span.start, true, span.attr.clone()));
+            events.push((span.end, false, span.attr.clone()));
+        }
+        events.sort_by_key(|e| e.0);
+
+        let mut segments: Vec<(String, Vec<crate::blocks::Attribute>)> = Vec::new();
+        let mut active: Vec<crate::blocks::Attribute> = Vec::new();
+        let mut last_pos = 0;
+        let text = &block.content;
+        let bytes = text.as_bytes();
+        let mut idx = 0;
+        for (pos, is_start, attr) in events {
+            if pos > last_pos {
+                // take slice of bytes last_pos..pos maintaining UTF8 correctness
+                if let Ok(seg_str) = std::str::from_utf8(&bytes[last_pos..pos]) {
+                    segments.push((seg_str.to_string(), active.clone()));
+                }
+            }
+            if is_start {
+                active.push(attr);
+            } else {
+                if let Some(pos) = active.iter().position(|a| a == &attr) {
+                    active.remove(pos);
+                }
+            }
+            last_pos = pos;
+        }
+        if last_pos < bytes.len() {
+            if let Ok(seg_str) = std::str::from_utf8(&bytes[last_pos..]) {
+                segments.push((seg_str.to_string(), active.clone()));
+            }
+        }
+        Some(segments)
+    }
+
     // ── Flashcards ──────────────────────────────────────────────
 
     /// Store a flashcard.
@@ -712,6 +884,33 @@ impl OnyxWorkspace {
     /// Get a flashcard by ID.
     pub fn get_flashcard(&self, card_id: &str) -> Option<FlashcardData> {
         match self.flashcards.get(card_id) {
+            Some(ValueOrContainer::Value(v)) => {
+                v.as_string().and_then(|s| serde_json::from_str(s).ok())
+            }
+            _ => None,
+        }
+    }
+
+    // ── Canvas Elements ───────────────────────────────────────────
+
+    /// Store or update a canvas element in the workspace.
+    pub fn set_canvas_element(
+        &mut self,
+        elem_id: &str,
+        element: &crate::canvas::CanvasElement,
+    ) -> Result<()> {
+        self.begin_transaction();
+        let json = serde_json::to_string(element).context("serialize canvas element")?;
+        self.canvas_elements
+            .insert(elem_id, json)
+            .context("set canvas element")?;
+        self.end_transaction();
+        Ok(())
+    }
+
+    /// Retrieve a canvas element by ID.
+    pub fn get_canvas_element(&self, elem_id: &str) -> Option<crate::canvas::CanvasElement> {
+        match self.canvas_elements.get(elem_id) {
             Some(ValueOrContainer::Value(v)) => {
                 v.as_string().and_then(|s| serde_json::from_str(s).ok())
             }
@@ -841,6 +1040,7 @@ impl OnyxWorkspace {
                 self.vectors = self.doc.get_map("vectors");
                 self.blocks = self.doc.get_map("blocks");
                 self.flashcards = self.doc.get_map("flashcards");
+                self.canvas_elements = self.doc.get_map("canvas_elements");
                 true
             }
             _ => false,
@@ -859,6 +1059,7 @@ impl OnyxWorkspace {
                 self.vectors = self.doc.get_map("vectors");
                 self.blocks = self.doc.get_map("blocks");
                 self.flashcards = self.doc.get_map("flashcards");
+                self.canvas_elements = self.doc.get_map("canvas_elements");
                 true
             }
             _ => false,

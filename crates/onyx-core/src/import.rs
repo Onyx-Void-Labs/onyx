@@ -21,6 +21,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Checklist { checked: true },
                 content: stripped.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else if let Some(stripped) = trimmed.strip_prefix("- [ ] ") {
@@ -28,6 +29,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Checklist { checked: false },
                 content: stripped.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else if let Some(stripped) = trimmed
@@ -38,6 +40,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::BulletList,
                 content: stripped.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else if let Some(stripped) = parse_numbered_list(trimmed) {
@@ -45,6 +48,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::NumberedList,
                 content: stripped,
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else if let Some(stripped) = trimmed.strip_prefix("> ") {
@@ -52,6 +56,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Quote,
                 content: stripped.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
@@ -59,6 +64,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Divider,
                 content: String::new(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         } else {
@@ -66,6 +72,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Paragraph,
                 content: trimmed.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             }
         };
@@ -88,6 +95,7 @@ fn parse_heading(line: &str) -> Option<Block> {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: BlockType::Heading(level as u8),
                 content: stripped.to_string(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             });
         }
@@ -129,6 +137,7 @@ fn merge_code_blocks(mut blocks: Vec<Block>, md: &str) -> Vec<Block> {
                         language: code_lang.clone(),
                     },
                     content: code_content.trim_end().to_string(),
+                    attributes: Vec::new(),
                     children: Vec::new(),
                 });
                 code_content.clear();
@@ -285,12 +294,14 @@ mod tests {
                 id: "1".into(),
                 kind: BlockType::Heading(1),
                 content: "Title".into(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             },
             Block {
                 id: "2".into(),
                 kind: BlockType::Paragraph,
                 content: "Body text.".into(),
+                attributes: Vec::new(),
                 children: Vec::new(),
             },
         ];

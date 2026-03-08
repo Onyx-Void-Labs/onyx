@@ -14,9 +14,9 @@ pub mod diffing;
 pub mod document;
 pub use document::OnyxWorkspace; // re-export core workspace type
 pub mod fsrs;
-pub use fsrs::{CardState, Scheduler, FlashcardData};
-pub mod question_bank;
+pub use fsrs::{CardState, FlashcardData, Scheduler};
 pub mod graph;
+pub mod question_bank;
 pub use graph::BacklinkIndex;
 pub mod grid_layout;
 pub mod history;
@@ -29,9 +29,18 @@ pub mod media;
 pub mod model;
 pub mod neural;
 pub mod persistence;
-pub use persistence::{load_workspace, save_workspace, start_autosave, atomic_write, save_workspace_to_tmp, load_workspace_with_recovery, save_workspace_to_dir, load_workspace_from_dir};
+pub use persistence::{
+    atomic_write, load_workspace, load_workspace_from_dir, load_workspace_with_recovery,
+    save_workspace, save_workspace_to_dir, save_workspace_to_tmp, start_autosave,
+};
 pub mod query;
 pub mod scheduler;
 pub mod search;
 pub mod settings;
 pub mod templates;
+
+// Canvas geometry and neuro navigation
+pub mod canvas;
+
+// Learning helpers such as the Feynman audio grader
+pub mod learning;

@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, Value, STORED, TEXT, STRING};
+use tantivy::schema::{Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexWriter, ReloadPolicy};
 
 use crate::blocks::Block;
@@ -205,7 +205,8 @@ impl SearchIndex {
             // used.  `limit` already comes from the caller and is typically
             // small for our test suite, so adding a fixed cushion is safe.
             let scan_limit = limit.saturating_add(1000);
-            let all_docs = searcher.search(&tantivy::query::AllQuery, &TopDocs::with_limit(scan_limit))?;
+            let all_docs =
+                searcher.search(&tantivy::query::AllQuery, &TopDocs::with_limit(scan_limit))?;
             for (_score, doc_addr) in all_docs {
                 let doc = searcher.doc::<tantivy::TantivyDocument>(doc_addr)?;
                 let mut contains = false;
@@ -266,6 +267,7 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Paragraph,
             content: text.to_string(),
+            attributes: Vec::new(),
             children: Vec::new(),
         }
     }

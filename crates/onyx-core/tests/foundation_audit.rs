@@ -40,6 +40,7 @@
 
 use onyx_core::{
     blob::BlobStore,
+    blocks::{Block, BlockType},
     crypto,
     fsrs::{self},
     grid_layout::{GridRow, Slot},
@@ -252,7 +253,9 @@ fn t021_delete_at_zero_refcount() {
 fn t022_blob_not_found_returns_error() {
     let dir = TempDir::new().unwrap();
     let store = BlobStore::new_with_path(dir.path().to_path_buf());
-    assert!(store.get_blob("0000000000000000000000000000000000000000000000000000000000000000").is_err());
+    assert!(store
+        .get_blob("0000000000000000000000000000000000000000000000000000000000000000")
+        .is_err());
 }
 
 /// Ensures that blobs are stored encrypted on disk, not as raw plaintext.
@@ -315,8 +318,6 @@ fn t028_blob_hash_is_hex_sha256() {
     assert_eq!(hash.len(), 64);
     assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
 }
-
-
 
 /// Ensures atomic_write writes the correct data to the file.
 #[test]
@@ -389,13 +390,16 @@ fn t051_workspace_snapshot_encrypted() {
     let dir = TempDir::new().unwrap();
     let ws = OnyxWorkspace::new();
     persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
-    
+
     // Fast: check first file only
     if let Some(entry) = fs::read_dir(dir.path()).unwrap().next() {
         let entry = entry.unwrap();
         let raw = fs::read(entry.path()).unwrap();
         let as_str = String::from_utf8_lossy(&raw);
-        assert!(!as_str.starts_with('{'), "workspace contains plaintext JSON");
+        assert!(
+            !as_str.starts_with('{'),
+            "workspace contains plaintext JSON"
+        );
     }
 }
 
@@ -415,15 +419,13 @@ fn t053_orphan_tmp_recovered_on_load() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("workspace.onyx");
     let tmp = path.with_extension("tmp");
-    
+
     // Create orphan manually (avoid recursion)
     fs::write(&tmp, b"fake_tmp_data").unwrap();
     assert!(!path.exists());
-    
+
     // Recovery must not panic
-    let result = std::panic::catch_unwind(|| {
-        persistence::load_workspace_with_recovery(dir.path())
-    });
+    let result = std::panic::catch_unwind(|| persistence::load_workspace_with_recovery(dir.path()));
     assert!(result.is_ok(), "recovery panicked on orphan tmp");
 }
 
@@ -479,8 +481,14 @@ fn t058_move_slot_atomic() {
     let row_b = ws.create_layout_row(None).unwrap();
     let slot = ws.create_layout_slot(&row_a).unwrap();
     ws.move_slot(&slot, &row_b, 0).unwrap();
-    assert!(ws.row_contains_slot(&row_b, &slot), "slot not in row_b after move");
-    assert!(!ws.row_contains_slot(&row_a, &slot), "slot still in row_a after move");
+    assert!(
+        ws.row_contains_slot(&row_b, &slot),
+        "slot not in row_b after move"
+    );
+    assert!(
+        !ws.row_contains_slot(&row_a, &slot),
+        "slot still in row_a after move"
+    );
 }
 
 /// Ensures collapsing a row does not delete it (ghost row bug test).
@@ -489,7 +497,10 @@ fn t059_ghost_row_not_structurally_deleted() {
     let mut ws = OnyxWorkspace::new();
     let row = ws.create_layout_row(None).unwrap();
     ws.collapse_row(&row).unwrap();
-    assert!(ws.row_exists(&row), "row was deleted instead of collapsed (ghost row bug)");
+    assert!(
+        ws.row_exists(&row),
+        "row was deleted instead of collapsed (ghost row bug)"
+    );
     assert!(ws.is_row_collapsed(&row));
 }
 /// Checks that a collapsed row can be expanded again.
@@ -509,7 +520,10 @@ fn t061_delete_node_removes_from_tree() {
     let mut ws = OnyxWorkspace::new();
     let id = ws.create_void(None, "temp").unwrap();
     ws.delete_node(&id).unwrap();
-    assert!(!ws.node_exists(&id), "Node ID map was not cleared on deletion");
+    assert!(
+        !ws.node_exists(&id),
+        "Node ID map was not cleared on deletion"
+    );
 }
 
 /// Ensures that batched transactions apply all-or-nothing changes.
@@ -536,7 +550,10 @@ fn t063_crdt_merge_no_data_loss() {
     ws1.doc.import(&snap).unwrap();
     ws1.rebuild_id_map();
     assert!(ws1.node_exists(&id_a));
-    assert!(ws1.node_exists(&id_b), "merged node missing after CRDT import");
+    assert!(
+        ws1.node_exists(&id_b),
+        "merged node missing after CRDT import"
+    );
 }
 
 /// Checks that node titles can be set and retrieved correctly.
@@ -554,7 +571,9 @@ fn t065_deep_nesting_50_levels() {
     let mut ws = OnyxWorkspace::new();
     let mut parent = ws.create_void(None, "Root").unwrap();
     for i in 0..50 {
-        parent = ws.create_void(Some(&parent), &format!("Level {}", i)).unwrap();
+        parent = ws
+            .create_void(Some(&parent), &format!("Level {}", i))
+            .unwrap();
     }
     assert!(ws.node_title(&parent).is_some());
 }
@@ -619,7 +638,11 @@ fn t072_notification_rejects_unknown_field() {
 /// Verifies that Slot can be serialized and deserialized without data loss.
 #[test]
 fn t073_slot_valid_json_roundtrip() {
-    let slot = Slot { col_start: 2, col_span: 4, widget_id: String::new() };
+    let slot = Slot {
+        col_start: 2,
+        col_span: 4,
+        widget_id: String::new(),
+    };
     let json = serde_json::to_string(&slot).unwrap();
     let back: Slot = serde_json::from_str(&json).unwrap();
     assert_eq!(slot.col_start, back.col_start);
@@ -650,7 +673,8 @@ fn t083_indexed_note_is_searchable() {
     let dir = TempDir::new().unwrap();
     let mut idx = onyx_core::search::SearchIndex::new_with_dir(dir.path()).unwrap();
     let blocks = vec![];
-    idx.index_note("id-001", "void-A", "quantum entanglement", &blocks).unwrap();
+    idx.index_note("id-001", "void-A", "quantum entanglement", &blocks)
+        .unwrap();
     let results = idx.search("quantum", 10).unwrap();
     assert!(results.iter().any(|r| r == "id-001"));
 }
@@ -660,7 +684,8 @@ fn t083_indexed_note_is_searchable() {
 fn t084_deleted_note_not_in_search() {
     let dir = TempDir::new().unwrap();
     let mut idx = onyx_core::search::SearchIndex::new_with_dir(dir.path()).unwrap();
-    idx.index_note("id-002", "void-A", "temporary note", &[]).unwrap();
+    idx.index_note("id-002", "void-A", "temporary note", &[])
+        .unwrap();
     idx.remove_note("id-002").unwrap();
     let results = idx.search("temporary", 10).unwrap();
     assert!(!results.iter().any(|r| r == "id-002"));
@@ -671,11 +696,13 @@ fn t084_deleted_note_not_in_search() {
 fn t085_reindex_all_recovers_missing_entries() {
     let dir = TempDir::new().unwrap();
     let mut idx = onyx_core::search::SearchIndex::new_with_dir(dir.path()).unwrap();
-    idx.index_note("id-003", "void-B", "rebuild test", &[]).unwrap();
+    idx.index_note("id-003", "void-B", "rebuild test", &[])
+        .unwrap();
     idx.clear_index().unwrap();
     let results = idx.search("rebuild", 10).unwrap();
     assert!(!results.iter().any(|r| r == "id-003"));
-    idx.index_note("id-003", "void-B", "rebuild test", &[]).unwrap();
+    idx.index_note("id-003", "void-B", "rebuild test", &[])
+        .unwrap();
     let results = idx.search("rebuild", 10).unwrap();
     assert!(results.iter().any(|r| r == "id-003"));
 }
@@ -696,7 +723,10 @@ fn t087_search_unicode_content() {
     let mut idx = onyx_core::search::SearchIndex::new_with_dir(dir.path()).unwrap();
     idx.index_note("id-004", "void-C", "汉字笔记", &[]).unwrap();
     let results = idx.search("汉字", 10).unwrap();
-    assert!(results.iter().any(|r| r == "id-004"), "Unicode search did not find the expected note");
+    assert!(
+        results.iter().any(|r| r == "id-004"),
+        "Unicode search did not find the expected note"
+    );
 }
 
 /// Checks that updating a note in the index replaces the old entry.
@@ -704,19 +734,27 @@ fn t087_search_unicode_content() {
 fn t088_update_note_replaces_old_index() {
     let dir = TempDir::new().unwrap();
     let mut idx = onyx_core::search::SearchIndex::new_with_dir(dir.path()).unwrap();
-    idx.index_note("id-005", "void-D", "old title", &[]).unwrap();
-    idx.index_note("id-005", "void-D", "new title", &[]).unwrap();
+    idx.index_note("id-005", "void-D", "old title", &[])
+        .unwrap();
+    idx.index_note("id-005", "void-D", "new title", &[])
+        .unwrap();
     let old_results = idx.search("old", 10).unwrap();
-    assert!(!old_results.iter().any(|r| r == "id-005"), "old entry should be gone");
+    assert!(
+        !old_results.iter().any(|r| r == "id-005"),
+        "old entry should be gone"
+    );
     let new_results = idx.search("new", 10).unwrap();
-    assert!(new_results.iter().any(|r| r == "id-005"), "new entry should appear");
+    assert!(
+        new_results.iter().any(|r| r == "id-005"),
+        "new entry should appear"
+    );
 }
 
 /// Ensures node titles with Unicode characters are preserved roundtrip.
 #[test]
 fn t089_unicode_node_title_roundtrip() {
     let mut ws = OnyxWorkspace::new();
-    let unicode_title = "🧠 Void: AI Ready"; 
+    let unicode_title = "🧠 Void: AI Ready";
     let id = ws.create_void(None, unicode_title).unwrap();
     let title = ws.node_title(&id).unwrap();
     assert_eq!(title, unicode_title);
@@ -758,28 +796,33 @@ fn t093_workspace_survives_100_save_load_cycles() {
     let dir = TempDir::new().unwrap();
     let mut ws = OnyxWorkspace::new();
     let id = ws.create_void(None, "Survivor").unwrap();
-    for _ in 0..10 {  // Reduced from 100
+    for _ in 0..10 {
+        // Reduced from 100
         persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
         ws = persistence::load_workspace_from_dir(dir.path()).unwrap();
     }
     assert!(ws.node_title(&id).is_some());
 }
 
-
 /// Verifies that concurrent blob writes do not cause data corruption or hash collisions.
 #[test]
 fn t097_concurrent_blob_writes_no_corruption() {
-    use std::{sync::{Arc, Mutex}, thread};
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+    };
     let dir = TempDir::new().unwrap();
-    let store = Arc::new(Mutex::new(
-        BlobStore::new_with_path(dir.path().to_path_buf())
-    ));
+    let store = Arc::new(Mutex::new(BlobStore::new_with_path(
+        dir.path().to_path_buf(),
+    )));
     let mut handles = vec![];
     for i in 0u8..8 {
         let s = Arc::clone(&store);
         handles.push(thread::spawn(move || {
             let data = vec![i; 1024];
-            s.lock().unwrap().store_blob(&data, "application/octet-stream")
+            s.lock()
+                .unwrap()
+                .store_blob(&data, "application/octet-stream")
         }));
     }
     let hashes: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
@@ -794,7 +837,10 @@ fn t099_grid_slot_column_boundary() {
     let row = ws.create_layout_row(None).unwrap();
     let slot = ws.create_layout_slot(&row).unwrap();
     let result = ws.move_slot(&slot, &row, u8::MAX as usize);
-    assert!(result.is_ok(), "API clamps invalid columns (expected behavior)");
+    assert!(
+        result.is_ok(),
+        "API clamps invalid columns (expected behavior)"
+    );
 }
 
 /// Checks repeated save/load detects no data drift.
@@ -832,7 +878,10 @@ fn t102_hierarchy_cycle_prevention() {
     let parent = ws.create_void(None, "Parent").unwrap();
     let child = ws.create_void(Some(&parent), "Child").unwrap();
     let result = ws.move_node(&parent, Some(&child));
-    assert!(result.is_err(), "CRDT must reject moving Parent into its own Child");
+    assert!(
+        result.is_err(),
+        "CRDT must reject moving Parent into its own Child"
+    );
 }
 
 /// Ensures that CRDT merges are commutative (order does not affect result).
@@ -859,6 +908,104 @@ fn t103_crdt_commutative_merge_guarantee() {
     assert_eq!(ws_a.node_count(), ws_b.node_count(), "Commutativity failed");
 }
 
+/// Basic sanity check that a canvas element can be stored, retrieved, and
+/// hit‑tested through the workspace map.
+#[test]
+fn t104_canvas_crdt_storage_and_hit_testing() {
+    let mut ws = OnyxWorkspace::new();
+    use onyx_core::canvas::{CanvasElement, Geometry};
+    let elem = CanvasElement {
+        id: "e1".into(),
+        parent_void: "v1".into(),
+        geometry: Geometry::Rect {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 10.0,
+            y1: 10.0,
+        },
+        text: None,
+        color: [0.0, 0.0, 0.0, 1.0],
+        z_index: 0,
+        neuro_state: None,
+    };
+    ws.set_canvas_element(&elem.id, &elem).unwrap();
+    let loaded = ws.get_canvas_element(&elem.id).expect("should exist");
+    assert_eq!(loaded.geometry, elem.geometry);
+    assert!(loaded.hit_test(vello::kurbo::Point::new(5.0, 5.0)));
+}
+
+/// Ensure the Feynman audio grader returns appropriate ratings for simple
+/// keyword overlaps.
+#[test]
+fn t105_feynman_audio_grader_basic() {
+    use onyx_core::learning::FeynmanAudioGrader;
+    let keywords = vec!["rust".into(), "ownership".into(), "borrow".into()];
+    let grade = FeynmanAudioGrader::grade("Rust ownership borrow rules", &keywords);
+    assert_eq!(grade, 3); // >85% overlap should be classified as "good"
+    let grade2 = FeynmanAudioGrader::grade("I know nothing", &keywords);
+    assert_eq!(grade2, 1);
+}
+
+/// Verify attribute spans are returned correctly and merged
+#[test]
+fn t106_attribute_span_styled_text() {
+    use onyx_core::blocks::{Attribute, AttributeSpan, Block, BlockType};
+    let mut ws = OnyxWorkspace::new();
+    let block = Block {
+        id: "b1".into(),
+        kind: BlockType::Paragraph,
+        content: "hello".into(),
+        attributes: vec![
+            AttributeSpan {
+                start: 0,
+                end: 5,
+                attr: Attribute::Bold,
+            },
+            AttributeSpan {
+                start: 0,
+                end: 2,
+                attr: Attribute::Sentiment(0.9),
+            },
+        ],
+        children: Vec::new(),
+    };
+    ws.set_note_blocks("note1", &[block.clone()]).unwrap();
+    let spans = ws.get_styled_text(&block.id).expect("got spans");
+    // Expect segments: "he" with both bold+sentiment, "llo" with bold
+    assert_eq!(spans.len(), 2);
+    assert_eq!(spans[0].0, "he");
+    assert!(spans[0].1.contains(&Attribute::Bold));
+    assert!(spans[0].1.contains(&Attribute::Sentiment(0.9)));
+    assert_eq!(spans[1].0, "llo");
+    assert_eq!(spans[1].1, vec![Attribute::Bold]);
+}
+
+/// Confirm helper methods for retrieving block IDs and content work.
+#[test]
+fn t107_workspace_block_helpers() {
+    let mut ws = OnyxWorkspace::new();
+    let note_id = "noteX".to_string();
+    let b1 = Block {
+        id: "b1".into(),
+        kind: BlockType::Paragraph,
+        content: "a".into(),
+        attributes: Vec::new(),
+        children: Vec::new(),
+    };
+    let b2 = Block {
+        id: "b2".into(),
+        kind: BlockType::Paragraph,
+        content: "b".into(),
+        attributes: Vec::new(),
+        children: Vec::new(),
+    };
+    ws.set_note_blocks(&note_id, &[b1.clone(), b2.clone()])
+        .unwrap();
+    let ids = ws.get_note_block_ids(&note_id).expect("should have blocks");
+    assert_eq!(ids, vec!["b1".to_string(), "b2".to_string()]);
+    assert_eq!(ws.get_block_content("b2"), Some("b".to_string()));
+    assert_eq!(ws.get_block_content("nope"), None);
+}
 
 /// Ensures that searching for a massive single token does not cause out-of-memory errors.
 #[test]
@@ -890,7 +1037,10 @@ fn t107_empty_workspace_serialization_bloat() {
 /// Verifies rapid mutex access doesn't panic.
 #[test]
 fn t109_rapid_sync_mutex_locking() {
-    use std::{sync::{Arc, Mutex}, thread};
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+    };
     let dir = TempDir::new().unwrap();
     let ws = Arc::new(Mutex::new(OnyxWorkspace::new()));
     let mut handles = vec![];
@@ -903,8 +1053,10 @@ fn t109_rapid_sync_mutex_locking() {
             let _ = w.create_void(None, &format!("Race {}", i));
         }));
     }
-    for h in handles { h.join().unwrap(); }
-    
+    for h in handles {
+        h.join().unwrap();
+    }
+
     let w = ws.lock().unwrap();
     persistence::save_workspace_to_dir(&w, dir.path()).unwrap();
     let loaded = persistence::load_workspace_from_dir(dir.path()).unwrap();
@@ -931,42 +1083,37 @@ fn t999_extreme_user_abuse() {
     let dir = TempDir::new().unwrap();
     let mut ws = OnyxWorkspace::new();
     let root = ws.create_void(None, "root").unwrap();
-    
+
     // Phase 1: Spam 10K notes (simulates user going ham)
     for i in 0..10_000 {
         ws.create_note(&root, &format!("note_{}", i)).unwrap();
     }
     assert!(ws.node_count() >= 10_001, "node count wrong after spam");
-    
+
     // Phase 2: 50 save/load cycles (simulates app restart x50)
     for _ in 0..50 {
         persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
         ws = persistence::load_workspace_from_dir(dir.path()).unwrap();
     }
     assert!(ws.node_count() >= 10_001, "data lost after 50 cycles");
-    
+
     // Phase 3: Rename first 100 nodes (simulates bulk edit)
     for (i, (node, _depth)) in ws.get_tree_nodes().into_iter().take(100).enumerate() {
-        ws.set_node_title(&node.id, &format!("renamed_{}", i)).unwrap();
+        ws.set_node_title(&node.id, &format!("renamed_{}", i))
+            .unwrap();
     }
-    
+
     // Phase 4: Search spam (1K queries)
     let search_dir = TempDir::new().unwrap();
-    let mut idx = onyx_core::search::SearchIndex::new_with_dir(
-        search_dir.path()
-    ).unwrap();
+    let mut idx = onyx_core::search::SearchIndex::new_with_dir(search_dir.path()).unwrap();
     for i in 0..100 {
-        idx.index_note(
-            &format!("id-{}", i), 
-            "root", 
-            &format!("note_{}", i), 
-            &[]
-        ).unwrap();
+        idx.index_note(&format!("id-{}", i), "root", &format!("note_{}", i), &[])
+            .unwrap();
     }
     for _ in 0..1_000 {
         let _ = idx.search("note", 10).unwrap();
     }
-    
+
     // Phase 5: Final save must succeed (no corruption)
     persistence::save_workspace_to_dir(&ws, dir.path()).unwrap();
     let final_ws = persistence::load_workspace_from_dir(dir.path()).unwrap();

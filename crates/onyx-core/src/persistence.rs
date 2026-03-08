@@ -1,4 +1,3 @@
-
 // ─── Onyx Core — Persistence (Atomic Save / Load / Autosave) ────────
 
 use std::fs::File;
@@ -215,7 +214,9 @@ mod tests {
 
         let nodes = loaded.get_tree_nodes();
         assert!(!nodes.is_empty());
-        assert_eq!(nodes[0].0.title, "Test Void");
+        // genesis void may appear first; look for our test void among titles.
+        let titles: Vec<_> = nodes.iter().map(|(n, _)| n.title.clone()).collect();
+        assert!(titles.iter().any(|t| t == "Test Void"));
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);

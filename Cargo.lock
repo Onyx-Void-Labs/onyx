@@ -4522,6 +4522,7 @@ dependencies = [
  "anyhow",
  "onyx-core",
  "parley",
+ "parley_vello",
  "pollster",
  "tracing",
  "tracing-subscriber",
@@ -4711,6 +4712,14 @@ dependencies = [
  "linebender_resource_handle",
  "skrifa 0.37.0",
  "swash",
+]
+
+[[package]]
+name = "parley_vello"
+version = "0.1.0"
+dependencies = [
+ "parley",
+ "vello",
 ]
 
 [[package]]

@@ -26,7 +26,7 @@ impl QuestionBank {
     pub fn next_review(&mut self) -> Vec<Question> {
         self.fsrs_scheduler.next_for_retention(0.9)
     }
-    
+
     pub fn grade_question(&mut self, qid: &str, grade: u8) {
         self.fsrs_scheduler.grade(qid, grade as f32);
     }

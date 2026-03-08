@@ -1,7 +1,7 @@
 // ─── Onyx Core — Math Engine (LaTeX → Vello Paths) ──────────────────
 
-use vello::kurbo::PathEl;
-use pulldown_latex::Storage; // used below in latex_to_mathml
+use pulldown_latex::Storage;
+use vello::kurbo::PathEl; // used below in latex_to_mathml
 
 /// Render a LaTeX string to a vector of Vello path elements.
 ///

@@ -4,6 +4,7 @@ use anyhow::Context;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use crate::editor_renderer::EditorRenderer;
 use onyx_core::blocks::Block;
 use onyx_core::document::OnyxWorkspace;
 use onyx_core::fsrs::{self, CardState, FlashcardData, Scheduler};
@@ -17,7 +18,7 @@ use vello::util::{RenderContext, RenderSurface};
 use vello::{Renderer, RendererOptions, Scene};
 
 // ensure we use the same wgpu version that Vello depends on; alias it
-use vello::wgpu as wgpu;
+use vello::wgpu;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -91,6 +92,7 @@ pub struct OnyxApp {
     font_cx: FontContext,
     layout_cx: LayoutContext<Brush>,
     pub workspace: OnyxWorkspace,
+    pub editor: EditorRenderer,
     cursor_pos: (f64, f64),
     void_counter: u32,
     note_counter: u32,
@@ -158,6 +160,12 @@ impl OnyxApp {
             .collection
             .register_fonts(font_data.to_vec().into(), None);
 
+        let mut workspace = OnyxWorkspace::new();
+        let all_notes = workspace.all_note_ids();
+        tracing::info!("[DEBUG] all_note_ids: {:?}", all_notes);
+        let initial_note_id = all_notes.first().cloned();
+        tracing::info!("[DEBUG] initial_note_id: {:?}", initial_note_id);
+
         Ok(Self {
             render_cx: RenderContext::new(),
             renderer: None,
@@ -166,13 +174,14 @@ impl OnyxApp {
             scene: Scene::new(),
             font_cx,
             layout_cx: LayoutContext::new(),
-            workspace: OnyxWorkspace::new(),
+            workspace,
             cursor_pos: (0.0, 0.0),
             void_counter: 0,
             note_counter: 0,
-            selected_node_id: None,
+            selected_node_id: initial_note_id,
             node_rects: Vec::new(),
             add_prop_btn_rect: None,
+            editor: EditorRenderer::new(),
             prop_value_rects: Vec::new(),
             editing_field: None,
             input_buffer: String::new(),
@@ -307,42 +316,41 @@ impl OnyxApp {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = device
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render"),
-            });
+        // 1% OVERKILL: Purge previous frame geometry to prevent pipeline accumulation jitter and memory leaks.
+        self.scene.reset();
 
-        {
-            let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 9.0 / 255.0,
-                            g: 9.0 / 255.0,
-                            b: 11.0 / 255.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+        // Rebuild the CRDT/UI layout mapping into the pristine scene
+        if let Some(note_id) = &self.selected_node_id {
+            self.editor
+                .build_scene(&mut self.scene, &self.workspace, note_id);
         }
 
-        device.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        // BREACH RESOLUTION: Hand over rendering fully to the Vello pipeline.
+        // This replaces the manual WGPU clear-pass that was blanking the screen.
+        if let Some(renderer) = self.renderer.as_mut() {
+            // create a texture view from the surface's current texture
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
 
+            renderer
+                .render_to_texture(
+                    &device.device,
+                    &device.queue,
+                    &self.scene,
+                    &view,
+                    &vello::RenderParams {
+                        base_color: vello::peniko::Color::from_rgba8(9, 9, 11, 255), // Matrix Void Gray
+                        width: surface.config.width,
+                        height: surface.config.height,
+                        antialiasing_method: vello::AaConfig::Area,
+                    },
+                )
+                .expect("CRITICAL: Failed to rasterize Vello scene to WGPU surface");
+        }
+
+        output.present();
         self.scene_dirty = false;
     }
 
@@ -451,8 +459,16 @@ impl ApplicationHandler for OnyxApp {
             } => {
                 self.scene_dirty = true;
                 self.handle_click();
+                // inform editor of clicks for cursor movement
+                let (x, y) = self.cursor_pos;
+                self.editor.on_mouse_click(x, y);
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // notify editor regardless of editing state
+                if event.state == ElementState::Pressed {
+                    let key_str = format!("{:?}", event.logical_key);
+                    self.editor.on_key_down(&key_str);
+                }
                 if self.editing_field.is_some() && event.state == ElementState::Pressed {
                     self.scene_dirty = true;
                     match &event.logical_key {

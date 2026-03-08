@@ -28,3 +28,6 @@ tracing-subscriber = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+# Text layout adapter
+parley_vello = { path = "../parley_vello" }

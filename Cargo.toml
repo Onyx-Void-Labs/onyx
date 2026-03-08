@@ -8,6 +8,7 @@ resolver = "2"
 members = [
     "crates/onyx-core",
     "crates/onyx-app",
+    "crates/parley_vello",
 ]
 
 [workspace.package]

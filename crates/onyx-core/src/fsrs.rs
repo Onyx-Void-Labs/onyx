@@ -1,11 +1,11 @@
 use chrono::{DateTime, Utc};
+use fsrs::{ItemState, MemoryState, FSRS};
 use serde::{Deserialize, Serialize};
-use fsrs::{FSRS, MemoryState, ItemState};
 
 pub const DESIRED_RETENTION: f64 = 0.9;
 
 /// Your CardState wrapper.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CardState {
     pub stability: f64,
@@ -16,7 +16,7 @@ pub struct CardState {
 }
 
 /// Flashcard data.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FlashcardData {
     pub front: String,

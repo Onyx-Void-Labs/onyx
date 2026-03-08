@@ -1,6 +1,7 @@
 // --- Onyx Void — Application Entry Point (Vello + Winit) ---
 
 mod app;
+mod editor_renderer;
 mod renderer;
 mod widgets;
 

@@ -48,13 +48,46 @@ pub enum BlockType {
 }
 
 /// A single content block. Notes are composed of a list of Blocks.
+///
+/// Content text is stored separately from styling/metadata via an
+/// array of `AttributeSpan` entries.  This allows multiple overlapping
+/// attributes (bold + sentiment + timestamp etc.) to coexist without
+/// corrupting the character buffer and enables fine‑grained CRDT
+/// convergence on each attribute independently.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Block {
-    pub id: String,            // UUID
-    pub kind: BlockType,       // What type of block
-    pub content: String,       // The text inside
+    pub id: String,      // UUID
+    pub kind: BlockType, // What type of block
+    /// Raw Unicode string.  Attributes refer to byte indices within this
+    /// string (start inclusive, end exclusive).
+    pub content: String,
+    pub attributes: Vec<AttributeSpan>,
     pub children: Vec<String>, // IDs of nested blocks (indentation)
+}
+
+/// A span of characters carrying a non‑visual attribute.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttributeSpan {
+    pub start: usize,
+    pub end: usize,
+    pub attr: Attribute,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum Attribute {
+    // Standard visual styling
+    Bold,
+    Italic,
+    Color([f32; 4]),
+    Highlight([f32; 4]),
+
+    // ONYX advantages
+    Sentiment(f32),                             // AI‑inferred emotion score
+    ClozeGap { card_id: String, hidden: bool }, // FSRS-aware cloze
+    VoiceSync { timestamp_ms: u64 },            // Whisper.cpp transcription sync
+    LaTeX { expression: String },               // mathematical derivation
 }
 
 impl Block {
@@ -64,6 +97,7 @@ impl Block {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Paragraph,
             content: String::new(),
+            attributes: Vec::new(),
             children: Vec::new(),
         }
     }
@@ -74,6 +108,7 @@ impl Block {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Heading(level),
             content: text.to_string(),
+            attributes: Vec::new(),
             children: Vec::new(),
         }
     }
