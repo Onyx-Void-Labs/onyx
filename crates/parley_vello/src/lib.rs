@@ -19,26 +19,31 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                 };
 
                 let brush = &glyph_run.style().brush;
-                let run_x = glyph_run.offset();
                 let run_y = glyph_run.baseline();
+
+                // 1% OVERKILL: We must manually advance the pen across the screen!
+                // Parley's `g.x` is merely the kerning/bearing adjustment.
+                let mut cursor_x = glyph_run.offset();
+                let mut vello_glyphs = Vec::with_capacity(glyph_run.glyphs().count());
+
+                for g in glyph_run.glyphs() {
+                    vello_glyphs.push(vello::Glyph {
+                        id: g.id as u32,
+                        x: cursor_x + g.x, // Apply minor font bearing adjustments
+                        y: run_y - g.y,
+                    });
+                    // MARCH THE PEN FORWARD BY THE GLYPH'S ADVANCE WIDTH!
+                    cursor_x += g.advance; 
+                }
 
                 scene
                     .draw_glyphs(font)
                     .font_size(font_size)
                     .transform(xform)
-                    // BREACH RESOLUTION: Pass variable font axes so glyph paths don't collapse
                     .normalized_coords(run.normalized_coords())
                     .hint(true)
                     .brush(brush)
-                    .draw(
-                        Fill::NonZero,
-                        glyph_run.glyphs().map(|g| vello::Glyph {
-                            id: g.id as u32,
-                            x: run_x + g.x,
-                            // BREACH RESOLUTION: Invert Parley's Y-Up baseline offset to Vello's Y-Down coordinates
-                            y: run_y - g.y,
-                        }),
-                    );
+                    .draw(Fill::NonZero, vello_glyphs.into_iter());
             }
         }
     }
