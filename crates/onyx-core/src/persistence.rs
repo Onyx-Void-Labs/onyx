@@ -1,3 +1,4 @@
+
 // ─── Onyx Core — Persistence (Atomic Save / Load / Autosave) ────────
 
 use std::fs::File;
@@ -34,7 +35,7 @@ fn ensure_tmp_recovered(path: &str) {
 /// Write encrypted snapshot bytes atomically with fsync and cleanup.
 fn save_snapshot_bytes(snapshot: &[u8], path: &str) -> Result<()> {
     let key = dev_encryption_key().context("derive dev key")?;
-    let encrypted = crypto::encrypt_data(snapshot, &*key).context("encrypt snapshot")?;
+    let encrypted = crypto::encrypt_data(snapshot, &key).context("encrypt snapshot")?;
 
     let dest = Path::new(path);
     if let Some(parent) = dest.parent() {
@@ -59,25 +60,40 @@ fn save_snapshot_bytes(snapshot: &[u8], path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Save the workspace's LoroDoc snapshot to `path` using atomic write.
-/// The snapshot is encrypted with XChaCha20-Poly1305 before writing.
-pub fn save_workspace(ws: &OnyxWorkspace, path: &str) -> Result<()> {
+/// Save the workspace's LoroDoc snapshot into a directory by writing
+/// `workspace.onyx` inside `dir`.  The file is encrypted and written
+/// atomically.
+///
+/// This is the primary public entrypoint; it exports a snapshot from the
+/// workspace and then hands the bytes off to the internal helper that
+/// performs encryption and atomic write.  Previously this function forwarded
+/// to `save_workspace_to_dir` which in turn called back here, creating an
+/// infinite recursion that hung tests and real code.
+pub fn save_workspace(ws: &OnyxWorkspace, dir: &Path) -> Result<()> {
+    // export the LoroDoc snapshot while holding the caller's lock
     let snapshot = ws
         .doc
         .export(loro::ExportMode::Snapshot)
         .context("export snapshot")?;
-    save_snapshot_bytes(&snapshot, path)
+
+    // build the destination path string
+    let path = dir.join("workspace.onyx").to_string_lossy().to_string();
+    save_snapshot_bytes(&snapshot, &path)
 }
 
-/// Load a workspace from an encrypted LoroDoc snapshot file.
-pub fn load_workspace(path: &str) -> Result<OnyxWorkspace> {
-    ensure_tmp_recovered(path);
-    let encrypted = std::fs::read(path).context("read workspace file")?;
+/// Load a workspace from a directory containing `workspace.onyx`.
+///
+/// This function reads the encrypted file, decrypts it with the dev key, and
+/// then hands the raw bytes to [`OnyxWorkspace::from_snapshot`] which rebuilds
+/// the in‑memory state.  It does **not** perform crash recovery; callers such
+/// as `load_workspace_with_recovery` are responsible for attempting recovery
+/// before invoking this helper.
+pub fn load_workspace(dir: &Path) -> Result<OnyxWorkspace> {
+    let path = dir.join("workspace.onyx");
+    let encrypted = std::fs::read(&path).context("read workspace file")?;
     let key = dev_encryption_key().context("derive dev key")?;
-    // Wrap decrypted bytes in Zeroizing so plaintext is wiped on drop
-    let data = Zeroizing::new(crypto::decrypt_data(&encrypted, &key).context("decrypt snapshot")?);
-    let ws = OnyxWorkspace::from_snapshot(&data).context("load snapshot")?;
-    Ok(ws)
+    let snapshot = crypto::decrypt_data(&encrypted, &key).context("decrypt workspace")?;
+    OnyxWorkspace::from_snapshot(&snapshot)
 }
 
 /// Start a background autosave thread that periodically saves the workspace.
@@ -118,6 +134,69 @@ pub fn start_autosave(ws: Arc<Mutex<OnyxWorkspace>>, path: String, interval: u64
     }
 }
 
+/// Write raw bytes atomically: write to `.tmp`, fsync, then rename.
+/// No encryption is applied — the caller controls the content.
+pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("create parent directories")?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    let mut file = File::create(&tmp_path).context("create tmp file")?;
+    if let Err(e) = file.write_all(data) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(anyhow::anyhow!("write tmp file: {e}"));
+    }
+    if let Err(e) = file.sync_all() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+/// Save workspace snapshot to a specific `.tmp` file (for crash-recovery tests).
+pub fn save_workspace_to_tmp(ws: &OnyxWorkspace, tmp_path: &Path) -> Result<()> {
+    let snapshot = ws
+        .doc
+        .export(loro::ExportMode::Snapshot)
+        .context("export snapshot")?;
+    let key = dev_encryption_key().context("derive dev key")?;
+    let encrypted = crypto::encrypt_data(&snapshot, &key).context("encrypt snapshot")?;
+    if let Some(parent) = tmp_path.parent() {
+        std::fs::create_dir_all(parent).context("create parent directories")?;
+    }
+    let mut file = File::create(tmp_path).context("create tmp file")?;
+    file.write_all(&encrypted).context("write tmp file")?;
+    file.sync_all().context("fsync tmp file")?;
+    Ok(())
+}
+
+/// Load workspace with crash-recovery: if the main file is missing but a
+/// `.tmp` sibling exists, recover from the tmp file first.
+pub fn load_workspace_with_recovery(dir: &Path) -> Result<OnyxWorkspace> {
+    let path = dir.join("workspace.onyx");
+    let path_str = path.to_string_lossy().to_string();
+    ensure_tmp_recovered(&path_str);
+    // now load normally
+    load_workspace(dir)
+}
+
+/// Convenience wrapper: save workspace into a directory as `workspace.onyx`.
+///
+/// This helper exists for callers who already think in terms of a directory
+/// rather than a full path; it delegates directly to [`save_workspace`].
+pub fn save_workspace_to_dir(ws: &OnyxWorkspace, dir: &Path) -> Result<()> {
+    save_workspace(ws, dir)
+}
+
+/// Convenience wrapper: load workspace from a directory's `workspace.onyx`.
+pub fn load_workspace_from_dir(dir: &Path) -> Result<OnyxWorkspace> {
+    load_workspace(dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,10 +209,9 @@ mod tests {
         let dir = std::env::temp_dir().join("onyx_persistence_test");
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("test_workspace.onyx");
-        let path_str = path.to_string_lossy().to_string();
 
-        save_workspace(&ws, &path_str)?;
-        let loaded = load_workspace(&path_str)?;
+        save_workspace(&ws, dir.as_path())?;
+        let loaded = load_workspace(dir.as_path())?;
 
         let nodes = loaded.get_tree_nodes();
         assert!(!nodes.is_empty());

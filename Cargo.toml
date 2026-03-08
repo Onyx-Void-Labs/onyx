@@ -22,22 +22,23 @@ rust-version = "1.75"
 [workspace.dependencies]
 # Internal crates
 onyx-core = { path = "crates/onyx-core" }
+fsrs = "0.4.0"  # FSRS-6 ← NEW
 
 # security helpers
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 
 # ── Visual Engine (Vello Stack) ──
 winit    = "0.30"
-wgpu     = "27"
+wgpu     = "28"   # upgraded for rendering improvements
 vello    = "0.7"
 parley   = "0.4"
 pollster = "0.4"
 
 # ── CRDT ──
-loro = "1"
+loro = "1.1"      # bugfix release
 
 # ── Identity / Time ──
-uuid   = { version = "1", features = ["v4"] }
+uuid   = { version = "2.0", features = ["v4", "fast"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # ── Observability ──
@@ -52,7 +53,7 @@ serde_json = "1"
 anyhow = "1"
 
 # ── Phase 2 Infrastructure ──
-tantivy = "0.22"
+tantivy = "0.23"   # search perf bump
 sha2    = "0.10"
 walkdir = "2"
 base64  = "0.21"
@@ -66,17 +67,21 @@ argon2           = "0.5"
 chacha20poly1305 = "0.10"
 rand             = "0.8"
 dirs             = "5"
+subtle           = "2.5"
 
 # ── Phase 4 Six-Fold Foundation ──
 pulldown-latex = "0.1"
 roxmltree      = "0.20"
 
 # ── AI / ML (Candle) ──
-candle-core         = "0.9"
-candle-nn           = "0.9"
-candle-transformers = "0.9"
+candle-core         = "0.10"
+candle-nn           = "0.10"
+candle-transformers = "0.10"
 tokenizers          = "0.15"
 hf-hub              = "0.5"
+
+tree-sitter = "0.21"  # Code parsing
+pyodide    = "0.6"    # Python REPL integration
 
 # ─── Build profiles ──────────────────────────────────────────────
 
@@ -93,3 +98,7 @@ opt-level = 1          # Faster Makepad shader compilation in debug
 
 [profile.dev.package."*"]
 opt-level = 2          # Optimize deps even in debug for smooth 144Hz
+
+[workspace.dev-dependencies]
+rand = "0.8"  # used by stress test t999
+

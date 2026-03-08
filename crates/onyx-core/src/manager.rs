@@ -46,6 +46,12 @@ fn dirs_home() -> PathBuf {
     PathBuf::from(home).join(".onyx")
 }
 
+impl Default for WorkspaceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorkspaceManager {
     /// Load the workspace index from `~/.onyx/workspaces.json`, or start empty.
     pub fn new() -> Self {
@@ -58,17 +64,16 @@ impl WorkspaceManager {
     }
 
     /// Create a new workspace file and register it in the index.
-    pub fn create_workspace(&mut self, name: &str, path: &PathBuf) -> Result<Uuid> {
+    pub fn create_workspace(&mut self, name: &str, path: &std::path::Path) -> Result<Uuid> {
         let ws = OnyxWorkspace::new();
-        let path_str = path.to_string_lossy().to_string();
-        persistence::save_workspace(&ws, &path_str).context("save new workspace")?;
+        persistence::save_workspace(&ws, path).context("save new workspace")?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
         let meta = WorkspaceMeta {
             id,
             name: name.to_string(),
-            path: path.clone(),
+            path: path.to_path_buf(),
             created_at: now,
             last_opened: now,
         };
@@ -85,15 +90,18 @@ impl WorkspaceManager {
 
     /// Open (activate) a workspace by ID and return the loaded workspace.
     pub fn open_workspace(&mut self, id: Uuid) -> Result<OnyxWorkspace> {
-        let meta = self
-            .workspaces
-            .get_mut(&id)
-            .context("workspace not found")?;
-        meta.last_opened = Utc::now();
-        self.active_id = Some(id);
-        let path_str = meta.path.to_string_lossy().to_string();
+        // scope the mutable borrow so we can call save_index later
+        let path_buf = {
+            let meta = self
+                .workspaces
+                .get_mut(&id)
+                .context("workspace not found")?;
+            meta.last_opened = Utc::now();
+            self.active_id = Some(id);
+            meta.path.clone()
+        };
         self.save_index();
-        persistence::load_workspace(&path_str)
+        persistence::load_workspace(&path_buf)
     }
 
     /// Remove a workspace from the index (does not delete the file).
@@ -109,7 +117,8 @@ impl WorkspaceManager {
         let path = index_path();
         if let Ok(encrypted) = std::fs::read(&path) {
             if let Ok(key) = index_encryption_key() {
-                if let Ok(decrypted) = crate::crypto::decrypt_data(&encrypted, &*key) {
+                if let Ok(decrypted) = crate::crypto::decrypt_data(&encrypted, &key) {
+                    let decrypted = Zeroizing::new(decrypted);
                     if let Ok(map) =
                         serde_json::from_slice::<HashMap<Uuid, WorkspaceMeta>>(&decrypted)
                     {
@@ -127,7 +136,7 @@ impl WorkspaceManager {
         }
         if let Ok(json) = serde_json::to_string_pretty(&self.workspaces) {
             if let Ok(key) = index_encryption_key() {
-                if let Ok(encrypted) = crate::crypto::encrypt_data(json.as_bytes(), &*key) {
+                if let Ok(encrypted) = crate::crypto::encrypt_data(json.as_bytes(), &key) {
                     // Atomic write: tmp → fsync → rename
                     let tmp_path = path.with_extension("tmp");
                     let write_ok = (|| -> anyhow::Result<()> {
@@ -140,7 +149,7 @@ impl WorkspaceManager {
                         let _ = std::fs::remove_file(&tmp_path);
                         return;
                     }
-                    if let Err(_) = std::fs::rename(&tmp_path, &path) {
+                    if std::fs::rename(&tmp_path, &path).is_err() {
                         let _ = std::fs::remove_file(&tmp_path);
                     }
                 }

@@ -161,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)]
     fn youtube_meta_has_thumbnail() {
         if let Some(meta) = parse_embed_meta("https://youtu.be/dQw4w9WgXcQ") {
             assert_eq!(meta.provider, "youtube");

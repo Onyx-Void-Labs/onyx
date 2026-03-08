@@ -43,6 +43,9 @@ impl SemanticEngine {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("tokenizer load error: {e}"))?;
 
+        // SAFETY: from_mmaped_safetensors requires unsafe for mmap. The file
+        // comes from hf-hub's verified download path.
+        #[allow(unsafe_code)]
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, &device)?
         };

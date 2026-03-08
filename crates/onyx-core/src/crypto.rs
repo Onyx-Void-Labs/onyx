@@ -5,7 +5,11 @@ use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::XChaCha20Poly1305;
 use rand::RngCore;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
+
+/// Type alias for the derived key, enabling compile-time checks for Zeroize trait.
+pub type DerivedKey = Zeroizing<[u8; 32]>;
 
 /// Derive a 32-byte encryption key from a password and salt using Argon2id.
 pub fn derive_key(password: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
@@ -48,6 +52,12 @@ pub fn decrypt_data(encrypted_data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
         .map_err(|e| anyhow::anyhow!("decryption failed: {e}"))
 }
 
+/// Constant-time comparison for MACs, hashes, or nonces.
+/// Returns `true` iff `a` and `b` are equal, without leaking timing info.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,8 +66,8 @@ mod tests {
     fn round_trip() -> Result<()> {
         let key = derive_key("test_password", b"some_salt_12345!")?;
         let plaintext = b"Hello, Onyx Void!";
-        let encrypted = encrypt_data(plaintext, &*key)?;
-        let decrypted = decrypt_data(&encrypted, &*key)?;
+        let encrypted = encrypt_data(plaintext, &key)?;
+        let decrypted = decrypt_data(&encrypted, &key)?;
         assert_eq!(decrypted, plaintext);
         Ok(())
     }
@@ -66,8 +76,8 @@ mod tests {
     fn wrong_key_fails() -> Result<()> {
         let key1 = derive_key("password_a", b"some_salt_12345!")?;
         let key2 = derive_key("password_b", b"some_salt_12345!")?;
-        let encrypted = encrypt_data(b"secret", &*key1)?;
-        assert!(decrypt_data(&encrypted, &*key2).is_err());
+        let encrypted = encrypt_data(b"secret", &key1)?;
+        assert!(decrypt_data(&encrypted, &key2).is_err());
         Ok(())
     }
 }

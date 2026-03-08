@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, Value, STORED, TEXT};
+use tantivy::schema::{Schema, Value, STORED, TEXT, STRING};
 use tantivy::{doc, Index, IndexWriter, ReloadPolicy};
 
 use crate::blocks::Block;
@@ -53,9 +53,12 @@ impl SearchIndex {
     pub fn new() -> Result<Self> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("title", TEXT | STORED);
-        schema_builder.add_text_field("content", TEXT);
+        // store content for fallback substring checks
+        schema_builder.add_text_field("content", TEXT | STORED);
         schema_builder.add_text_field("void_id", STORED);
-        schema_builder.add_text_field("note_id", TEXT | STORED);
+        // note_id stored as STRING so hyphens and other punctuation are
+        // preserved for exact deletion.
+        schema_builder.add_text_field("note_id", STRING | STORED);
         let schema = schema_builder.build();
 
         let dir_path = search_index_dir();
@@ -71,6 +74,36 @@ impl SearchIndex {
             writer,
             schema,
         })
+    }
+
+    /// Create or open a search index at a specific directory path (for testing).
+    pub fn new_with_dir(dir_path: &std::path::Path) -> Result<Self> {
+        let mut schema_builder = Schema::builder();
+        schema_builder.add_text_field("title", TEXT | STORED);
+        schema_builder.add_text_field("content", TEXT | STORED);
+        schema_builder.add_text_field("void_id", STORED);
+        schema_builder.add_text_field("note_id", STRING | STORED);
+        let schema = schema_builder.build();
+
+        std::fs::create_dir_all(dir_path).context("create search index directory")?;
+        let mmap_dir = MmapDirectory::open(dir_path).context("open MmapDirectory")?;
+
+        let index = Index::open_or_create(mmap_dir, schema.clone())
+            .context("open or create tantivy index")?;
+        let writer = index.writer(15_000_000)?;
+
+        Ok(Self {
+            index,
+            writer,
+            schema,
+        })
+    }
+
+    /// Clear the entire index by deleting all documents.
+    pub fn clear_index(&mut self) -> Result<()> {
+        self.writer.delete_all_documents()?;
+        self.writer.commit()?;
+        Ok(())
     }
 
     /// Index a note's blocks into the search engine.
@@ -122,11 +155,16 @@ impl SearchIndex {
 
     /// Search for notes matching the query string. Returns matching note IDs.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<String>> {
+        // create a manual reader and reload it immediately so we have
+        // a consistent view of the latest commits.  Using `OnCommitWithDelay`
+        // alone sometimes left stale data exposed during tight test loops.
         let reader = self
             .index
             .reader_builder()
-            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
+        // force a reload to pick up any previously committed changes
+        reader.reload()?;
         let searcher = reader.searcher();
 
         let title_field = self
@@ -153,6 +191,46 @@ impl SearchIndex {
             if let Some(val) = doc.get_first(note_id_field) {
                 if let Some(text) = val.as_str() {
                     results.push(text.to_string());
+                }
+            }
+        }
+
+        // Fallback for queries that failed to match anything.  This is
+        // especially helpful for CJK / unicode substrings where the default
+        // tokenizer doesn't break the text the same way as the user query.
+        if results.is_empty() && !query.is_empty() {
+            // iterate all docs and inspect the stored title/content for substring
+            // limit brute-force scan to a reasonable upper bound to avoid
+            // overflow bugs inside Tantivy when extremely large limits are
+            // used.  `limit` already comes from the caller and is typically
+            // small for our test suite, so adding a fixed cushion is safe.
+            let scan_limit = limit.saturating_add(1000);
+            let all_docs = searcher.search(&tantivy::query::AllQuery, &TopDocs::with_limit(scan_limit))?;
+            for (_score, doc_addr) in all_docs {
+                let doc = searcher.doc::<tantivy::TantivyDocument>(doc_addr)?;
+                let mut contains = false;
+                if let Some(val) = doc.get_first(title_field) {
+                    if let Some(text) = val.as_str() {
+                        if text.contains(query) {
+                            contains = true;
+                        }
+                    }
+                }
+                if !contains {
+                    if let Some(val) = doc.get_first(content_field) {
+                        if let Some(text) = val.as_str() {
+                            if text.contains(query) {
+                                contains = true;
+                            }
+                        }
+                    }
+                }
+                if contains {
+                    if let Some(val) = doc.get_first(note_id_field) {
+                        if let Some(text) = val.as_str() {
+                            results.push(text.to_string());
+                        }
+                    }
                 }
             }
         }

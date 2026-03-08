@@ -13,6 +13,12 @@ pub struct HistoryStack {
     redo_stack: Vec<Vec<u8>>,
 }
 
+impl Default for HistoryStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistoryStack {
     pub fn new() -> Self {
         Self {
@@ -91,6 +97,7 @@ impl HistoryStack {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
     use super::*;
     use loro::LoroValue;
@@ -118,10 +125,8 @@ mod tests {
             let restored_map = restored.get_map("test");
             let val = restored_map.get_deep_value();
             if let LoroValue::Map(obj) = val {
-                if let Some(v) = obj.get("key") {
-                    if let LoroValue::String(s) = v {
-                        assert_eq!(s.as_str(), "value1");
-                    }
+                if let Some(LoroValue::String(s)) = obj.get("key") {
+                    assert_eq!(s.as_str(), "value1");
                 }
             }
         } else {

@@ -14,7 +14,7 @@ use parley::{FontContext, LayoutContext};
 use vello::kurbo::{Affine, Point, Rect};
 use vello::peniko::{Brush, Color, Fill};
 use vello::util::{RenderContext, RenderSurface};
-use vello::{AaConfig, Renderer, RendererOptions, Scene};
+use vello::{Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -209,7 +209,7 @@ impl OnyxApp {
                 let card_id = uuid::Uuid::new_v4().to_string();
                 let flashcard = FlashcardData {
                     front: format!("What is {}?", title),
-                    back: format!("A note in Onyx Void."),
+                    back: "A note in Onyx Void.".to_string(),
                     note_id: note_id.clone(),
                     state: scheduled_state,
                 };

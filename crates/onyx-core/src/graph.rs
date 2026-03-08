@@ -14,6 +14,12 @@ pub struct BacklinkIndex {
     reverse: HashMap<String, HashSet<String>>,
 }
 
+impl Default for BacklinkIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BacklinkIndex {
     pub fn new() -> Self {
         Self {

@@ -1,15 +1,144 @@
 impl OnyxWorkspace {
-    /// Delete a node from the tree and remove from search index.
+    /// Atomic snapshot export helper (used by persistence).
+    pub fn export_snapshot(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.doc.export(loro::ExportMode::Snapshot)?)
+    }
+
+    /// Delete a node from the tree, remove from search index, and clean up
+    /// internal maps immediately so that `node_exists` returns false.
     pub fn delete_node(&mut self, node_id: &str) -> anyhow::Result<()> {
-        // Remove from tree (actual logic may mark as deleted/collapsed)
         if let Some(tree_id) = self.id_map.get(node_id) {
             self.tree.delete(*tree_id)?;
         }
-        // Remove from search index to prevent drift
+        // Remove from maps first so callers observe the deletion
+        self.id_map.remove(node_id);
+        self.parent_map.remove(node_id);
         if let Some(idx) = self.search_index.as_mut() {
             idx.remove_note(node_id)?;
         }
+        self.maybe_commit();
         Ok(())
+    }
+
+    /// Return true if a node with the given ID is present in the workspace.
+    pub fn node_exists(&self, id: &str) -> bool {
+        self.id_map.contains_key(id)
+    }
+
+    /// Total number of nodes currently tracked by the workspace.
+    pub fn node_count(&self) -> usize {
+        self.id_map.len()
+    }
+
+    /// Return true if a layout row ID exists.
+    pub fn row_exists(&self, id: &str) -> bool {
+        self.layout_id_map.contains_key(id)
+    }
+
+    /// Check whether `slot_id` is currently a direct child of `row_id`.
+    pub fn row_contains_slot(&self, row_id: &str, slot_id: &str) -> bool {
+        self.layout_parent_map.get(slot_id).map(|p| p == row_id).unwrap_or(false)
+    }
+
+    /// Expand a previously-collapsed layout row.
+    pub fn expand_row(&mut self, row_id: &str) -> anyhow::Result<()> {
+        let tid = *self.layout_id_map.get(row_id).context("row not found")?;
+        let meta = self.layout_tree.get_meta(tid).context("get meta")?;
+        meta.insert("collapsed", "false").context("set collapsed")?;
+        self.maybe_commit();
+        Ok(())
+    }
+
+    /// Change the title of any node.
+    pub fn set_node_title(&mut self, id: &str, title: &str) -> anyhow::Result<()> {
+        let &tree_id = self.id_map.get(id).context("node not found")?;
+        let meta = self.tree.get_meta(tree_id).context("get meta")?;
+        meta.insert("title", title).context("set title")?;
+        self.maybe_commit();
+        Ok(())
+    }
+
+    /// Move a node to a new parent (or root if `None`), rejecting cyclic
+    /// reparenting attempts.
+    pub fn move_node(&mut self, node_id: &str, new_parent: Option<&str>) -> anyhow::Result<()> {
+        let &node_tid = self.id_map.get(node_id).context("node not found")?;
+
+        if let Some(pid) = new_parent {
+            let &parent_tid = self.id_map.get(pid).context("parent not found")?;
+
+            // Cycle check: walk upward from the new parent.  We avoid
+            // the `TreeParentId` mismatch by converting to string and
+            // consulting `id_map` for the corresponding `TreeID`.
+            let node_str = node_tid.to_string();
+            let mut curr_tid_opt = Some(parent_tid);
+            while let Some(curr_tid) = curr_tid_opt {
+                if curr_tid.to_string() == node_str {
+                    anyhow::bail!("cyclic reparenting rejected");
+                }
+                curr_tid_opt = if let Some(parent_parent) = self.tree.parent(curr_tid) {
+                    parent_parent.tree_id()
+                } else {
+                    None
+                };
+            }
+            self.tree.mov(node_tid, parent_tid)?;
+        } else {
+            self.tree.mov(node_tid, None)?;
+        }
+        self.maybe_commit();
+        Ok(())
+    }
+
+    /// Rebuild all of the internal ID->TreeID maps from the LoroDoc state.
+    /// Used after importing snapshots or other operations that bypass the
+    /// normal mutators.
+    pub fn rebuild_id_map(&mut self) {
+        self.id_map.clear();
+        self.parent_map.clear();
+        self.layout_id_map.clear();
+        self.layout_parent_map.clear();
+
+        // 1. Nodes
+        let mut stack = Vec::new();
+        for root in self.tree.roots() { stack.push((root, None::<String>)); }
+
+        while let Some((id, parent_void)) = stack.pop() {
+            let id_str = id.to_string();
+            self.id_map.insert(id_str.clone(), id);
+
+            let mut is_void = false;
+            if let Ok(meta) = self.tree.get_meta(id) {
+                 if let Some(ValueOrContainer::Value(v)) = meta.get("node_type") {
+                     if let Some(s) = v.as_string() {
+                         if s.as_str() == "void" { is_void = true; }
+                     }
+                 }
+            }
+
+            if !is_void {
+                if let Some(ref p) = parent_void {
+                    self.parent_map.insert(id_str.clone(), p.clone());
+                }
+            }
+            let next_ctx = if is_void { Some(id_str) } else { parent_void };
+            if let Some(children) = self.tree.children(id) {
+                for child in children { stack.push((child, next_ctx.clone())); }
+            }
+        }
+
+        // 2. Layout
+        let mut stack = Vec::new();
+        for root in self.layout_tree.roots() { stack.push((root, None::<String>)); }
+        while let Some((id, parent_id)) = stack.pop() {
+            let id_str = id.to_string();
+            self.layout_id_map.insert(id_str.clone(), id);
+            if let Some(ref p) = parent_id {
+                self.layout_parent_map.insert(id_str.clone(), p.clone());
+            }
+            if let Some(children) = self.layout_tree.children(id) {
+                for child in children { stack.push((child, Some(id_str.clone()))); }
+            }
+        }
     }
 }
 // ─── Onyx Core — Workspace Document (LoroTree + LoroMap) ───────────
@@ -55,6 +184,12 @@ pub struct OnyxWorkspace {
     layout_parent_map: HashMap<String, String>,
     /// When true, `doc.commit()` is deferred until `end_transaction()`.
     batching: bool,
+}
+
+impl Default for OnyxWorkspace {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OnyxWorkspace {
@@ -111,7 +246,7 @@ impl OnyxWorkspace {
     /// Restore a workspace from a LoroDoc snapshot (exported bytes).
     pub fn from_snapshot(data: &[u8]) -> anyhow::Result<Self> {
         let doc = LoroDoc::new();
-        doc.import(&data)?;
+        doc.import(data)?;
         let tree = doc.get_tree("nodes");
         let layout_tree = doc.get_tree("layout");
         let properties = doc.get_map("properties");
@@ -771,12 +906,12 @@ impl OnyxWorkspace {
     // ── Convenience wrappers for other core modules ──────────────
 
     /// Save this workspace to disk (encrypted) using the persistence layer.
-    pub fn save_to_path(&self, path: &str) -> anyhow::Result<()> {
+    pub fn save_to_path(&self, path: &std::path::Path) -> anyhow::Result<()> {
         crate::persistence::save_workspace(self, path)
     }
 
     /// Load a workspace from disk (encrypted).
-    pub fn load_from_path(path: &str) -> anyhow::Result<Self> {
+    pub fn load_from_path(path: &std::path::Path) -> anyhow::Result<Self> {
         crate::persistence::load_workspace(path)
     }
 

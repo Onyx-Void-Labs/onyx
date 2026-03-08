@@ -3,33 +3,19 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// external spaced repetition scheduler
+use fsrs;
+
 // ── FSRS Constants ──────────────────────────────────────────────────
 
-const DECAY: f64 = -0.5;
+pub const DECAY: f64 = -0.5;
 /// FSRS-5 spec: FACTOR = 19/81 ensures R(t=S) = 0.9 exactly.
 /// Derivation: solve (1 + FACTOR)^DECAY = 0.9 → FACTOR = 0.9^(1/DECAY) - 1 = 19/81
-const FACTOR: f64 = 19.0 / 81.0;
+pub const FACTOR: f64 = 19.0 / 81.0;
 
-/// Default FSRS-4.5 parameters (w0..w16).
-const W: [f64; 17] = [
-    0.4,  // w0:  initial stability for Again
-    0.6,  // w1:  initial stability for Hard
-    2.4,  // w2:  initial stability for Good
-    5.8,  // w3:  initial stability for Easy
-    4.93, // w4:  initial difficulty mean
-    0.94, // w5:  difficulty grade scaling
-    0.86, // w6:  difficulty update rate
-    0.01, // w7:  mean reversion weight
-    1.49, // w8:  stability increase log factor
-    0.14, // w9:  stability decrease exponent
-    0.94, // w10: recall bonus factor
-    2.18, // w11: lapse stability base
-    0.05, // w12: lapse difficulty exponent
-    0.34, // w13: lapse stability power
-    1.26, // w14: lapse recall penalty
-    0.29, // w15: hard penalty
-    2.61, // w16: easy bonus
-];
+// FSRS version 6 parameters supplied by the external fsrs crate.
+// FSRS-6 introduces 21 tunable weights (w0..w20).
+pub const WEIGHTS: [f64; 21] = fsrs::DEFAULT_WEIGHTS; // FSRS-6 21 params
 
 /// Desired retention rate (90%).
 const DESIRED_RETENTION: f64 = 0.9;
@@ -45,6 +31,12 @@ pub struct CardState {
     pub reps: u32,
     pub lapses: u32,
     pub last_review: DateTime<Utc>,
+}
+
+impl Default for CardState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CardState {
@@ -78,25 +70,25 @@ fn clamp(val: f64, min: f64, max: f64) -> f64 {
 }
 
 /// Initial stability for a given rating (1-4).
-fn initial_stability(rating: u8) -> f64 {
-    W[(rating - 1) as usize].max(0.1)
+pub fn initial_stability(rating: u8) -> f64 {
+    WEIGHTS[(rating - 1) as usize].max(0.1)
 }
 
 /// Initial difficulty for a given rating (1-4).
 fn initial_difficulty(rating: u8) -> f64 {
-    let d = W[4] - (W[5] * (rating as f64 - 1.0)).exp() + 1.0;
+    let d = WEIGHTS[4] - (WEIGHTS[5] * (rating as f64 - 1.0)).exp() + 1.0;
     clamp(d, 1.0, 10.0)
 }
 
 /// Retrievability: probability of recall after `elapsed` days with given stability.
-fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
+pub fn retrievability(elapsed_days: f64, stability: f64) -> f64 {
     (1.0 + FACTOR * elapsed_days / stability).powf(DECAY)
 }
 
 /// Compute the interval (days) for a desired retention and stability.
 /// Derived from inverting the R formula:
 /// interval = (S / FACTOR) * (R_target^(1/DECAY) - 1)
-fn interval_for_retention(stability: f64) -> u32 {
+pub fn interval_for_retention(stability: f64) -> u32 {
     let raw = (stability / FACTOR) * (DESIRED_RETENTION.powf(1.0 / DECAY) - 1.0);
     raw.round().max(1.0) as u32
 }
@@ -104,28 +96,28 @@ fn interval_for_retention(stability: f64) -> u32 {
 /// Update difficulty after a review.
 fn next_difficulty(d: f64, rating: u8) -> f64 {
     let d0_ref = initial_difficulty(3); // Mean reversion target (Good)
-    let d_new = d - W[6] * (rating as f64 - 3.0);
-    let d_final = W[7] * d0_ref + (1.0 - W[7]) * d_new;
+    let d_new = d - WEIGHTS[6] * (rating as f64 - 3.0);
+    let d_final = WEIGHTS[7] * d0_ref + (1.0 - WEIGHTS[7]) * d_new;
     clamp(d_final, 1.0, 10.0)
 }
 
 /// Stability after a successful recall (rating >= 2).
 fn next_recall_stability(d: f64, s: f64, r: f64, rating: u8) -> f64 {
-    let hard_penalty = if rating == 2 { W[15] } else { 1.0 };
-    let easy_bonus = if rating == 4 { W[16] } else { 1.0 };
+    let hard_penalty = if rating == 2 { WEIGHTS[15] } else { 1.0 };
+    let easy_bonus = if rating == 4 { WEIGHTS[16] } else { 1.0 };
 
-    s * (W[8].exp()
+    s * (WEIGHTS[8].exp()
         * (11.0 - d)
-        * s.powf(-W[9])
-        * ((W[10] * (1.0 - r)).exp() - 1.0)
+        * s.powf(-WEIGHTS[9])
+        * ((WEIGHTS[10] * (1.0 - r)).exp() - 1.0)
         * hard_penalty
         * easy_bonus
         + 1.0)
 }
 
 /// Stability after a lapse (rating == 1, forgotten).
-fn next_forget_stability(d: f64, s: f64, r: f64) -> f64 {
-    let s_new = W[11] * d.powf(-W[12]) * ((s + 1.0).powf(W[13]) - 1.0) * (W[14] * (1.0 - r)).exp();
+pub fn next_forget_stability(d: f64, s: f64, r: f64) -> f64 {
+    let s_new = WEIGHTS[11] * d.powf(-WEIGHTS[12]) * ((s + 1.0).powf(WEIGHTS[13]) - 1.0) * (WEIGHTS[14] * (1.0 - r)).exp();
     s_new.max(0.1).min(s) // Lapse stability must not exceed previous
 }
 

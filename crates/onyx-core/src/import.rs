@@ -82,7 +82,7 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
 /// Parse heading lines (# through ######).
 fn parse_heading(line: &str) -> Option<Block> {
     let level = line.chars().take_while(|c| *c == '#').count();
-    if level >= 1 && level <= 6 {
+    if (1..=6).contains(&level) {
         if let Some(stripped) = line.get(level..).and_then(|s| s.strip_prefix(' ')) {
             return Some(Block {
                 id: uuid::Uuid::new_v4().to_string(),

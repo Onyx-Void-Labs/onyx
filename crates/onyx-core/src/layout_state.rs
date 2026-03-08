@@ -2,7 +2,7 @@
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use crate::grid_layout::{GridRow, Slot};
+use crate::grid_layout::GridRow;
 use anyhow::{Context, Result};
 
 /// Persists GridRow layouts into a LoroMap within a LoroDoc.
@@ -15,7 +15,7 @@ impl LayoutState {
     /// Create a new LayoutState backed by the given LoroDoc.
     pub fn new(doc: &LoroDoc) -> Self {
         Self {
-            map: doc.get_map("layout"),
+            map: doc.get_map("layout_map"),
         }
     }
 
@@ -60,8 +60,10 @@ impl LayoutState {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
     use super::*;
+    use crate::grid_layout::Slot;
 
     #[test]
     fn round_trip_save_load() -> Result<()> {

@@ -48,6 +48,7 @@ impl OnyxSettings {
         if let Ok(encrypted) = std::fs::read(&path) {
             if let Ok(key) = settings_encryption_key() {
                 if let Ok(data) = crate::crypto::decrypt_data(&encrypted, &key) {
+                    let data = Zeroizing::new(data);
                     if let Ok(s) = serde_json::from_slice(&data) {
                         return s;
                     }
@@ -67,11 +68,10 @@ impl OnyxSettings {
         // derive an encryption key and write encrypted data; fail loudly on any error
         let key = settings_encryption_key().context("derive settings encryption key")?;
         let encrypted =
-            crate::crypto::encrypt_data(json.as_bytes(), &*key).context("encrypt settings")?;
+            crate::crypto::encrypt_data(json.as_bytes(), &key).context("encrypt settings")?;
         // Atomic write: tmp → fsync → rename
         let tmp_path = path.with_extension("tmp");
-        let mut file =
-            std::fs::File::create(&tmp_path).context("create settings tmp file")?;
+        let mut file = std::fs::File::create(&tmp_path).context("create settings tmp file")?;
         if let Err(e) = std::io::Write::write_all(&mut file, &encrypted) {
             let _ = std::fs::remove_file(&tmp_path);
             return Err(e).context("write settings tmp file");
@@ -85,6 +85,31 @@ impl OnyxSettings {
             return Err(e).context("atomic rename settings file");
         }
         Ok(())
+    }
+
+    /// Save settings to a specific directory (for testing).
+    pub fn save_to(&self, dir: &std::path::Path) -> Result<()> {
+        let path = dir.join("settings.json");
+        let json = serde_json::to_string_pretty(self).context("serialize settings")?;
+        let key = settings_encryption_key().context("derive settings encryption key")?;
+        let encrypted =
+            crate::crypto::encrypt_data(json.as_bytes(), &key).context("encrypt settings")?;
+        let tmp_path = path.with_extension("tmp");
+        let mut file = std::fs::File::create(&tmp_path).context("create settings tmp file")?;
+        std::io::Write::write_all(&mut file, &encrypted).context("write settings tmp file")?;
+        file.sync_all().context("fsync settings tmp file")?;
+        std::fs::rename(&tmp_path, &path).context("atomic rename settings file")?;
+        Ok(())
+    }
+
+    /// Load settings from a specific directory (for testing).
+    pub fn load_from(dir: &std::path::Path) -> Result<Self> {
+        let path = dir.join("settings.json");
+        let encrypted = std::fs::read(&path).context("read settings file")?;
+        let key = settings_encryption_key().context("derive settings encryption key")?;
+        let data = crate::crypto::decrypt_data(&encrypted, &key).context("decrypt settings")?;
+        let s: OnyxSettings = serde_json::from_slice(&data).context("deserialize settings")?;
+        Ok(s)
     }
 }
 
