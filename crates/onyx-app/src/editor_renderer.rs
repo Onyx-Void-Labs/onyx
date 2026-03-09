@@ -43,10 +43,19 @@ impl EditorRenderer {
         }
     }
 
-    pub fn build_scene(&mut self, scene: &mut Scene, ws: &OnyxWorkspace, note_id: &str, spine_x: f64, spine_w: f64) {
+    pub fn build_scene(
+        &mut self,
+        scene: &mut Scene,
+        ws: &OnyxWorkspace,
+        note_id: &str,
+        spine_x: f64,
+        spine_w: f64,
+    ) {
         let block_ids_opt = ws.get_note_block_ids(note_id);
-        let Some(block_ids) = block_ids_opt else { return };
-        
+        let Some(block_ids) = block_ids_opt else {
+            return;
+        };
+
         // Start typing cursor 120px down from the top
         let mut y_offset = 120.0;
 
@@ -54,21 +63,23 @@ impl EditorRenderer {
 
         for block_id in block_ids {
             let styled_spans_opt = ws.get_styled_text(&block_id);
-            let Some(styled_spans) = styled_spans_opt else { continue };
+            let Some(styled_spans) = styled_spans_opt else {
+                continue;
+            };
             let content_opt = ws.get_block_content(&block_id);
             let Some(content) = content_opt else { continue };
 
             // A clean, readable high-DPI paragraph size
             let font_size = 24.0;
-            let default_brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255)); 
+            let default_brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255));
 
             let mut layout_builder = self.layout_context.ranged_builder(
                 &mut self.font_context,
                 content.as_str(),
-                1.0, 
+                1.0,
                 false,
             );
-            
+
             layout_builder.push_default(StyleProperty::FontSize(font_size));
             layout_builder.push_default(StyleProperty::Brush(default_brush.clone()));
 
@@ -92,10 +103,8 @@ impl EditorRenderer {
                         }
                         Attribute::Color(c) => {
                             let color = Color::new([c[0], c[1], c[2], c[3]]);
-                            layout_builder.push(
-                                StyleProperty::Brush(Brush::Solid(color)),
-                                range.clone(),
-                            );
+                            layout_builder
+                                .push(StyleProperty::Brush(Brush::Solid(color)), range.clone());
                         }
                         Attribute::ClozeGap { hidden, .. } if hidden => {
                             layout_builder.push(
@@ -110,11 +119,15 @@ impl EditorRenderer {
             }
 
             let mut layout = layout_builder.build(content.as_str());
-            
+
             // 1% OVERKILL: Constrain text to the Spine width minus 80px of breathing padding
             let max_width = (spine_w - 80.0) as f32;
             layout.break_all_lines(Some(max_width));
-            layout.align(Some(max_width), parley::layout::Alignment::Start, parley::layout::AlignmentOptions::default());
+            layout.align(
+                Some(max_width),
+                parley::layout::Alignment::Start,
+                parley::layout::AlignmentOptions::default(),
+            );
 
             // Mount the block exactly onto the absolute Spine coordinates
             let transform = Affine::translate((spine_x + 40.0, y_offset));

@@ -1,5 +1,9 @@
 use parley::layout::{Layout, PositionedLayoutItem};
-use vello::{kurbo::Affine, peniko::{Brush, Fill}, Scene};
+use vello::{
+    kurbo::Affine,
+    peniko::{Brush, Fill},
+    Scene,
+};
 
 pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>) {
     for line in layout.lines() {
@@ -33,7 +37,7 @@ pub fn render_text(scene: &mut Scene, transform: Affine, layout: &Layout<Brush>)
                         y: run_y - g.y,
                     });
                     // MARCH THE PEN FORWARD BY THE GLYPH'S ADVANCE WIDTH!
-                    cursor_x += g.advance; 
+                    cursor_x += g.advance;
                 }
 
                 scene

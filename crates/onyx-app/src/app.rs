@@ -117,6 +117,12 @@ pub struct OnyxApp {
 }
 
 impl OnyxApp {
+    /// Toggle between 850px (Focused) and 1400px (Wide Mode)
+    /// Set self.scene_dirty = true to trigger a re-render
+    pub fn toggle_spine_width(&mut self) {
+        self.is_architect_mode = !self.is_architect_mode;
+        self.scene_dirty = true;
+    }
     pub fn new() -> anyhow::Result<Self> {
         // Channels: main → AI thread (embed requests), AI thread → main (results)
         let (embed_tx, work_rx) = mpsc::channel::<(String, String)>();
@@ -200,6 +206,31 @@ impl OnyxApp {
 
     fn handle_click(&mut self) {
         let pt = Point::new(self.cursor_pos.0, self.cursor_pos.1);
+        // Architect Mode: Plus Button
+        let width_f = if let Some(surface) = &self.surface {
+            surface.config.width as f64
+        } else {
+            1280.0
+        };
+        let height_f = if let Some(surface) = &self.surface {
+            surface.config.height as f64
+        } else {
+            800.0
+        };
+        let spine_w = if self.is_architect_mode {
+            1200.0
+        } else {
+            850.0
+        };
+        let spine_x = (width_f / 2.0) - (spine_w / 2.0);
+        let y_pos = 10.0; // You may want to adjust this
+        let plus_btn = Rect::new(spine_x + spine_w + 10.0, y_pos, 24.0, 24.0);
+        if plus_btn.contains(pt) {
+            // This opens the "Widget Menu" (Lens Selector)
+            self.is_architect_mode = !self.is_architect_mode;
+            self.scene_dirty = true;
+            return;
+        }
 
         if void_btn().contains(pt) {
             self.void_counter += 1;
@@ -306,6 +337,11 @@ impl OnyxApp {
     }
 
     pub fn draw(&mut self) {
+        // 1% OVERKILL: Zero-CPU-idle enforcement
+        if !self.scene_dirty {
+            return;
+        }
+
         // drain embedding results first
         while let Ok((note_id, vec)) = self.embed_rx.try_recv() {
             let _ = self.workspace.set_vector(&note_id, &vec);
@@ -361,21 +397,54 @@ impl OnyxApp {
 
         let width_f = width as f64;
         let height_f = height as f64;
-        let spine_w = 850.0;
+        // Architect Grid Layout
+        let spine_w = if self.is_architect_mode {
+            1200.0
+        } else {
+            850.0
+        };
         let spine_x = (width_f / 2.0) - (spine_w / 2.0);
 
         // 1% OVERKILL: Render the Deep Work Spine (A subtle physical elevation from the Void)
         self.scene.fill(
             vello::peniko::Fill::NonZero,
             vello::kurbo::Affine::IDENTITY,
-            &vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(16, 16, 19, 255)), // Slightly lighter than the 9,9,11 void
+            &vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(16, 16, 19, 255)),
             None,
             &vello::kurbo::Rect::new(spine_x, 0.0, spine_x + spine_w, height_f),
         );
 
+        // When in Architect mode, render faint grid-line guides
+        if self.is_architect_mode {
+            let grid_color =
+                vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(80, 80, 90, 80));
+            let grid_spacing = 60.0;
+            let mut x = spine_x;
+            while x < spine_x + spine_w {
+                self.scene.stroke(
+                    &grid_color,
+                    1.0,
+                    &vello::kurbo::Line::new((x, 0.0), (x, height_f)),
+                    None,
+                );
+                x += grid_spacing;
+            }
+            let mut y = 0.0;
+            while y < height_f {
+                self.scene.stroke(
+                    &grid_color,
+                    1.0,
+                    &vello::kurbo::Line::new((spine_x, y), (spine_x + spine_w, y)),
+                    None,
+                );
+                y += grid_spacing;
+            }
+        }
+
         // Rebuild the CRDT/UI layout mapping into the pristine scene
         if let Some(note_id) = &self.selected_node_id {
-            self.editor.build_scene(&mut self.scene, &self.workspace, note_id, spine_x, spine_w);
+            self.editor
+                .build_scene(&mut self.scene, &self.workspace, note_id, spine_x, spine_w);
         }
 
         if let Some(renderer) = self.renderer.as_mut() {
