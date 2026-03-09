@@ -1,36 +1,20 @@
-// In `crates/onyx-app/src/editor_renderer.rs`
-
 use onyx_core::{blocks::Attribute, OnyxWorkspace};
-
-use parley::{
-    style::{FontStyle, StyleProperty},
-    FontContext, Layout,
-};
+use parley::{style::StyleProperty, FontContext, Layout};
 use vello::{
-    kurbo::{Affine, BezPath, Rect, Shape},
-    peniko::{Brush, Color, Fill},
+    kurbo::Affine,
+    peniko::{Brush, Color},
     Scene,
 };
-
-// The adapter to render parley layouts with Vello
-use parley_vello; // free function available
-
-pub struct Cursor {
-    pub block_id: String,
-    pub char_offset: usize,
-}
 
 pub struct EditorRenderer {
     pub font_context: FontContext,
     pub layout_context: parley::LayoutContext<Brush>,
     pub layouts: Vec<Layout<Brush>>,
-    pub cursor: Option<Cursor>,
 }
 
 impl EditorRenderer {
     pub fn new() -> Self {
         let mut font_context = FontContext::new();
-        // Load Inter-Regular.ttf from assets/fonts at compile time
         let font_data = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
         font_context
             .collection
@@ -39,7 +23,6 @@ impl EditorRenderer {
             font_context,
             layout_context: parley::LayoutContext::new(),
             layouts: Vec::new(),
-            cursor: None,
         }
     }
 
@@ -49,14 +32,43 @@ impl EditorRenderer {
         ws: &OnyxWorkspace,
         note_id: &str,
         window_width: f64,
+        top_margin: f64,
+        live_buffer: &str,
     ) {
+        let mut y_offset = top_margin + 40.0;
+        self.layouts.clear();
+
+        // --- RENDER LIVE TYPING BUFFER ---
+        if !live_buffer.is_empty() {
+            let font_size = 24.0;
+            let brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255));
+            let mut layout_builder =
+                self.layout_context
+                    .ranged_builder(&mut self.font_context, live_buffer, 1.0, false);
+            layout_builder.push_default(StyleProperty::FontSize(font_size));
+            layout_builder.push_default(StyleProperty::Brush(brush));
+
+            let mut layout = layout_builder.build(live_buffer);
+            let max_width = (window_width - 120.0).max(300.0) as f32;
+
+            layout.break_all_lines(Some(max_width));
+            layout.align(
+                Some(max_width),
+                parley::layout::Alignment::Start,
+                parley::layout::AlignmentOptions::default(),
+            );
+
+            let transform = Affine::translate((60.0, y_offset));
+            parley_vello::render_text(scene, transform, &layout);
+
+            y_offset += layout.height() as f64 + 40.0;
+        }
+
+        // --- RENDER CRDT BLOCKS ---
         let block_ids_opt = ws.get_note_block_ids(note_id);
         let Some(block_ids) = block_ids_opt else {
             return;
         };
-
-        let mut y_offset = 160.0;
-        self.layouts.clear();
 
         for block_id in block_ids {
             let styled_spans_opt = ws.get_styled_text(&block_id);
@@ -116,11 +128,7 @@ impl EditorRenderer {
 
             let mut layout = layout_builder.build(content.as_str());
 
-            // 1% OVERKILL: Fluid Canvas mode. Take the whole screen minus a clean 60px margin on each side.
-            let mut max_width = (window_width - 120.0) as f32;
-            if max_width < 300.0 {
-                max_width = 300.0;
-            } // Prevent crashing if window is shrunk too small
+            let max_width = (window_width - 120.0).max(300.0) as f32;
 
             layout.break_all_lines(Some(max_width));
             layout.align(
@@ -129,19 +137,11 @@ impl EditorRenderer {
                 parley::layout::AlignmentOptions::default(),
             );
 
-            // Anchor strictly to the left margin
             let transform = Affine::translate((60.0, y_offset));
             parley_vello::render_text(scene, transform, &layout);
 
             y_offset += layout.height() as f64 + 24.0;
             self.layouts.push(layout);
         }
-    }
-    pub fn on_key_down(&mut self, key: &str) {
-        println!("Key Down: {}", key);
-    }
-
-    pub fn on_mouse_click(&mut self, x: f64, y: f64) {
-        println!("Mouse Click: ({}, {})", x, y);
     }
 }

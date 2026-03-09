@@ -843,7 +843,6 @@ impl OnyxWorkspace {
         let mut last_pos = 0;
         let text = &block.content;
         let bytes = text.as_bytes();
-        let mut idx = 0;
         for (pos, is_start, attr) in events {
             if pos > last_pos {
                 // take slice of bytes last_pos..pos maintaining UTF8 correctness

@@ -2,7 +2,9 @@
 
 mod app;
 mod editor_renderer;
+#[allow(dead_code)]
 mod renderer;
+#[allow(dead_code)]
 mod widgets;
 
 use anyhow::Context;
