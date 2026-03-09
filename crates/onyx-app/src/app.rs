@@ -54,8 +54,6 @@ pub struct OnyxApp {
     pub workspace: OnyxWorkspace,
     pub editor: EditorRenderer,
     cursor_pos: (f64, f64),
-    void_counter: u32,
-    note_counter: u32,
     selected_node_id: Option<String>,
 
     // --- The Live Typing Engine ---
@@ -134,8 +132,6 @@ impl OnyxApp {
             layout_cx: LayoutContext::new(),
             workspace,
             cursor_pos: (0.0, 0.0),
-            void_counter: 0,
-            note_counter: 0,
             selected_node_id: initial_note_id,
             live_text_buffer: String::new(),
             editor: EditorRenderer::new(),
@@ -151,103 +147,62 @@ impl OnyxApp {
 
     fn handle_click(&mut self) {
         let pt = vello::kurbo::Point::new(self.cursor_pos.0, self.cursor_pos.1);
-
-        // UI Engine Hit-Testing
-        if let Some(rect) = self.ribbon_hitboxes.get("btn_void") {
-            if rect.contains(pt) {
-                self.void_counter += 1;
-                let title = format!("Void {}", self.void_counter);
-                let _ = self.workspace.create_void(None, &title);
-                tracing::info!("Created Void: {}", title);
+        
+        if let Some(rect) = self.ribbon_hitboxes.get("btn_write") {
+            if rect.contains(pt) && self.is_architect_mode {
+                self.is_architect_mode = false;
                 self.scene_dirty = true;
-                return;
             }
         }
-
-        if let Some(rect) = self.ribbon_hitboxes.get("btn_note") {
-            if rect.contains(pt) {
-                if let Some(parent_id) = self.workspace.first_void_id() {
-                    self.note_counter += 1;
-                    let title = format!("Note {}", self.note_counter);
-                    let note_id = self
-                        .workspace
-                        .create_note(&parent_id, &title)
-                        .unwrap_or_default();
-                    tracing::info!("Created Note: {}", title);
-
-                    let initial_block = onyx_core::blocks::Block::empty_paragraph();
-                    let _ = self.workspace.set_note_blocks(&note_id, &[initial_block]);
-
-                    self.selected_node_id = Some(note_id);
-                    self.scene_dirty = true;
-                }
-                return;
-            }
-        }
-
-        if let Some(rect) = self.ribbon_hitboxes.get("btn_architect") {
-            if rect.contains(pt) {
-                self.is_architect_mode = !self.is_architect_mode;
-                tracing::info!("Architect Mode: {}", self.is_architect_mode);
+        if let Some(rect) = self.ribbon_hitboxes.get("btn_canvas") {
+            if rect.contains(pt) && !self.is_architect_mode {
+                self.is_architect_mode = true;
                 self.scene_dirty = true;
-                return;
             }
         }
+        if let Some(w) = &self.window { w.request_redraw(); }
     }
 
-    fn draw_system_shelf(&mut self, width: f64) {
-        use vello::kurbo::{Affine, Rect};
+    fn draw_header(&mut self, width: f64) {
+        use vello::kurbo::{Rect, RoundedRect, Affine};
         use vello::peniko::{Brush, Color, Fill};
 
-        // 1% OVERKILL: A unified structural shelf, not floating pills.
-        let shelf_rect = Rect::new(0.0, 0.0, width, 60.0);
-        let shelf_bg = Brush::Solid(Color::from_rgba8(20, 20, 24, 255));
-        let divider_line = Brush::Solid(Color::from_rgba8(40, 40, 50, 255));
+        // 1% OVERKILL: The Omnipresent Command Header
+        let header_bg = Brush::Solid(Color::from_rgba8(18, 18, 22, 250));
+        let border = Brush::Solid(Color::from_rgba8(40, 40, 45, 255));
+        
+        self.scene.fill(Fill::NonZero, Affine::IDENTITY, &header_bg, None, &Rect::new(0.0, 0.0, width, 52.0));
+        self.scene.fill(Fill::NonZero, Affine::IDENTITY, &border, None, &Rect::new(0.0, 51.0, width, 52.0));
 
-        self.scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            &shelf_bg,
-            None,
-            &shelf_rect,
-        );
-        // Bottom border line for "shelf" feel
-        self.scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            &divider_line,
-            None,
-            &Rect::new(0.0, 59.0, width, 60.0),
-        );
+        // Breadcrumbs
+        draw_text(&mut self.scene, &mut self.font_cx, &mut self.layout_cx, "🌌 Onyx Void   /   Untitled Note", 24.0, 16.0, 14.0, Color::from_rgba8(150, 150, 160, 255));
 
-        // Logic: Change tools based on is_architect_mode
-        let label = if self.is_architect_mode {
-            "ARCHITECT: GRID MODE (Widgets active)"
-        } else {
-            "DOCUMENT: FOCUS MODE (Standard)"
-        };
-        draw_text(
-            &mut self.scene,
-            &mut self.font_cx,
-            &mut self.layout_cx,
-            label,
-            40.0,
-            20.0,
-            18.0,
-            Color::from_rgba8(150, 150, 160, 255),
-        );
+        // Affine-Style Mode Toggle (Center)
+        let toggle_w = 220.0;
+        let tx = (width / 2.0) - (toggle_w / 2.0);
+        let pill_bg = Brush::Solid(Color::from_rgba8(10, 10, 12, 255));
+        let active_bg = Brush::Solid(Color::from_rgba8(60, 60, 70, 255));
+        let text_active = Color::from_rgba8(255, 255, 255, 255);
+        let text_dim = Color::from_rgba8(120, 120, 130, 255);
 
-        // Add a "Help" hint
-        draw_text(
-            &mut self.scene,
-            &mut self.font_cx,
-            &mut self.layout_cx,
-            "Press '/' to toggle tools",
-            width - 200.0,
-            20.0,
-            14.0,
-            Color::from_rgba8(80, 80, 90, 255),
-        );
+        self.scene.fill(Fill::NonZero, Affine::IDENTITY, &pill_bg, None, &RoundedRect::new(tx, 8.0, tx + toggle_w, 44.0, 8.0));
+        self.ribbon_hitboxes.clear();
+
+        // Write Mode Button
+        let write_active = !self.is_architect_mode;
+        if write_active {
+            self.scene.fill(Fill::NonZero, Affine::IDENTITY, &active_bg, None, &RoundedRect::new(tx + 4.0, 12.0, tx + (toggle_w/2.0) - 2.0, 40.0, 6.0));
+        }
+        draw_text(&mut self.scene, &mut self.font_cx, &mut self.layout_cx, "📄 Write", tx + 24.0, 18.0, 14.0, if write_active { text_active } else { text_dim });
+        self.ribbon_hitboxes.insert("btn_write".into(), Rect::new(tx, 8.0, tx + (toggle_w/2.0), 44.0));
+
+        // Canvas Mode Button
+        let canvas_active = self.is_architect_mode;
+        if canvas_active {
+            self.scene.fill(Fill::NonZero, Affine::IDENTITY, &active_bg, None, &RoundedRect::new(tx + (toggle_w/2.0) + 2.0, 12.0, tx + toggle_w - 4.0, 40.0, 6.0));
+        }
+        draw_text(&mut self.scene, &mut self.font_cx, &mut self.layout_cx, "🗺️ Canvas", tx + 124.0, 18.0, 14.0, if canvas_active { text_active } else { text_dim });
+        self.ribbon_hitboxes.insert("btn_canvas".into(), Rect::new(tx + (toggle_w/2.0), 8.0, tx + toggle_w, 44.0));
     }
 
     pub fn draw(&mut self) {
@@ -344,10 +299,8 @@ impl OnyxApp {
             }
         }
 
-        // Draw the new System Shelf
-        self.draw_system_shelf(width_f);
-
-        // Shift the canvas down so text doesn't overlap the shelf
+        // Rebuild the CRDT/UI layout mapping
+        self.draw_header(width_f);
         if let Some(note_id) = &self.selected_node_id {
             // Pass the live typing buffer down to the GPU renderer
             self.editor.build_scene(
@@ -496,7 +449,6 @@ impl ApplicationHandler for OnyxApp {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.scene_dirty = true;
                 self.handle_click();
             }
             WindowEvent::KeyboardInput { event, .. } => {

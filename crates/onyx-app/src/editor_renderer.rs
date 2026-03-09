@@ -39,30 +39,33 @@ impl EditorRenderer {
         self.layouts.clear();
 
         // --- RENDER LIVE TYPING BUFFER ---
-        if !live_buffer.is_empty() {
-            let font_size = 24.0;
-            let brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255));
-            let mut layout_builder =
-                self.layout_context
-                    .ranged_builder(&mut self.font_context, live_buffer, 1.0, false);
-            layout_builder.push_default(StyleProperty::FontSize(font_size));
-            layout_builder.push_default(StyleProperty::Brush(brush));
+        // 1% OVERKILL: Native Parley Cursor Tracker
+        // By appending a pipe character to the buffer, Parley's GPU layout engine 
+        // will naturally wrap and push the cursor across the screen for us.
+        let display_buffer = format!("{}|", live_buffer);
+        
+        let font_size = 24.0;
+        let brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255));
+        let mut layout_builder =
+            self.layout_context
+                .ranged_builder(&mut self.font_context, &display_buffer, 1.0, false);
+        layout_builder.push_default(StyleProperty::FontSize(font_size));
+        layout_builder.push_default(StyleProperty::Brush(brush));
 
-            let mut layout = layout_builder.build(live_buffer);
-            let max_width = (window_width - 120.0).max(300.0) as f32;
+        let mut layout = layout_builder.build(&display_buffer);
+        let max_width = (window_width - 120.0).max(300.0) as f32;
 
-            layout.break_all_lines(Some(max_width));
-            layout.align(
-                Some(max_width),
-                parley::layout::Alignment::Start,
-                parley::layout::AlignmentOptions::default(),
-            );
+        layout.break_all_lines(Some(max_width));
+        layout.align(
+            Some(max_width),
+            parley::layout::Alignment::Start,
+            parley::layout::AlignmentOptions::default(),
+        );
 
-            let transform = Affine::translate((60.0, y_offset));
-            parley_vello::render_text(scene, transform, &layout);
+        let transform = Affine::translate((60.0, y_offset));
+        parley_vello::render_text(scene, transform, &layout);
 
-            y_offset += layout.height() as f64 + 40.0;
-        }
+        y_offset += layout.height() as f64 + 40.0;
 
         // --- RENDER CRDT BLOCKS ---
         let block_ids_opt = ws.get_note_block_ids(note_id);
