@@ -48,17 +48,14 @@ impl EditorRenderer {
         scene: &mut Scene,
         ws: &OnyxWorkspace,
         note_id: &str,
-        spine_x: f64,
-        spine_w: f64,
+        window_width: f64,
     ) {
         let block_ids_opt = ws.get_note_block_ids(note_id);
         let Some(block_ids) = block_ids_opt else {
             return;
         };
 
-        // Start typing cursor 120px down from the top
         let mut y_offset = 120.0;
-
         self.layouts.clear();
 
         for block_id in block_ids {
@@ -69,7 +66,6 @@ impl EditorRenderer {
             let content_opt = ws.get_block_content(&block_id);
             let Some(content) = content_opt else { continue };
 
-            // A clean, readable high-DPI paragraph size
             let font_size = 24.0;
             let default_brush = Brush::Solid(Color::from_rgba8(220, 220, 230, 255));
 
@@ -120,8 +116,12 @@ impl EditorRenderer {
 
             let mut layout = layout_builder.build(content.as_str());
 
-            // 1% OVERKILL: Constrain text to the Spine width minus 80px of breathing padding
-            let max_width = (spine_w - 80.0) as f32;
+            // 1% OVERKILL: Fluid Canvas mode. Take the whole screen minus a clean 60px margin on each side.
+            let mut max_width = (window_width - 120.0) as f32;
+            if max_width < 300.0 {
+                max_width = 300.0;
+            } // Prevent crashing if window is shrunk too small
+
             layout.break_all_lines(Some(max_width));
             layout.align(
                 Some(max_width),
@@ -129,8 +129,8 @@ impl EditorRenderer {
                 parley::layout::AlignmentOptions::default(),
             );
 
-            // Mount the block exactly onto the absolute Spine coordinates
-            let transform = Affine::translate((spine_x + 40.0, y_offset));
+            // Anchor strictly to the left margin
+            let transform = Affine::translate((60.0, y_offset));
             parley_vello::render_text(scene, transform, &layout);
 
             y_offset += layout.height() as f64 + 24.0;

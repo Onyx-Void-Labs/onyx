@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::editor_renderer::EditorRenderer;
 use onyx_core::blocks::Block;
 use onyx_core::document::OnyxWorkspace;
-use onyx_core::fsrs::{self, CardState, FlashcardData, Scheduler};
+use onyx_core::fsrs::{CardState, FlashcardData, Scheduler};
 use onyx_core::model::{NodeType, PropertyType};
 use parley::layout::{Alignment, AlignmentOptions, PositionedLayoutItem};
 use parley::style::StyleProperty;
@@ -169,7 +169,7 @@ impl OnyxApp {
             .collection
             .register_fonts(font_data.to_vec().into(), None);
 
-        let mut workspace = OnyxWorkspace::new();
+        let workspace = OnyxWorkspace::new();
         let all_notes = workspace.all_note_ids();
         tracing::info!("[DEBUG] all_note_ids: {:?}", all_notes);
         let initial_note_id = all_notes.first().cloned();
@@ -217,6 +217,7 @@ impl OnyxApp {
         } else {
             800.0
         };
+        let _ = height_f; // suppress unused variable warning
         let spine_w = if self.is_architect_mode {
             1200.0
         } else {
@@ -392,59 +393,16 @@ impl OnyxApp {
             ));
         }
 
-        // purge previous geometry
+        // 1% OVERKILL: Purge previous frame geometry
         self.scene.reset();
 
         let width_f = width as f64;
-        let height_f = height as f64;
-        // Architect Grid Layout
-        let spine_w = if self.is_architect_mode {
-            1200.0
-        } else {
-            850.0
-        };
-        let spine_x = (width_f / 2.0) - (spine_w / 2.0);
 
-        // 1% OVERKILL: Render the Deep Work Spine (A subtle physical elevation from the Void)
-        self.scene.fill(
-            vello::peniko::Fill::NonZero,
-            vello::kurbo::Affine::IDENTITY,
-            &vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(16, 16, 19, 255)),
-            None,
-            &vello::kurbo::Rect::new(spine_x, 0.0, spine_x + spine_w, height_f),
-        );
-
-        // When in Architect mode, render faint grid-line guides
-        if self.is_architect_mode {
-            let grid_color =
-                vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(80, 80, 90, 80));
-            let grid_spacing = 60.0;
-            let mut x = spine_x;
-            while x < spine_x + spine_w {
-                self.scene.stroke(
-                    &grid_color,
-                    1.0,
-                    &vello::kurbo::Line::new((x, 0.0), (x, height_f)),
-                    None,
-                );
-                x += grid_spacing;
-            }
-            let mut y = 0.0;
-            while y < height_f {
-                self.scene.stroke(
-                    &grid_color,
-                    1.0,
-                    &vello::kurbo::Line::new((spine_x, y), (spine_x + spine_w, y)),
-                    None,
-                );
-                y += grid_spacing;
-            }
-        }
-
-        // Rebuild the CRDT/UI layout mapping into the pristine scene
+        // Rebuild the CRDT/UI layout mapping onto the Full Canvas
         if let Some(note_id) = &self.selected_node_id {
+            // Pass the raw dynamic window width to the layout engine
             self.editor
-                .build_scene(&mut self.scene, &self.workspace, note_id, spine_x, spine_w);
+                .build_scene(&mut self.scene, &self.workspace, note_id, width_f);
         }
 
         if let Some(renderer) = self.renderer.as_mut() {
