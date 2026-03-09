@@ -114,6 +114,8 @@ pub struct OnyxApp {
     // --- Vello Compositing ---
     pub cached_target: Option<wgpu::Texture>,
     pub blitter: Option<wgpu::util::TextureBlitter>,
+    // --- UI State Tracking ---
+    pub ribbon_hitboxes: std::collections::HashMap<String, vello::kurbo::Rect>,
 }
 
 impl OnyxApp {
@@ -201,140 +203,226 @@ impl OnyxApp {
             full_rebuild: false,
             cached_target: None,
             blitter: None,
+            ribbon_hitboxes: std::collections::HashMap::new(),
         })
     }
 
     fn handle_click(&mut self) {
-        let pt = Point::new(self.cursor_pos.0, self.cursor_pos.1);
-        // Architect Mode: Plus Button
-        let width_f = if let Some(surface) = &self.surface {
-            surface.config.width as f64
-        } else {
-            1280.0
-        };
-        let height_f = if let Some(surface) = &self.surface {
-            surface.config.height as f64
-        } else {
-            800.0
-        };
-        let _ = height_f; // suppress unused variable warning
-        let spine_w = if self.is_architect_mode {
-            1200.0
-        } else {
-            850.0
-        };
-        let spine_x = (width_f / 2.0) - (spine_w / 2.0);
-        let y_pos = 10.0; // You may want to adjust this
-        let plus_btn = Rect::new(spine_x + spine_w + 10.0, y_pos, 24.0, 24.0);
-        if plus_btn.contains(pt) {
-            // This opens the "Widget Menu" (Lens Selector)
-            self.is_architect_mode = !self.is_architect_mode;
-            self.scene_dirty = true;
-            return;
-        }
+        let pt = vello::kurbo::Point::new(self.cursor_pos.0, self.cursor_pos.1);
 
-        if void_btn().contains(pt) {
-            self.void_counter += 1;
-            let title = format!("Void {}", self.void_counter);
-            let _ = self.workspace.create_void(None, &title);
-            tracing::info!("Created: {}", title);
-        } else if note_btn().contains(pt) {
-            if let Some(parent_id) = self.workspace.first_void_id() {
-                self.note_counter += 1;
-                let title = format!("Note {}", self.note_counter);
-                let note_id = self
-                    .workspace
-                    .create_note(&parent_id, &title)
-                    .unwrap_or_default();
-                tracing::info!("Created: {}", title);
-
-                // ── Block Engine: initialize note with one empty Paragraph ──
-                let initial_block = Block::empty_paragraph();
-                let _ = self.workspace.set_note_blocks(&note_id, &[initial_block]);
-                println!("🧱 Block Engine: Initialized note with 1 block.");
-
-                // ── FSRS: create a dummy flashcard and schedule it ──
-                let card_state = CardState::default();
-                let mut sched = Scheduler::default();
-                let (scheduled_state, days) = sched.next_interval(&card_state, 3); // Good
-                let card_id = uuid::Uuid::new_v4().to_string();
-                let flashcard = FlashcardData {
-                    front: format!("What is {}?", title),
-                    back: "A note in Onyx Void.".to_string(),
-                    note_id: note_id.clone(),
-                    state: scheduled_state,
-                };
-                let _ = self.workspace.set_flashcard(&card_id, &flashcard);
-                println!("🎓 FSRS: Card created. Next review in {} day(s).", days);
-
-                // Queue embedding for the new note
-                let _ = self.embed_tx.send((note_id, title));
-            } else {
-                tracing::warn!("No void exists — create a Void first");
-            }
-        } else {
-            let mut handled = false;
-
-            // [+ Add Prop] button in inspector
-            if let Some(btn_rect) = self.add_prop_btn_rect {
-                if btn_rect.contains(pt) {
-                    if let Some(ref void_id) = self.selected_node_id {
-                        if self.workspace.node_type_of(void_id) == Some(NodeType::Void) {
-                            let void_id = void_id.clone();
-                            let _ = self.workspace.add_property_schema(
-                                &void_id,
-                                "Week",
-                                PropertyType::Select(vec![
-                                    "Monday".into(),
-                                    "Tuesday".into(),
-                                    "Wednesday".into(),
-                                    "Thursday".into(),
-                                    "Friday".into(),
-                                    "Saturday".into(),
-                                    "Sunday".into(),
-                                ]),
-                            );
-                            tracing::info!("Added 'Week' property to void");
-                        }
-                    }
-                    handled = true;
-                }
-            }
-
-            // Property value fields in inspector
-            if !handled {
-                for (prop_name, rect) in &self.prop_value_rects {
-                    if rect.contains(pt) {
-                        if let Some(ref note_id) = self.selected_node_id {
-                            if let Some(void_id) = self.workspace.parent_void_of(note_id) {
-                                let values = self.workspace.get_note_values(note_id, &void_id);
-                                self.input_buffer =
-                                    values.get(prop_name).cloned().unwrap_or_default();
-                                self.editing_field = Some(prop_name.clone());
-                            }
-                        }
-                        handled = true;
-                        break;
-                    }
-                }
-            }
-
-            // Tree node selection
-            if !handled {
-                for (id, rect) in &self.node_rects {
-                    if rect.contains(pt) {
-                        self.selected_node_id = Some(id.clone());
-                        self.editing_field = None;
-                        self.input_buffer.clear();
-                        break;
-                    }
-                }
+        // UI Engine Hit-Testing
+        if let Some(rect) = self.ribbon_hitboxes.get("btn_void") {
+            if rect.contains(pt) {
+                self.void_counter += 1;
+                let title = format!("Void {}", self.void_counter);
+                let _ = self.workspace.create_void(None, &title);
+                tracing::info!("Created Void: {}", title);
+                self.scene_dirty = true;
+                return;
             }
         }
 
-        if let Some(w) = &self.window {
-            w.request_redraw();
+        if let Some(rect) = self.ribbon_hitboxes.get("btn_note") {
+            if rect.contains(pt) {
+                if let Some(parent_id) = self.workspace.first_void_id() {
+                    self.note_counter += 1;
+                    let title = format!("Note {}", self.note_counter);
+                    let note_id = self
+                        .workspace
+                        .create_note(&parent_id, &title)
+                        .unwrap_or_default();
+                    tracing::info!("Created Note: {}", title);
+
+                    let initial_block = onyx_core::blocks::Block::empty_paragraph();
+                    let _ = self.workspace.set_note_blocks(&note_id, &[initial_block]);
+
+                    self.selected_node_id = Some(note_id);
+                    self.scene_dirty = true;
+                }
+                return;
+            }
         }
+
+        if let Some(rect) = self.ribbon_hitboxes.get("btn_architect") {
+            if rect.contains(pt) {
+                self.is_architect_mode = !self.is_architect_mode;
+                tracing::info!("Architect Mode: {}", self.is_architect_mode);
+                self.scene_dirty = true;
+                return;
+            }
+        }
+
+        // Pass click down to the Editor Canvas
+        self.editor
+            .on_mouse_click(self.cursor_pos.0, self.cursor_pos.1);
+    }
+
+    fn draw_top_ribbon(&mut self, width: f64) {
+        use vello::kurbo::{Affine, Rect, RoundedRect, Stroke};
+        use vello::peniko::{Brush, Color, Fill};
+
+        self.ribbon_hitboxes.clear();
+
+        let pill_y = 24.0;
+        let pill_h = 44.0;
+        let border_stroke = Stroke::new(1.0);
+        let glass_bg = Brush::Solid(Color::from_rgba8(30, 30, 36, 230));
+        let border_brush = Brush::Solid(Color::from_rgba8(60, 60, 70, 255));
+        let text_color = Color::from_rgba8(220, 220, 230, 255);
+        let accent_color = Color::from_rgba8(130, 170, 255, 255);
+
+        // ── PILL 1: WORKSPACE (Left) ──
+        let p1_x = 40.0;
+        let p1_w = 200.0;
+        let p1_rect = RoundedRect::new(p1_x, pill_y, p1_x + p1_w, pill_y + pill_h, 8.0);
+        self.scene
+            .fill(Fill::NonZero, Affine::IDENTITY, &glass_bg, None, &p1_rect);
+        self.scene.stroke(
+            &border_stroke,
+            Affine::IDENTITY,
+            &border_brush,
+            None,
+            &p1_rect,
+        );
+
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "+ Void",
+            p1_x + 24.0,
+            pill_y + 12.0,
+            16.0,
+            text_color,
+        );
+        self.ribbon_hitboxes.insert(
+            "btn_void".into(),
+            Rect::new(p1_x, pill_y, p1_x + 100.0, pill_y + pill_h),
+        );
+
+        self.scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            &border_brush,
+            None,
+            &Rect::new(
+                p1_x + 100.0,
+                pill_y + 8.0,
+                p1_x + 101.0,
+                pill_y + pill_h - 8.0,
+            ),
+        );
+
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "+ Note",
+            p1_x + 124.0,
+            pill_y + 12.0,
+            16.0,
+            text_color,
+        );
+        self.ribbon_hitboxes.insert(
+            "btn_note".into(),
+            Rect::new(p1_x + 100.0, pill_y, p1_x + p1_w, pill_y + pill_h),
+        );
+
+        // ── PILL 2: LENS FORMATTING (Center) ──
+        let p2_w = 340.0;
+        let p2_x = (width / 2.0) - (p2_w / 2.0);
+        let p2_rect = RoundedRect::new(p2_x, pill_y, p2_x + p2_w, pill_y + pill_h, 8.0);
+        self.scene
+            .fill(Fill::NonZero, Affine::IDENTITY, &glass_bg, None, &p2_rect);
+        self.scene.stroke(
+            &border_stroke,
+            Affine::IDENTITY,
+            &border_brush,
+            None,
+            &p2_rect,
+        );
+
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "Bold",
+            p2_x + 30.0,
+            pill_y + 12.0,
+            16.0,
+            text_color,
+        );
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "Italic",
+            p2_x + 100.0,
+            pill_y + 12.0,
+            16.0,
+            text_color,
+        );
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "H1",
+            p2_x + 170.0,
+            pill_y + 12.0,
+            16.0,
+            text_color,
+        );
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "Cloze",
+            p2_x + 240.0,
+            pill_y + 12.0,
+            16.0,
+            accent_color,
+        );
+
+        // ── PILL 3: NEURO ENGINE (Right) ──
+        let p3_w = 140.0;
+        let p3_x = width - p3_w - 40.0;
+        let p3_rect = RoundedRect::new(p3_x, pill_y, p3_x + p3_w, pill_y + pill_h, 8.0);
+
+        let arch_bg = if self.is_architect_mode {
+            Brush::Solid(Color::from_rgba8(180, 220, 140, 255))
+        } else {
+            glass_bg.clone()
+        };
+        let arch_text = if self.is_architect_mode {
+            Color::BLACK
+        } else {
+            text_color
+        };
+
+        self.scene
+            .fill(Fill::NonZero, Affine::IDENTITY, &arch_bg, None, &p3_rect);
+        self.scene.stroke(
+            &border_stroke,
+            Affine::IDENTITY,
+            &border_brush,
+            None,
+            &p3_rect,
+        );
+
+        draw_text(
+            &mut self.scene,
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            "Grid Mode",
+            p3_x + 30.0,
+            pill_y + 12.0,
+            16.0,
+            arch_text,
+        );
+        self.ribbon_hitboxes.insert(
+            "btn_architect".into(),
+            Rect::new(p3_x, pill_y, p3_x + p3_w, pill_y + pill_h),
+        );
     }
 
     pub fn draw(&mut self) {
@@ -353,7 +441,6 @@ impl OnyxApp {
             None => return,
         };
         let device_id = surface_ref.dev_id;
-        let device = &self.render_cx.devices[device_id];
 
         let output = match surface_ref.surface.get_current_texture() {
             Ok(t) => t,
@@ -369,6 +456,8 @@ impl OnyxApp {
             .as_ref()
             .map_or(true, |t| t.width() != width || t.height() != height);
         if needs_rebuild {
+            // borrow device only inside scope
+            let device = &self.render_cx.devices[device_id];
             self.cached_target = Some(device.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Vello Intermediate Target"),
                 size: wgpu::Extent3d {
@@ -397,15 +486,49 @@ impl OnyxApp {
         self.scene.reset();
 
         let width_f = width as f64;
+        let height_f = height as f64;
 
-        // Rebuild the CRDT/UI layout mapping onto the Full Canvas
+        // 1% OVERKILL: The Blueprint Grid
+        if self.is_architect_mode {
+            let grid_size = 40.0;
+            let stroke = vello::kurbo::Stroke::new(1.0);
+            let brush =
+                vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(255, 255, 255, 8)); // 3% white blueprint
+
+            let mut x = 0.0;
+            while x < width_f {
+                self.scene.stroke(
+                    &stroke,
+                    vello::kurbo::Affine::IDENTITY,
+                    &brush,
+                    None,
+                    &vello::kurbo::Line::new((x, 0.0), (x, height_f)),
+                );
+                x += grid_size;
+            }
+            let mut y = 0.0;
+            while y < height_f {
+                self.scene.stroke(
+                    &stroke,
+                    vello::kurbo::Affine::IDENTITY,
+                    &brush,
+                    None,
+                    &vello::kurbo::Line::new((0.0, y), (width_f, y)),
+                );
+                y += grid_size;
+            }
+        }
+
+        // Draw Custom UI
+        self.draw_top_ribbon(width_f);
+
         if let Some(note_id) = &self.selected_node_id {
-            // Pass the raw dynamic window width to the layout engine
             self.editor
                 .build_scene(&mut self.scene, &self.workspace, note_id, width_f);
         }
 
         if let Some(renderer) = self.renderer.as_mut() {
+            let device = &self.render_cx.devices[device_id];
             if let Some(tex) = &self.cached_target {
                 let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
                 renderer

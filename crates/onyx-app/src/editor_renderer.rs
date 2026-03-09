@@ -55,7 +55,7 @@ impl EditorRenderer {
             return;
         };
 
-        let mut y_offset = 120.0;
+        let mut y_offset = 160.0;
         self.layouts.clear();
 
         for block_id in block_ids {
