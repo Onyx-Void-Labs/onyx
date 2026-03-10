@@ -23,6 +23,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: stripped.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else if let Some(stripped) = trimmed.strip_prefix("- [ ] ") {
             Block {
@@ -31,6 +33,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: stripped.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else if let Some(stripped) = trimmed
             .strip_prefix("- ")
@@ -42,6 +46,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: stripped.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else if let Some(stripped) = parse_numbered_list(trimmed) {
             Block {
@@ -50,6 +56,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: stripped,
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else if let Some(stripped) = trimmed.strip_prefix("> ") {
             Block {
@@ -58,6 +66,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: stripped.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             Block {
@@ -66,6 +76,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: String::new(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         } else {
             Block {
@@ -74,6 +86,8 @@ pub fn parse_markdown(md: &str) -> Vec<Block> {
                 content: trimmed.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             }
         };
 
@@ -97,6 +111,8 @@ fn parse_heading(line: &str) -> Option<Block> {
                 content: stripped.to_string(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             });
         }
     }
@@ -139,6 +155,8 @@ fn merge_code_blocks(mut blocks: Vec<Block>, md: &str) -> Vec<Block> {
                     content: code_content.trim_end().to_string(),
                     attributes: Vec::new(),
                     children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
                 });
                 code_content.clear();
                 code_lang.clear();
@@ -296,6 +314,8 @@ mod tests {
                 content: "Title".into(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             },
             Block {
                 id: "2".into(),
@@ -303,6 +323,8 @@ mod tests {
                 content: "Body text.".into(),
                 attributes: Vec::new(),
                 children: Vec::new(),
+                align: String::from("left"),
+                indent_level: 0,
             },
         ];
         let md = export_markdown(&blocks);

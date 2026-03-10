@@ -59,6 +59,10 @@ pub enum BlockType {
 pub struct Block {
     pub id: String,      // UUID
     pub kind: BlockType, // What type of block
+    #[serde(default = "default_align")]
+    pub align: String,
+    #[serde(default)]
+    pub indent_level: u8,
     /// Raw Unicode string.  Attributes refer to byte indices within this
     /// string (start inclusive, end exclusive).
     pub content: String,
@@ -80,8 +84,14 @@ pub enum Attribute {
     // Standard visual styling
     Bold,
     Italic,
+    Underline,
+    Strikethrough,
     Color([f32; 4]),
     Highlight([f32; 4]),
+    FontFamily(String),
+    FontSize(f32),
+    Superscript,
+    Subscript,
 
     // ONYX advantages
     Sentiment(f32),                             // AI‑inferred emotion score
@@ -90,12 +100,19 @@ pub enum Attribute {
     LaTeX { expression: String },               // mathematical derivation
 }
 
+
+fn default_align() -> String {
+    "left".to_string()
+}
+
 impl Block {
     /// Create a new empty Paragraph block.
     pub fn empty_paragraph() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Paragraph,
+            align: default_align(),
+            indent_level: 0,
             content: String::new(),
             attributes: Vec::new(),
             children: Vec::new(),
@@ -107,6 +124,8 @@ impl Block {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Heading(level),
+            align: default_align(),
+            indent_level: 0,
             content: text.to_string(),
             attributes: Vec::new(),
             children: Vec::new(),

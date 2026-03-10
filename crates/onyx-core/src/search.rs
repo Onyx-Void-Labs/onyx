@@ -266,6 +266,8 @@ mod tests {
         Block {
             id: uuid::Uuid::new_v4().to_string(),
             kind: BlockType::Paragraph,
+            align: "left".to_string(),
+            indent_level: 0,
             content: text.to_string(),
             attributes: Vec::new(),
             children: Vec::new(),

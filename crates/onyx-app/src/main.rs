@@ -1,7 +1,9 @@
 // --- Onyx Void — Application Entry Point (Vello + Winit) ---
 
 mod app;
+mod cursor;
 mod editor_renderer;
+mod ribbon;
 #[allow(dead_code)]
 mod renderer;
 #[allow(dead_code)]

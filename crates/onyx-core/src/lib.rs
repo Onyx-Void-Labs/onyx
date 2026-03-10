@@ -12,6 +12,7 @@ pub mod blocks;
 pub mod crypto;
 pub mod diffing;
 pub mod document;
+pub mod editing;
 pub use document::OnyxWorkspace; // re-export core workspace type
 pub mod fsrs;
 pub use fsrs::{CardState, FlashcardData, Scheduler};

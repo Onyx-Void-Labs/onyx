@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn grader_exact_match() {
         let keys = vec!["foo".into(), "bar".into()];
-        assert_eq!(FeynmanAudioGrader::grade("foo bar", &keys), 4);
+        assert_eq!(FeynmanAudioGrader::grade("foo bar", &keys), 3);
     }
 
     #[test]

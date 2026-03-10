@@ -954,6 +954,8 @@ fn t106_attribute_span_styled_text() {
     let block = Block {
         id: "b1".into(),
         kind: BlockType::Paragraph,
+        align: "left".to_string(),
+        indent_level: 0,
         content: "hello".into(),
         attributes: vec![
             AttributeSpan {
@@ -988,6 +990,8 @@ fn t107_workspace_block_helpers() {
     let b1 = Block {
         id: "b1".into(),
         kind: BlockType::Paragraph,
+        align: "left".to_string(),
+        indent_level: 0,
         content: "a".into(),
         attributes: Vec::new(),
         children: Vec::new(),
@@ -995,6 +999,8 @@ fn t107_workspace_block_helpers() {
     let b2 = Block {
         id: "b2".into(),
         kind: BlockType::Paragraph,
+        align: "left".to_string(),
+        indent_level: 0,
         content: "b".into(),
         attributes: Vec::new(),
         children: Vec::new(),

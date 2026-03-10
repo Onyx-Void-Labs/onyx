@@ -163,7 +163,7 @@ use chrono::{DateTime, Utc};
 use loro::{LoroDoc, LoroMap, LoroTree, LoroValue, TreeID, ValueOrContainer};
 
 use crate::blob::BlobStore;
-use crate::blocks::{Attribute, AttributeSpan, Block, BlockType};
+use crate::blocks::{Block, BlockType};
 use crate::fsrs::FlashcardData;
 use crate::graph::BacklinkIndex;
 use crate::history::HistoryStack;
@@ -208,6 +208,10 @@ impl Default for OnyxWorkspace {
 }
 
 impl OnyxWorkspace {
+    pub fn id_map(&self) -> &HashMap<String, TreeID> {
+        &self.id_map
+    }
+
     pub fn new() -> Self {
         let doc = LoroDoc::new();
         let tree = doc.get_tree("nodes");
@@ -247,29 +251,15 @@ impl OnyxWorkspace {
         // an editor rendering pipeline has something to display immediately.
         if let Ok(root_void_id) = ws.create_void(None, "Welcome to the Void") {
             if let Ok(note_id) = ws.create_note(&root_void_id, "Genesis Note") {
-                let block_content = "The Spine is now online. Rendered with Vello + Parley.";
+                let block_content = "";
                 let block = Block {
                     id: uuid::Uuid::new_v4().to_string(),
                     kind: BlockType::Paragraph,
                     content: block_content.to_string(),
-                    attributes: vec![
-                        AttributeSpan {
-                            start: 0,
-                            end: 9,
-                            attr: Attribute::Bold,
-                        },
-                        AttributeSpan {
-                            start: 40,
-                            end: 54,
-                            attr: Attribute::Italic,
-                        },
-                        AttributeSpan {
-                            start: 40,
-                            end: 54,
-                            attr: Attribute::Color([0.5, 0.8, 1.0, 1.0]),
-                        },
-                    ],
+                    attributes: vec![],
                     children: Vec::new(),
+                    align: String::from("left"),
+                    indent_level: 0,
                 };
                 let _ = ws.set_note_blocks(&note_id, &[block]);
             }
@@ -535,6 +525,74 @@ impl OnyxWorkspace {
     /// Return the parent void ID of a note.
     pub fn parent_void_of(&self, note_id: &str) -> Option<String> {
         self.parent_map.get(note_id).cloned()
+    }
+
+    /// Recursively build the path of parent voids from the given node back to root.
+    /// Returns a list of (id, title) pairs.
+    pub fn get_path_to_root(&self, node_id: &str) -> Vec<(String, String)> {
+        let mut path = Vec::new();
+        let Some(&tid) = self.id_map.get(node_id) else {
+            return path;
+        };
+
+        let mut curr_tid = tid;
+        while let Some(parent_id) = self.tree.parent(curr_tid) {
+            if let Some(pid) = parent_id.tree_id() {
+                if let Some(title) = self.node_title(&pid.to_string()) {
+                    path.push((pid.to_string(), title));
+                }
+                curr_tid = pid;
+            } else {
+                break;
+            }
+        }
+        path.reverse();
+        path
+    }
+
+    /// Return all immediate child voids of a given void.
+    pub fn get_sub_voids(&self, void_id: &str) -> Vec<OnyxNode> {
+        let mut result = Vec::new();
+        let Some(&tid) = self.id_map.get(void_id) else {
+            return result;
+        };
+
+        if let Some(children) = self.tree.children(tid) {
+            for child in children {
+                if let Some(node_type) = self.node_type_of(&child.to_string()) {
+                    if node_type == NodeType::Void {
+                        if let Some(title) = self.node_title(&child.to_string()) {
+                            result.push(OnyxNode {
+                                id: child.to_string(),
+                                node_type: NodeType::Void,
+                                title,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Set the canvas elements for a void.
+    pub fn set_canvas_elements(&mut self, void_id: &str, elements: &[crate::canvas::CanvasElement]) -> Result<()> {
+        self.begin_transaction();
+        let json = serde_json::to_string(elements).context("serialize canvas elements")?;
+        self.canvas_elements.insert(void_id, json).context("set canvas elements")?;
+        self.end_transaction();
+        Ok(())
+    }
+
+    /// Get the canvas elements for a void.
+    pub fn get_canvas_elements(&self, void_id: &str) -> Vec<crate::canvas::CanvasElement> {
+        match self.canvas_elements.get(void_id) {
+            Some(ValueOrContainer::Value(v)) => v
+                .as_string()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
     }
 
     /// Add a property definition to a void's schema.
